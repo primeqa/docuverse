@@ -20,40 +20,15 @@ limitations under the License.
     <p>Part of the Prime Repository for State-of-the-Art Multilingual Question Answering Research and Development.</p>
 </h3>
 
-![Build Status](https://github.com/primeqa/primeqa/actions/workflows/primeqa-ci.yml/badge.svg)
-[![LICENSE|Apache2.0](https://img.shields.io/github/license/saltstack/salt?color=blue)](https://www.apache.org/licenses/LICENSE-2.0.txt)
-[![sphinx-doc-build](https://github.com/primeqa/primeqa/actions/workflows/sphinx-doc-build.yml/badge.svg)](https://github.com/primeqa/primeqa/actions/workflows/sphinx-doc-build.yml)   
+[//]: # (![Build Status]&#40;https://github.com/primeqa/primeqa/actions/workflows/primeqa-ci.yml/badge.svg&#41;)
+
+[//]: # ([![LICENSE|Apache2.0]&#40;https://img.shields.io/github/license/saltstack/salt?color=blue&#41;]&#40;https://www.apache.org/licenses/LICENSE-2.0.txt&#41;)
+
+[//]: # ([![sphinx-doc-build]&#40;https://github.com/primeqa/primeqa/actions/workflows/sphinx-doc-build.yml/badge.svg&#41;]&#40;https://github.com/primeqa/primeqa/actions/workflows/sphinx-doc-build.yml&#41;   )
 
 PrimeQA is a public open source repository that enables researchers and developers to train state-of-the-art models for question answering (QA). By using PrimeQA, a researcher can replicate the experiments outlined in a paper published in the latest NLP conference while also enjoying the capability to download pre-trained models (from an online repository) and run them on their own custom data. PrimeQA is built on top of the [Transformers](https://github.com/huggingface/transformers) toolkit and uses [datasets](https://huggingface.co/datasets/viewer/) and [models](https://huggingface.co/PrimeQA) that are directly downloadable.
 
 
-The models within PrimeQA supports End-to-end Question Answering. PrimeQA answers questions via 
-- [Information Retrieval](https://github.com/primeqa/primeqa/tree/main/primeqa/ir): Retrieving documents and passages using both traditional (e.g. BM25) and neural (e.g. ColBERT) models
-- [Multilingual Machine Reading Comprehension](https://huggingface.co/ibm/tydiqa-primary-task-xlm-roberta-large): Extract and/ or generate answers given the source document or passage.
-- [Multilingual Question Generation](https://huggingface.co/PrimeQA/mt5-base-tydi-question-generator): Supports generation of questions for effective domain adaptation over [tables](https://huggingface.co/PrimeQA/t5-base-table-question-generator) and [multilingual text](https://huggingface.co/PrimeQA/mt5-base-tydi-question-generator).
-- [Retrieval Augmented Generation](https://github.com/primeqa/primeqa/blob/main/notebooks/retriever-reader-pipelines/prompt_reader_with_GPT.ipynb): Generate answers using the GPT-3/ChatGPT pretrained models, conditioned on retrieved passages. 
-
-Some examples of models (applicable on benchmark datasets) supported are :
-- [Traditional IR with BM25](https://github.com/primeqa/primeqa/tree/main/primeqa/ir/) Pyserini
-- [Neural IR with ColBERT, DPR](https://github.com/primeqa/primeqa/tree/main/primeqa/ir) (collaboration with [Stanford NLP](https://nlp.stanford.edu/) IR led by [Chris Potts](https://web.stanford.edu/~cgpotts/) & [Matei Zaharia](https://cs.stanford.edu/~matei/)).
-Replicating the experiments that [Dr. Decr](https://huggingface.co/ibm/DrDecr_XOR-TyDi_whitebox) (Li et. al, 2022) performed to reach the top of the XOR TyDI leaderboard.
-- [Machine Reading Comprehension with XLM-R](https://github.com/primeqa/primeqa/tree/main/primeqa/mrc): to replicate the experiments to get to the top of the TyDI leaderboard similar to the performance of the IBM GAAMA system. Coming soon: code to replicate GAAMA's performance on Natural Questions. 
-
-## 🏅 Top of the Leaderboard
-
-PrimeQA is at the top of several leaderboards: XOR-TyDi, TyDiQA-main, OTT-QA and HybridQA.
-
-### [XOR-TyDi](https://nlp.cs.washington.edu/xorqa/)
-<img src="docs/_static/img/xor-tydi.png" width="50%">
-
-### [TyDiQA-main](https://ai.google.com/research/tydiqa)
-<img src="docs/_static/img/tydi-main.png" width="50%">
-
-### [OTT-QA](https://codalab.lisn.upsaclay.fr/competitions/7967)
-<img src="docs/_static/img/ott-qa.png" width="50%">
-
-### [HybridQA](https://codalab.lisn.upsaclay.fr/competitions/7979)
-<img src="docs/_static/img/hybridqa.png" width="50%">
 
 ## ✔️ Getting Started
 
@@ -100,13 +75,6 @@ When installing from source these can be modified, however this is not officiall
 
 - Continue with the `pip install` commands as desctibed above.
 
-
-### JAVA requirements
-Java 11 is required for BM25 retrieval. Install java as follows:
-
-```shell
-conda install -c conda-forge openjdk=11
-```
 ## :speech_balloon: Blog Posts
 There're several blog posts by members of the open source community on how they've been using PrimeQA for their needs. Read some of them:
 1. [PrimeQA and GPT 3](https://www.marktechpost.com/2023/03/03/with-just-20-lines-of-python-code-you-can-do-retrieval-augmented-gpt-based-qa-using-this-open-source-repository-called-primeqa/)
@@ -134,31 +102,9 @@ For more information, see:
 | Section | Description |
 |-|-|
 | 📒 [Documentation](https://primeqa.github.io/primeqa) | Full API documentation and tutorials |
-| 🏁 [Quick tour: Entry Points for PrimeQA](https://github.com/primeqa/primeqa/tree/main/primeqa) | Different entry points for PrimeQA: Information Retrieval, Reading Comprehension, TableQA and Question Generation |
 | 📓 [Tutorials: Jupyter Notebooks](https://github.com/primeqa/primeqa/tree/main/notebooks) | Notebooks to get started on QA tasks |
-| 📓 [GPT-3/ChatGPT Reader Notebooks](https://github.com/primeqa/primeqa/tree/main/notebooks/mrc/LLM_reader_predict_mode.ipynb) | Notebooks to get started with the GPT-3/ChatGPT reader components|
-| 💻 [Examples: Applying PrimeQA on various QA tasks](https://github.com/primeqa/primeqa/tree/main/examples) | Example scripts for fine-tuning PrimeQA models on a range of QA tasks |
 | 🤗 [Model sharing and uploading](https://huggingface.co/docs/transformers/model_sharing) | Upload and share your fine-tuned models with the community |
 | ✅ [Pull Request](https://primeqa.github.io/primeqa/pull_request_template.html) | PrimeQA Pull Request |
 | 📄 [Generate Documentation](https://primeqa.github.io/primeqa/README.html) | How Documentation works |        
-| 🛠 [Orchestrator Service REST Microservice](https://primeqa.github.io/primeqa/orchestrator.html) | Proof-of-concept code for PrimeQA Orchestrator microservice |        
-| 📖 [Tooling UI](https://primeqa.github.io/primeqa/tooling_ui.html) | Demo UI |        
 
 ## ❤️ PrimeQA collaborators include       
-
-| | | | |
-|:-------------------------:|:-------------------------:|:-------------------------:|:-------------------------:|
-|<img width="75" alt="stanford" src="docs/_static/img/collab-stanford-circle.png">| Stanford NLP |<img width="75" alt="i" src="docs/_static/img/collab-i-circle.png">| University of Illinois |
-|<img width="75" alt="stuttgart" src="docs/_static/img/collab-stuttgart-circle.png">| University of Stuttgart | <img width="75" alt="notredame" src="docs/_static/img/collab-notredame-circle.png">| University of Notre Dame |
-|<img width="75" alt="ohio" src="docs/_static/img/collab-ohio-circle.png">| Ohio State University |<img width="75" alt="carnegie" src="docs/_static/img/collab-carnegie-circle.png">| Carnegie Mellon University |
-|<img width="75" alt="massachusetts" src="docs/_static/img/collab-massachusetts-circle.png">| University of Massachusetts |<img width="75" height="75" alt="ibm" src="docs/_static/img/collab-ibm-circle.png">| IBM Research |
-| | | | |
-
-
-<br>
-<br>
-<br>
-<br>
-<div align="center">
-    <img width="30" alt="primeqa" src="docs/_static/primeqa_logo.png">
-</div>
