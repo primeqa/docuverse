@@ -1,6 +1,6 @@
 import yaml
 import os
-from docuverse.engines.search_result import SearchResult
+from docuverse.engines import SearchResult, SearchCorpus, SearchQueries
 
 
 class SearchEngine(object):
@@ -96,7 +96,7 @@ class SearchEngine(object):
             pass
         elif name == 'chromadb':
             try:
-                from docuverse.engines.retrieval.chromadb import ChromaDBEngine
+                from docuverse.engines.retrieval.vectordb.chromadb import ChromaDBEngine
                 engine = ChromaDBEngine(retrieval_config)
             except ImportError as e:
                 print("You need to install docuverse_chomadb package.")
@@ -146,3 +146,12 @@ class SearchEngine(object):
         from docuverse.engines.reranking.Reranker import Reranker
         reranker = Reranker(reranking_config)
         return reranker
+
+    def ingest(self, corpus: SearchCorpus):
+        pass
+
+    def search(self, corpus: SearchQueries) -> SearchResult:
+        pass
+
+    def set_index(self, index=None):
+        pass
