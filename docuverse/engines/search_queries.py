@@ -1,6 +1,6 @@
 
 class SearchQueries:
-    def __init__(self, filepath):
+    def __init__(self, filepaths):
         self.queries = []
         pass
 

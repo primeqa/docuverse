@@ -4,9 +4,13 @@ except:
     print(f"You need to install elasticsearch to be using ElasticSearch functionality!")
     raise RuntimeError("fYou need to install elasticsearch to be using ElasticSearch functionality!")
 from docuverse.engines.search_result import SearchResult
+from docuverse.engines.retrieval import RetrieverEngine
+from docuverse.utils import get_param
 
-class ElasticEngine:
+
+class ElasticEngine(RetrieverEngine):
     def __init__(self, config_params, **kwargs):
+        super().__init__(**kwargs)
         self.host = config_params.connection.host
         if 'password' in config_params.connection:
             self.password = config_params.connection.password
@@ -25,9 +29,9 @@ class ElasticEngine:
             self.client = Elasticsearch(basic_auth=f"{self.user:self.password}", hosts=[self.host])
         elif self.api_key is not None:
             self.client = Elasticsearch(f"{self.host}",
-                            ssl_assert_fingerprint=(self.ssl_fingerprint),
-                            api_key=self.api_key,
-                            request_timeout=60)
+                                        ssl_assert_fingerprint=(self.ssl_fingerprint),
+                                        api_key=self.api_key,
+                                        request_timeout=60)
         try:
             _ = self.client.info()
         except Exception as e:
@@ -41,19 +45,17 @@ class ElasticEngine:
             knn=knn,
             query=query,
             rank=rank,
-            size=self.get_param(kwargs, 'top_k'),
+            size=get_param(kwargs, 'top_k'),
             source_excludes=['vector', 'ml.predicted_value']
         )
-        res = SearchResult(result=res)
+        result = SearchResult(result=res)
 
-        res = self.remove_duplicates(res._body['hits']['hits'],
-                                self.duplicate_removal,
-                                self.rouge_duplicate_threshold)
-        result.append({'qid': qid, 'text': query_text,
-                       "answers": extract_answers(res)})
+        result.remove_duplicates(self.duplicate_removal,
+                                 self.rouge_duplicate_threshold)
+        return result
 
-    def _create_query(self, text="", **kwargs):
-        pass
+    def create_query(self, text, **kwargs):
+        return super().create_query(text, kwargs)
 
     def ingest_documents(self, documents, **kwargs):
         pass
