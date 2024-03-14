@@ -41,7 +41,7 @@ downloadable.
 The following is a code snippet showing how to run a query search, and also how to ingest a corpus,
 followed by an evaluation search.
 ```python
-from docuverse.engines import SearchEngine, SearchCorpus, SearchQueries
+from docuverse import SearchEngine, SearchCorpus, SearchQueries
 
 # Test an existing engine
 engine = SearchEngine(config="experiments/sap/elastic_v2/setup.yaml")
@@ -54,7 +54,7 @@ print (f"Results:\n{scores.to_string()}")
 
 Ingesting a new corpus (create an index for a specific engine) should be just as easy:
 ```python
-from docuverse.engines import SearchEngine, SearchCorpus, SearchQueries
+from docuverse import SearchEngine, SearchCorpus, SearchQueries
 
 corpus = SearchCorpus(filepaths="experiments/claspnq/passages.jsonl")
 engine.ingest(corpus, max_doc_length=512, stride=100, title_handling="all", 
