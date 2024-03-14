@@ -17,7 +17,7 @@ limitations under the License.
 <h3 align="center">
     <img width="350" alt="primeqa" src="docs/_static/img/PrimeQA.png">
     <p>Repository for (almost) *all* your document search needs.</p>
-    <p>Part of the Prime Repository for State-of-the-Art Multilingual Question Answering Research and Development.</p>
+    <p>Part of the Prime Repository for State-of-the-Art Multilingual QuestionAnswering Research and Development.</p>
 </h3>
 
 [//]: # (![Build Status]&#40;https://github.com/primeqa/primeqa/actions/workflows/primeqa-ci.yml/badge.svg&#41;)
@@ -26,9 +26,41 @@ limitations under the License.
 
 [//]: # ([![sphinx-doc-build]&#40;https://github.com/primeqa/primeqa/actions/workflows/sphinx-doc-build.yml/badge.svg&#41;]&#40;https://github.com/primeqa/primeqa/actions/workflows/sphinx-doc-build.yml&#41;   )
 
-PrimeQA is a public open source repository that enables researchers and developers to train state-of-the-art models for question answering (QA). By using PrimeQA, a researcher can replicate the experiments outlined in a paper published in the latest NLP conference while also enjoying the capability to download pre-trained models (from an online repository) and run them on their own custom data. PrimeQA is built on top of the [Transformers](https://github.com/huggingface/transformers) toolkit and uses [datasets](https://huggingface.co/datasets/viewer/) and [models](https://huggingface.co/PrimeQA) that are directly downloadable.
+DocUServe is a public open source repository that enables researchers and developers to quickly
+experiment with various search engines (such as ElasticSearch, ChromaDB, Milvus, PrimeQA, FAISS)
+both in direct search and reranking scenarios. By using DocUVerse, a researcher
+can replicate the experiments outlined in a paper published in the latest NLP 
+conference while also enjoying the capability to download pre-trained models 
+(from an online repository) and run them on their own custom data. DocUVerse is built 
+on top of the [Transformers](https://github.com/huggingface/transformers), PrimeQA, and Elasticsearch toolkits and uses [datasets](https://huggingface.co/datasets/viewer/) and 
+[models](https://huggingface.co/PrimeQA) that are directly 
+downloadable.
+
+## Design
+
+```python
+from docuverse.engines import SearchEngine, SearchData, SearchQueries
+
+# Test an existing engine
+engine = SearchEngine(config="experiments/sap/elastic_v2/setup.yaml")
+queries = SearchQueries(data="benchmark_v2.csv")
+
+results = engine.search(queries)
+scores = engine.compute_score(queries, results)
+print f"Results:\n{scores.to_string()}"
+
+# Ingest data then test
+corpus = SearchData(filepath="experiments/claspnq/passages.jsonl")
+new_data = corpus.prepare_for_ingestion(max_doc_length=512, stride=100, title_handling="all")
+engine.ingest(new_data, index="my_new_index")
+engine.set_index("my_new_index")
+queries = SearchQueries(data="ClaspNQ.jsonl")
+scores = engine.compute_score(queries, results)
+print f"Results:\n{scores.to_string()}"
 
 
+
+```
 
 ## ✔️ Getting Started
 

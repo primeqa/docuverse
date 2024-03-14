@@ -13,7 +13,7 @@ import logging
 import sys
 import pyizumo
 import copy
-from text_tiler import TextTiler
+from docuverse.utils.text_tiler import TextTiler
 
 nlp = None
 product_counts = {}
