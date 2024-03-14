@@ -50,18 +50,20 @@ queries = SearchQueries(data="benchmark_v2.csv")
 results = engine.search(queries)
 scores = engine.compute_score(queries, results)
 print (f"Results:\n{scores.to_string()}")
+```
 
-# Ingest data then test
+Ingesting a new corpus (create an index for a specific engine) should be just as easy:
+```python
+from docuverse.engines import SearchEngine, SearchCorpus, SearchQueries
+
 corpus = SearchCorpus(filepaths="experiments/claspnq/passages.jsonl")
 new_data = corpus.prepare_for_ingestion(max_doc_length=512, stride=100, title_handling="all")
 engine.ingest(new_data, index="my_new_index")
 engine.set_index("my_new_index")
+
 queries = SearchQueries(data="ClaspNQ.jsonl")
 scores = engine.compute_score(queries, results)
 print (f"Results:\n{scores.to_string()}")
-
-
-
 ```
 
 ## ✔️ Getting Started
