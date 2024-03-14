@@ -57,7 +57,8 @@ Ingesting a new corpus (create an index for a specific engine) should be just as
 from docuverse.engines import SearchEngine, SearchCorpus, SearchQueries
 
 corpus = SearchCorpus(filepaths="experiments/claspnq/passages.jsonl")
-engine.ingest(corpus, max_doc_length=512, stride=100, title_handling="all", index="my_new_index")
+engine.ingest(corpus, max_doc_length=512, stride=100, title_handling="all", 
+              index="my_new_index")
 
 queries = SearchQueries(data="ClaspNQ.jsonl")
 scores = engine.compute_score(queries, results)
