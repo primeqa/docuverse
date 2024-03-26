@@ -30,7 +30,7 @@ cwd = os.path.dirname(os.path.abspath(__file__))
 ################################################################################
 # Version, description and package_name
 ################################################################################
-package_name = os.getenv("PRIMEQA_PACKAGE_NAME", "docuverse")
+package_name = os.getenv("PACKAGE_NAME", "docuverse")
 package_type = os.getenv("PACKAGE_TYPE", "wheel")
 with open(os.path.join(cwd, "VERSION"), "r", encoding="utf-8") as version_file:
     version = version_file.read().strip()
