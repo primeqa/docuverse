@@ -8,7 +8,7 @@ class SearchResult:
     """
 
     class SearchDatum:
-        def __init__(self, data: Dict[str:str], **kwargs):
+        def __init__(self, data: Dict[str, str], **kwargs):
             self.__dict__.update(data)
 
         def __get__(self, key, default=None):
@@ -17,13 +17,11 @@ class SearchResult:
             else:
                 return default
 
-    def __init__(self, data, **kwargs):
-        self.results = []
+    def __init__(self, results, **kwargs):
+        self.results = results
         self.rouge_scorer = None
 
-        self.read_data(data)
-
-    def append(self, data: Dict[str:str], **kwargs):
+    def append(self, data: Dict[str, str], **kwargs):
         self.results.append(SearchResult.SearchDatum(data, **kwargs))
 
     def remove_duplicates(self, duplicate_removal: str = "none",
@@ -56,20 +54,6 @@ class SearchResult:
                 if not found:
                     ret.append(r)
         return ret
-
-    def read_data(self, data):
-        if isinstance(data, list):
-            d = data[0]
-            if 'hits' in d and 'hits' in d['hits']:  # Looks like Elasticsearch results
-                for d in data:
-                    r = SearchResult.SearchDatum(d['_source'])
-                    self.results.append(r)
-            else:
-                for d in data:
-                    r = SearchResult.SearchDatum(d)
-                    self.results.append(r)
-        else: # Need to deal with other structures.
-            return
 
     def as_list(self):
         return self.results

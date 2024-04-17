@@ -6,11 +6,11 @@ class SearchData:
     """
     class Entry:
         def __init__(self, dict: Dict[str, str]):
+            return
 
+        def __init__(self, filenames, text_field_name: str="text", title_field_name: str="title"):
+            self.dict = dict
+            # self.__dict__.update(data)
 
-    def __init__(self, filenames, text_field_name: str="text", title_field_name: str="title"):
-        self.dict = dict
-        self.__dict__.update(data)
-
-    def get_text(self, i:int) -> str:
-        return
+        def get_text(self, i:int) -> str:
+            return

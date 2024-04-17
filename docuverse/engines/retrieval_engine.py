@@ -1,9 +1,9 @@
 from typing import Tuple, Dict
 
-from docuverse import SearchEngine, SearchCorpus
+from docuverse.engines import SearchCorpus
 from docuverse.utils import get_param
 
-class RetrieverEngine:
+class RetrievalEngine:
     def __init__(self, **kwargs):
         self.args = kwargs
         self.duplicate_removal = get_param(kwargs, 'duplicate_removal', 'none')
@@ -63,6 +63,7 @@ class RetrieverEngine:
             except ImportError as e:
                 print("You need to install docuverse_chomadb package.")
                 raise e
+        return engine
 
-    def create_query(self, text, **kwargs) -> Tuple[Dict[str:str], Dict[str:str], Dict[str:str]]:
+    def create_query(self, text, **kwargs) -> Tuple[Dict[str,str], Dict[str,str], Dict[str,str]]:
         return None, None, None

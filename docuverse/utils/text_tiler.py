@@ -46,7 +46,7 @@ class TextTiler:
            * 'all': the title is added to each of the created tiles
            * 'first': the title is added to only the first tile
            * 'none': the title is not added to any of the resulting tiles
-        :param template: Dict[str: str] - the template for each json entry; each entry will be appended an 'id' and 'text'
+        :param template: Dict[str, str] - the template for each json entry; each entry will be appended an 'id' and 'text'
                          keys with the split text.
         :return - a list of indexable items, each containing a title, id, text, and url.
         """

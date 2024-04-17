@@ -9,10 +9,10 @@ class SearchEngine(object):
     def __init__(self, retrieval_params, reranking_params=None, **kwargs):
         self.retrieval_params = retrieval_params
         self.reranking_params = reranking_params
-        self.cache_dir = get_param('cache_dir', self.DEFAULT_CACHE_DIR)
-        self.cache_policy = get_param('cache_policy', 'always')
-        self.rouge_duplicate_threshold = get_param('rouge_duplicate_threshold', -1)
-        self.duplicate_removal_ = get_param('duplicate_removal', "none")
+        self.cache_dir = get_param(kwargs, 'cache_dir', self.DEFAULT_CACHE_DIR)
+        self.cache_policy = get_param(kwargs,'cache_policy', 'always')
+        self.rouge_duplicate_threshold = get_param(kwargs,'rouge_duplicate_threshold', -1)
+        self.duplicate_removal_ = get_param(kwargs, 'duplicate_removal', "none")
 
 
     @staticmethod
@@ -37,7 +37,7 @@ class SearchEngine(object):
         :raises yaml.YAMLError: If there is an error while loading the configuration file.
         """
         try:
-            vals = yaml.safe_load(config_path)
+            vals = yaml.safe_load(open(config_path))
             return vals['retrieval'] if 'retrieval' in vals else vals, vals[
                 'reranking'] if 'reranking' in vals else None
 
@@ -50,13 +50,15 @@ class SearchEngine(object):
     def create(config_path, **kwargs):
         retrieval_config, reranking_config = SearchEngine.read_config(config_path)
 
+        reranker = None
         if reranking_config is not None:
             reranker = SearchEngine._create_reranker(reranking_config)
         retriever = SearchEngine._create_retriever(retrieval_config)
+        return retriever, reranker
 
     @staticmethod
     def _create_retriever(retrieval_config) -> RetrievalEngine:
-        return RetrievalEngine.create_retriever(retrieval_config)
+        return RetrievalEngine.create_engine(retrieval_config)
     @classmethod
     def _create_reranker(cls, reranking_config):
         if reranking_config == None:

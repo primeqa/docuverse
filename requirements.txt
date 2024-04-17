@@ -1,0 +1,4 @@
+rouge-score
+pyyaml
+elasticsearch
+sentence-transformers
