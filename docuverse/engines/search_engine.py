@@ -5,7 +5,7 @@ from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines.evaluation_output import EvaluationOutput
-from docuverse.engines.retrieval.retrieval_engine import RetrieverEngine
+from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.utils import get_param
 
 class SearchEngine:
@@ -60,8 +60,8 @@ class SearchEngine:
         self.retriever = SearchEngine._create_retriever(self.retrieval_config)
 
     @staticmethod
-    def _create_retriever(retrieval_config) -> RetrieverEngine:
-        return RetrieverEngine(retrieval_config)
+    def _create_retriever(retrieval_config) -> RetrievalEngine:
+        return RetrievalEngine(retrieval_config)
 
     @classmethod
     def _create_reranker(cls, reranking_config):

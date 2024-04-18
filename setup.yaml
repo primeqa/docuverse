@@ -1,0 +1,16 @@
+retrieval:
+    name: "elastic_elser"
+    connection:
+      es_api_key: "<APIKEY>"
+      es_ssl_fingerprint: "<SSLFINGERPRINT>"
+      host: "<HOST>"
+    index: "<INDEX>"
+    filter:
+      include_filter: 
+        type: "filter"
+        field: "productId"
+        terms: ["ADD LIST"]
+      exclude_filter: 
+        type: "must_not"
+        field: "productId"
+        terms: ["ADD LIST"]

@@ -38,7 +38,7 @@ class SearchResult:
 
         self.read_data(data)
 
-    def append(self, data: Dict[str,str], **kwargs):
+    def append(self, data: Dict[str, str], **kwargs):
         self.results.append(SearchResult.SearchDatum(data, **kwargs))
 
     def append(self, datum: SearchDatum):

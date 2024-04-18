@@ -4,7 +4,7 @@ from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.retrieval import elastic
 from docuverse.utils import get_param
 
-class RetrieverEngine:
+class RetrievalEngine:
     def __init__(self, config_params, **kwargs):
         self.args = kwargs
         self.engine = self.create_engine(retriever_config=config_params)

@@ -60,6 +60,12 @@ class ElasticEngine:
 
     def search(self, text, **kwargs) -> SearchResult:
         query, knn, rank = self.create_query(text, **kwargs)
+        if 'filter' in self.config:
+            for filter in self.config['filter']:
+                query = self.add_filter(query, type=self.config['filter'][filter]['type'], 
+                                        field=self.config['filter'][filter]['field'], 
+                                        terms=self.config['filter'][filter]['terms'])
+
         res = self.client.search(
             index=self.index_name,
             knn=knn,
@@ -71,10 +77,18 @@ class ElasticEngine:
             source_excludes=['vector', 'ml.predicted_value']
         )
         
-        result = SearchResult(data=res._body)
+        result = SearchResult(results=self.read_results(res))
         result.remove_duplicates(self.duplicate_removal,
                                  self.rouge_duplicate_threshold)
         return result
+    
+    # Read specific to engine, e.g. Elasticsearch results
+    def read_results(self, data):
+        results = []
+        for d in data['hits']['hits']:
+            r = SearchResult.SearchDatum(d['_source'])
+            results.append(r)
+        return results
 
     def create_query(self, text, **kwargs):
         return super().create_query(text, kwargs)
@@ -103,3 +117,9 @@ class ElasticEngine:
             # except Exception as e:
             #     print(f"Got an error in indexing: {e}, {len(actions)}")
             
+    def add_filter(self, query, type: str = "filter", field: str = "productId", terms: list = None):
+        query["bool"][type] = {"terms": {field: [term for term in terms]}}
+        return query
+    
+    def ingest_documents(self, documents, **kwargs):
+        pass
