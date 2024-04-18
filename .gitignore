@@ -134,5 +134,3 @@ output/
 datasets/
 .vscode/
 mlruns/
-examples/
-experiments/
