@@ -1,43 +1,35 @@
 from typing import Tuple, Dict
 
-from docuverse import SearchEngine, SearchCorpus
+from docuverse.engines.search_corpus import SearchCorpus
+from docuverse.engines.retrieval import elastic
 from docuverse.utils import get_param
 
 class RetrieverEngine:
-    def __init__(self, **kwargs):
+    def __init__(self, config_params, **kwargs):
         self.args = kwargs
-        self.duplicate_removal = get_param(kwargs, 'duplicate_removal', 'none')
-        self.rouge_duplicate_threshold = get_param(kwargs, 'rouge_duplicate_threshold', -1)
+        self.engine = self.create_engine(retriever_config=config_params)
 
     def search(self, query, **kwargs):
-        pass
+        return self.engine.search(query)
 
-    def ingest(self, corpus: SearchCorpus, max_document_size=-1, stride=-1, title_handling: str = "all",
-               **kwargs):
-        pass
-
-    @staticmethod
-    def create_engine(retriever_config:str):
+    def ingest(self, corpus: SearchCorpus,**kwargs):
+        self.engine.ingest(corpus)
+    
+    def info(self):
+        return self.engine.info()
+    
+    def create_engine(self, retriever_config:dict):
         """
         Create a retriever object based on the given retrieval configuration.
 
         Parameters:
         retrieval_config (dict): A dictionary containing the retrieval configuration.
 
-        Raises:
-        RuntimeError: If the docuverse_elastic package is not installed.
-
         Returns:
         engine: A retriever object.
 
         """
         name = get_param(retriever_config, 'name')
-        try:
-            from docuverse.engines.retrieval import elastic
-        except ImportError as e:
-            print(f"You need to install the docuverse_elastic package!")
-            raise e
-
         if name.startswith('elastic'):
             if name == 'elastic_bm25':
                 engine = elastic.ElasticBM25Engine(retriever_config)
@@ -63,6 +55,8 @@ class RetrieverEngine:
             except ImportError as e:
                 print("You need to install docuverse_chomadb package.")
                 raise e
+        
+        return engine
 
-    def create_query(self, text, **kwargs) -> Tuple[Dict[str:str], Dict[str:str], Dict[str:str]]:
+    def create_query(self, text, **kwargs) -> Tuple[Dict[str,str], Dict[str,str], Dict[str,str]]:
         return None, None, None

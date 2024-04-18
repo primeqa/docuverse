@@ -1,18 +1,25 @@
 import yaml
 import os
-from docuverse.engines import SearchResult, SearchCorpus, SearchQueries, EvaluationOutput, RetrievalEngine
+from docuverse.engines.search_result import SearchResult
+from docuverse.engines.search_corpus import SearchCorpus
+from docuverse.engines.search_queries import SearchQueries
+from docuverse.engines.search_queries import SearchQueries
+from docuverse.engines.evaluation_output import EvaluationOutput
+from docuverse.engines.retrieval.retrieval_engine import RetrieverEngine
 from docuverse.utils import get_param
 
-class SearchEngine(object):
+class SearchEngine:
     DEFAULT_CACHE_DIR = os.path.join(f"{os.getenv('HOME')}", ".local", "share", "elastic_ingestion")
 
-    def __init__(self, retrieval_params, reranking_params=None, **kwargs):
-        self.retrieval_params = retrieval_params
-        self.reranking_params = reranking_params
-        self.cache_dir = get_param('cache_dir', self.DEFAULT_CACHE_DIR)
-        self.cache_policy = get_param('cache_policy', 'always')
-        self.rouge_duplicate_threshold = get_param('rouge_duplicate_threshold', -1)
-        self.duplicate_removal_ = get_param('duplicate_removal', "none")
+    # def __init__(self, retrieval_params, reranking_params=None, **kwargs):
+    #     self.retrieval_params = retrieval_params
+    #     self.reranking_params = reranking_params
+    #     self.cache_dir = get_param('cache_dir', self.DEFAULT_CACHE_DIR)
+    #     self.cache_policy = get_param('cache_policy', 'always')
+    #     self.rouge_duplicate_threshold = get_param('rouge_duplicate_threshold', -1)
+    #     self.duplicate_removal_ = get_param('duplicate_removal', "none")
+    def __init__(self, config_path: str = None, **kwargs):
+        self.create(config_path=config_path)
 
 
     @staticmethod
@@ -36,27 +43,26 @@ class SearchEngine(object):
 
         :raises yaml.YAMLError: If there is an error while loading the configuration file.
         """
-        try:
-            vals = yaml.safe_load(config_path)
-            return vals['retrieval'] if 'retrieval' in vals else vals, vals[
-                'reranking'] if 'reranking' in vals else None
+        with open(config_path) as stream:
+            try:
+                vals = yaml.safe_load(stream=stream)
+                return vals['retrieval'] if 'retrieval' in vals else vals, vals[
+                    'reranking'] if 'reranking' in vals else None
 
-        except yaml.YAMLError as exc:
-            raise exc
+            except yaml.YAMLError as exc:
+                raise exc
 
-    @staticmethod
+    def create(self, config_path, **kwargs):
+        self.retrieval_config, self.reranking_config = SearchEngine.read_config(config_path)
 
-    @staticmethod
-    def create(config_path, **kwargs):
-        retrieval_config, reranking_config = SearchEngine.read_config(config_path)
-
-        if reranking_config is not None:
-            reranker = SearchEngine._create_reranker(reranking_config)
-        retriever = SearchEngine._create_retriever(retrieval_config)
+        if self.reranking_config is not None:
+            self.reranker = SearchEngine._create_reranker(self.reranking_config)
+        self.retriever = SearchEngine._create_retriever(self.retrieval_config)
 
     @staticmethod
-    def _create_retriever(retrieval_config) -> RetrievalEngine:
-        return RetrievalEngine.create_retriever(retrieval_config)
+    def _create_retriever(retrieval_config) -> RetrieverEngine:
+        return RetrieverEngine(retrieval_config)
+
     @classmethod
     def _create_reranker(cls, reranking_config):
         if reranking_config == None:
@@ -66,8 +72,11 @@ class SearchEngine(object):
         reranker = Reranker(reranking_config)
         return reranker
 
-    def ingest(self, corpus: SearchCorpus, output_index:str):
-        pass
+    def ingest(self, corpus: SearchCorpus):
+        self.retriever.ingest(corpus=corpus)
+    
+    def get_retriever_info(self):
+        return self.retriever.info()
 
     def search(self, corpus: SearchQueries) -> SearchResult:
         pass

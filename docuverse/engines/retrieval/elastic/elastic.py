@@ -4,32 +4,49 @@ except:
     print(f"You need to install elasticsearch to be using ElasticSearch functionality!")
     raise RuntimeError("fYou need to install elasticsearch to be using ElasticSearch functionality!")
 from docuverse.engines.search_result import SearchResult
-from docuverse.engines.retrieval import RetrieverEngine
-from docuverse.utils import get_param
+from docuverse.utils.config_params import ConfigParams
 
+import os
+import json
+from dotenv import load_dotenv
 
-class ElasticEngine(RetrieverEngine):
+class ElasticEngine:
     def __init__(self, config_params, **kwargs):
-        super().__init__(**kwargs)
-        self.host = config_params.connection.host
-        if 'password' in config_params.connection:
-            self.password = config_params.connection.password
-            self.user = config_params.connection.user
-        elif 'es_api_key' in config_params.connection:
-            self.api_key = config_params.connection.es_api_key
-            self.ssl_fingerprint = config_params.connection.es_ssl_fingerprint
-        self.index_name = config_params.connection.index
-        self.title_field = config_params.connection.title_field
-        self.text_field = config_params.connection.text_field
-        self.fields = config_params.fields
-        self.config = config_params
-        self.filter_fields = config_params['filter-fields']
+        super().__init__(**kwargs)            
+        self._init_connection_info()
+        self._init_config(config_params)
+        self._init_client()
 
+    def _init_connection_info(self):
+        load_dotenv()
+        self.host = os.getenv('ES_HOST')
+        self.password = os.getenv('ES_PASSWORD')
+        self.user = os.getenv('ES_USER')
+        self.api_key = os.getenv('ES_API_KEY')
+        self.ssl_fingerprint = os.getenv('ES_SSL_FINGERPRINT')
+    
+    def _init_config(self, config_params):
+        config_params = ConfigParams(config=config_params)
+        self.index_name = config_params.index
+        self.title_field = config_params.title_field
+        self.text_field = config_params.text_field
+        self.fields = config_params.fields
+        self.n_docs = config_params.n_docs
+        self.config = config_params
+        self.filter_fields = config_params.filter_fields
+        self.duplicate_removal = config_params.duplicate_removal
+        self.rouge_duplicate_threshold = config_params.rouge_duplicate_threshold
+
+    def _init_client(self):
         if self.password is not None:
-            self.client = Elasticsearch(basic_auth=f"{self.user:self.password}", hosts=[self.host])
+            self.client = Elasticsearch(
+                                f"{self.host}:9200",
+                                basic_auth=(self.user, self.password),
+                                ssl_assert_fingerprint=self.ssl_fingerprint
+                            )
         elif self.api_key is not None:
             self.client = Elasticsearch(f"{self.host}",
-                                        ssl_assert_fingerprint=(self.ssl_fingerprint),
+                                        ssl_assert_fingerprint=self.ssl_fingerprint,
                                         api_key=self.api_key,
                                         request_timeout=60)
         try:
@@ -38,6 +55,9 @@ class ElasticEngine(RetrieverEngine):
             print(f"Error: {e}")
             raise e
 
+    def info(self):
+        return f"Elasticsearch client.info(): \n{self.client.info().body}"
+
     def search(self, text, **kwargs) -> SearchResult:
         query, knn, rank = self.create_query(text, **kwargs)
         res = self.client.search(
@@ -45,11 +65,13 @@ class ElasticEngine(RetrieverEngine):
             knn=knn,
             query=query,
             rank=rank,
-            size=get_param(kwargs, 'top_k'),
+            # TODO - top_k and n_docs is the same argument or am I missing something?
+            size=self.n_docs,
+            # TODO - This should be specified in the retrieval config too
             source_excludes=['vector', 'ml.predicted_value']
         )
-        result = SearchResult(result=res)
-
+        
+        result = SearchResult(data=res._body)
         result.remove_duplicates(self.duplicate_removal,
                                  self.rouge_duplicate_threshold)
         return result
@@ -57,5 +79,27 @@ class ElasticEngine(RetrieverEngine):
     def create_query(self, text, **kwargs):
         return super().create_query(text, kwargs)
 
-    def ingest_documents(self, documents, **kwargs):
-        pass
+    def ingest(self, corpus, **kwargs):
+        import json
+        from elasticsearch.helpers import bulk
+        from tqdm import tqdm
+        for index, record in tqdm(enumerate(corpus)):
+            resp = self.client.index(index=self.index_name, id=1, document=record)
+            if index > 10:
+                return None
+
+            # TODO: Find out the exact format of the records to be indexed
+            # TODO: Move to bulk API
+            # keys_to_index = self.fields
+            # actions = [
+            #     {
+            #         "_index": self.index_name,
+            #         "_id": record['id'],
+            #         "_source": {k: record[k] for k in keys_to_index}
+            #     }
+            # ]
+            # try:
+            #     response = bulk(client=self.client, actions=actions)
+            # except Exception as e:
+            #     print(f"Got an error in indexing: {e}, {len(actions)}")
+            

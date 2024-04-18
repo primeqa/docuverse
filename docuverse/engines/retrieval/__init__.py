@@ -1,1 +1,1 @@
-from retrieval_engine import RetrieverEngine
+from .retrieval_engine import RetrieverEngine
