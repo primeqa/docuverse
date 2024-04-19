@@ -1,16 +1,18 @@
-from engines import SearchEngine, SearchCorpus, SearchQueries
+from engines import SearchEngine, SearchQueries
 import json
 
 # Test an existing engine
 filepath = "/dccstor/creme_brulee/ibm_datasets/processed/dev/en/askhr_74.jsonl"
-engine, _ = SearchEngine.create("setup.yaml")
+engine = SearchEngine(config_path="experiments/askhr/setup.yaml")
+print(engine.get_retriever_info())
 queries = SearchQueries(filepaths=[filepath])
 
 output_file = "results.jsonl"
 
 results = []
 for query in queries:
-    results.append(engine.search(query))
+    result = engine.retriever.search(query)
+    results.append(result)
 print(f"{len(results)} results")
 
 # add back to input file and dump as new output

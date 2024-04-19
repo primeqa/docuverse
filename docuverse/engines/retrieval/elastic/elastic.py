@@ -33,7 +33,7 @@ class ElasticEngine:
         self.fields = config_params.fields
         self.n_docs = config_params.n_docs
         self.config = config_params
-        self.filter_fields = config_params.filter_fields
+        self.filters = config_params.filters
         self.duplicate_removal = config_params.duplicate_removal
         self.rouge_duplicate_threshold = config_params.rouge_duplicate_threshold
 
@@ -60,11 +60,12 @@ class ElasticEngine:
 
     def search(self, text, **kwargs) -> SearchResult:
         query, knn, rank = self.create_query(text, **kwargs)
-        if 'filter' in self.config:
-            for filter in self.config['filter']:
-                query = self.add_filter(query, type=self.config['filter'][filter]['type'], 
-                                        field=self.config['filter'][filter]['field'], 
-                                        terms=self.config['filter'][filter]['terms'])
+        if self.filters:
+            for filter in self.filters:
+                print(filter)
+                query = self.add_filter(query, type=self.filters[filter]['type'], 
+                                        field=self.filters[filter]['field'], 
+                                        terms=self.filters[filter]['terms'])
 
         res = self.client.search(
             index=self.index_name,
@@ -77,7 +78,7 @@ class ElasticEngine:
             source_excludes=['vector', 'ml.predicted_value']
         )
         
-        result = SearchResult(results=self.read_results(res))
+        result = SearchResult(data=self.read_results(res))
         result.remove_duplicates(self.duplicate_removal,
                                  self.rouge_duplicate_threshold)
         return result

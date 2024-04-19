@@ -134,3 +134,6 @@ output/
 datasets/
 .vscode/
 mlruns/
+results.jsonl
+.env*
+examples/tmp.ipynb

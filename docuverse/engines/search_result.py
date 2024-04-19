@@ -92,6 +92,9 @@ class SearchResult:
         elif isinstance(data, list):
             if len(data) == 0:
                 return []
+            elif data[0].__class__ == SearchResult.SearchDatum:
+                for item in data:
+                    self.results.append(item)
             else: # Need to deal with other structures.
                 raise Exception("TODO: Pending implementation")
         else: # Need to deal with other structures.

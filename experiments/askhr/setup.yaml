@@ -1,10 +1,6 @@
 retrieval:
     name: "elastic_elser"
-    connection:
-      es_api_key: "<APIKEY>"
-      es_ssl_fingerprint: "<SSLFINGERPRINT>"
-      host: "<HOST>"
-    index: "<INDEX>"
+    index: "convai-all-ibm-elser-v1-512-100-20240305"
     filter:
       include_filter: 
         type: "filter"
