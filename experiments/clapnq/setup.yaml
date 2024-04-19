@@ -1,0 +1,3 @@
+retrieval:
+    name: "elastic_elser"
+    index: "nlp-longnq-es-bm25-elser-512-100-index"

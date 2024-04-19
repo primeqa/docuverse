@@ -1,11 +1,12 @@
 from engines import SearchEngine, SearchQueries
 import json
+from engines.preprocessors import ModelRunnerPreprocessor
 
 # Test an existing engine
 filepath = "/dccstor/creme_brulee/ibm_datasets/processed/dev/en/askhr_74.jsonl"
 engine = SearchEngine(config_path="experiments/askhr/setup.yaml")
 print(engine.get_retriever_info())
-queries = SearchQueries(filepaths=[filepath])
+queries = SearchQueries(ModelRunnerPreprocessor(filepaths=[filepath]))
 
 output_file = "results.jsonl"
 
