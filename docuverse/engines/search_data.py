@@ -8,10 +8,22 @@ from docuverse.utils.text_tiler import TextTiler
 
 
 class DefaultProcessor:
-    def __init__(self, title_name:str= "title", stopwords:List[str]=[], lang:str="en"):
+    product_counts = {}
+    stopwords = None
+    def __init__(self, title_name:str= "title", _stopwords=None, lang:str= "en"):
         self.title = title_name
-        self.stopwords = stopwords
         self.lang = lang
+        self.read_stopwords()
+
+    @staticmethod
+    def read_stopwords():
+        if DefaultProcessor.stopwords is None:
+            stopword_file = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+                                     "resources","stopwords.json")
+            stopwords_list = json.load(open(stopword_file))
+            stopwords = {}
+            for lang, vals in stopwords_list.items():
+                stopwords[lang] = re.compile(f"\\b({'|'.join(vals)})\\b",re.IGNORECASE)
 
     def _init(self, **kwargs):
         pass
@@ -23,16 +35,20 @@ class DefaultProcessor:
             itm['title'] = ""
         return itm
 
-    def remove_stopwords(self, text:str, lang:str, do_replace: bool=False) -> str:
-        global stopwords, settings
-        if not do_replace:
+    def remove_stopwords(self, text:str, lang:str="en", do_replace: bool=False) -> str:
+        if not do_replace or self.stopwords[lang] is None:
             return text
         else:
-            if stopwords is None:
-                stopwords = re.compile(
-                    "\\b(?:" + "|".join(settings["analysis"]["filter"][f"{lang}_stop"]["stopwords"]) + ")\\b",
-                    re.IGNORECASE)
-            return re.sub(r' {2,}', ' ', re.sub(stopwords, " ", text))
+            return re.sub(r' {2,}', ' ', re.sub(self.stopwords[lang], " ", text))
+
+    @staticmethod
+    def increment_product_counts(product_id):
+        if product_id not in DefaultProcessor.product_counts:
+            DefaultProcessor.product_counts[product_id] = 1
+        else:
+            DefaultProcessor.product_counts[product_id] += 1
+
+
 
 class SAPProccesor(DefaultProcessor):
 
@@ -50,7 +66,8 @@ class SAPProccesor(DefaultProcessor):
                         line = ln.strip().split("\t")
                         self.docname2url_title[line[0]] = [line[1], line[2].strip()]
 
-    def process_product_id(self, url_fields, uniform_product_name, data_type):
+    @staticmethod
+    def process_product_id(url_fields, uniform_product_name, data_type):
         """
         Process the product ID based on the given fields, uniform product name, and data type.
 
@@ -89,7 +106,8 @@ class SAPProccesor(DefaultProcessor):
         else:
             return ""
 
-    def get_course_product_id(self, product_id):
+    @staticmethod
+    def get_course_product_id(product_id):
         """
         @param product_id: The product ID used to determine the course product ID for SAP.
         @return: The course product ID based on the given product ID.
@@ -103,7 +121,8 @@ class SAPProccesor(DefaultProcessor):
         else:
             return product_id
 
-    def process_url(self, doc_url: str, data_type: str = ""):
+    @staticmethod
+    def process_url(doc_url: str, data_type: str = ""):
         """
             process_url(doc_url:str, data_type:str="") -> Tuple[str, List[str]]
             This method processes a given URL and returns the modified URL and a list of fields.
@@ -117,7 +136,7 @@ class SAPProccesor(DefaultProcessor):
             Example:
             >>> doc_url = "https://example.com/some_document.html?locale=en-US"
             >>> data_type = "sap"
-            >>> process_url(doc_url, data_type)
+            >>> self.process_url(doc_url, data_type)
             ("https://example.com/some_document", ["https:", "", "example.com", "some_document"])
 
             Note:
@@ -135,11 +154,18 @@ class SAPProccesor(DefaultProcessor):
         else:
             return "", ["", "", "", "", "", ""]
 
-    def fix_title(title):
+    @staticmethod
+    def fix_title(title:str):
         return re.sub(r' {2,}', ' ', title.replace(" | SAP Help Portal", ""))
 
+    @staticmethod
+    def find_document_id(args):
+        for docid_name in ['document_id', 'docid', 'id']:
+            if docid_name in args:
+                return args[docid_name]
+        return ""
+
     def __call__(self, **kwargs):
-        global product_counts
         doc_url = kwargs.get("doc_url")
         data_type = kwargs.get("data_type", "")
 
@@ -147,28 +173,24 @@ class SAPProccesor(DefaultProcessor):
         uniform_product_name = kwargs.get("uniform_product_name", "")
         product_id = self.process_product_id(fields, uniform_product_name, data_type)
         title = kwargs.get("title")
-        docid = kwargs.get('docid', None)
-        if docid is not None:
+        docid = self.find_document_id(kwargs)
+        if docid != "":
             if docid.endswith(".txt"):
                 docid = docid[:-4]
             if docid in self.docname2url_title:
                 url, title = self.docname2url_title[docid]
 
-        if product_id not in product_counts:
-            product_counts[product_id] = 1
-        else:
-            product_counts[product_id] += 1
+        self.increment_product_counts(product_id)
 
-        itm = {
-            'productId': product_id,
-            'deliverableLoio': ("" if doc_url == "" else fields[-2]),
-            'filePath': "" if doc_url == "" else fields[-1],
-            'title': title,
-            'url': doc_url,
-            'app_name': "",
-            'courseGrainedProductId': self.get_course_product_id(product_id)
-        }
-
+        return {
+                'productId': product_id,
+                'deliverableLoio': ("" if doc_url == "" else fields[-2]),
+                'filePath': "" if doc_url == "" else fields[-1],
+                'title': title,
+                'url': doc_url,
+                'app_name': "",
+                'courseGrainedProductId': self.get_course_product_id(product_id)
+              }
 
 
 class SearchData:
@@ -183,17 +205,25 @@ class SearchData:
     }
 
     class Entry:
-        def __init__(self, dict: Dict[str, str]):
-            self.__dict__.update(dict)
+        def __init__(self, keys: Dict[str, str]):
+            self.__dict__.update(keys)
 
-    def __init__(self, filenames, text_field_name: str="text", title_field_name: str="title", **data):
+    def __init__(self, filenames,
+                 text_field_name: str="text",
+                 title_field_name: str="title",
+                 **data):
         self.entries = []
         self.tiler = None
+        self.default_labels = {
+            'title': title_field_name,
+            'text': text_field_name,
+            'id': data['document_id_field_name'] if 'document_id_field_name' in data else ""
+        }
         # self.dict = data
         # self.__dict__.update(data)
 
     def get_text(self, i:int) -> str:
-        return ""
+        return self.entries[i][self.default_labels['text']]
 
     def __getitem__(self, i: int):
         return self.entries[i]
@@ -315,6 +345,9 @@ class SearchData:
                                   template=itm,
                                   title_handling=title_handling)
 
+    def remove_stopwords(self, txt, **kwargs):
+        return txt
+
     @staticmethod
     def read_data(self, input_files,
                   lang,
@@ -328,16 +361,16 @@ class SearchData:
                   cache_dir=default_cache_dir,
                   title_handling='all',
                   **kwargs):
-        def remove_stopwords(text: str, lang, do_replace: bool = False) -> str:
-            global stopwords, settings
-            if not do_replace:
-                return text
-            else:
-                if stopwords is None:
-                    stopwords = re.compile(
-                        "\\b(?:" + "|".join(settings["analysis"]["filter"][f"{lang}_stop"]["stopwords"]) + ")\\b",
-                        re.IGNORECASE)
-                return re.sub(r' {2,}', ' ', re.sub(stopwords, " ", text))
+        # def remove_stopwords(text: str, lang, do_replace: bool = False) -> str:
+        #     global stopwords, settings
+        #     if not do_replace:
+        #         return text
+        #     else:
+        #         if stopwords is None:
+        #             stopwords = re.compile(
+        #                 "\\b(" + "|".join(settings["analysis"]["filter"][f"{lang}_stop"]["stopwords"]) + ")\\b",
+        #                 re.IGNORECASE)
+        #         return re.sub(r' {2,}', ' ', re.sub(stopwords, " ", text))
 
 
         passages = []
@@ -394,11 +427,11 @@ class SearchData:
                         assert len(row) in [2, 3, 4], f'Invalid .tsv record (has to contain 2 or 3 fields): {row}'
                         if 'answers' in row:
                             if remove_url:
-                                row['text'] = remove_stopwords(re.sub(url, lang, 'URL', row['text']), remv_stopwords)
-                            itm = {'text': (row["title"] + ' ' if 'title' in row else '') + row["text"],
+                                row['text'] = (re.sub(url, lang, 'URL', row['text']), remv_stopwords)
+                            itm = {'text': (self.remove_stopwords(row["title"]) + ' ' if 'title' in row else '') + row["text"],
                                    'id': row['id']}
                             if 'title' in row:
-                                itm['title'] = remove_stopwords(row['title'], lang, remv_stopwords)
+                                itm['title'] = self.remove_stopwords(row['title'], lang, remv_stopwords)
                             if 'relevant' in row:
                                 itm['relevant'] = row['relevant'].split(",")
                             if 'answers' in row:
@@ -409,9 +442,9 @@ class SearchData:
                             tpassages.extend(
                                 self.process_text(tiler=tiler,
                                                  id=row['id'],
-                                                 title=remove_stopwords(row['title'], lang,
+                                                 title=self.remove_stopwords(row['title'], lang,
                                                                         remv_stopwords) if 'title' in row else '',
-                                                 text=remove_stopwords(row['text'], lang, remv_stopwords),
+                                                 text=self.remove_stopwords(row['text'], lang, remv_stopwords),
                                                  max_doc_size=max_doc_size,
                                                  stride=stride,
                                                  remove_url=remove_url,
@@ -427,7 +460,7 @@ class SearchData:
                         data = json.load(in_file)
                     else:
                         data = [json.loads(line) for line in open(input_file).readlines()]
-                    uniform_product_name = kwargs.get('uniform_product_name', default=productId)
+                    uniform_product_name = kwargs.get('uniform_product_name', productId)
                     docid_filter = kwargs.get('docid_filter', [])
                     # data_type = get_attr(kwargs, 'data_type', 'sap')
                     if data_type in ['auto', 'sap']:
@@ -467,8 +500,8 @@ class SearchData:
                                 tpassages.extend(
                                     self.process_text(tiler=tiler,
                                                      id=doc[docidname],
-                                                     title=remove_stopwords(title, lang, remv_stopwords),
-                                                     text=remove_stopwords(doc[txtname], remv_stopwords),
+                                                     title=self.remove_stopwords(title, lang, remv_stopwords),
+                                                     text=self.remove_stopwords(doc[txtname], remv_stopwords),
                                                      max_doc_size=max_doc_size,
                                                      stride=stride,
                                                      remove_url=remove_url,
@@ -483,8 +516,8 @@ class SearchData:
                                     tpassages.extend(
                                         self.process_text(tiler=tiler,
                                                          id=f"{doc[docidname]}-{passage_id}",
-                                                         title=remove_stopwords(title, lang, remv_stopwords),
-                                                         text=remove_stopwords(passage[psg_txtname], remv_stopwords),
+                                                         title=self.remove_stopwords(title, lang, remv_stopwords),
+                                                         text=self.remove_stopwords(passage[psg_txtname], remv_stopwords),
                                                          max_doc_size=max_doc_size,
                                                          stride=stride,
                                                          remove_url=remove_url,
@@ -498,15 +531,15 @@ class SearchData:
                             print(f"Error at line {di}: {e}")
                             raise e
                         docs_read += 1
-                elif kwargs.get('read_sap_qfile', default=False) or input_file.endswith(".csv"):
+                elif kwargs.get('read_sap_qfile', False) or input_file.endswith(".csv"):
                     import pandas as pd
                     data = pd.read_csv(in_file)
                     passages = []
-                    docid_map = kwargs.get('docid_map', default={})
+                    docid_map = kwargs.get('docid_map', {})
                     for i in range(len(data)):
                         itm = {}
                         itm['id'] = i
-                        itm['text'] = remove_stopwords(data.Question[i].strip(), remv_stopwords)
+                        itm['text'] = self.remove_stopwords(data.Question[i].strip(), remv_stopwords)
                         itm['answers'] = data['Gold answer'][i]
                         psgs = []
                         ids = []
