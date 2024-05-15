@@ -1,12 +1,13 @@
 import yaml
 import os
+
+from docuverse.engines.search_engine_config_params import DocUVerseConfig
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
-from docuverse.engines.search_queries import SearchQueries
-from docuverse.engines.evaluation_output import EvaluationOutput
+from docuverse.utils.evaluation_output import EvaluationOutput
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
-from docuverse.utils import get_param
+from docuverse.engines.reranking.Reranker import Reranker
 
 class SearchEngine:
     DEFAULT_CACHE_DIR = os.path.join(f"{os.getenv('HOME')}", ".local", "share", "elastic_ingestion")
@@ -19,11 +20,15 @@ class SearchEngine:
     #     self.rouge_duplicate_threshold = get_param('rouge_duplicate_threshold', -1)
     #     self.duplicate_removal_ = get_param('duplicate_removal', "none")
     def __init__(self, config_path: str = None, **kwargs):
-        self.create(config_path=config_path)
+        self.retriever = None
+        self.reranker = None
+        self.reranking_config = None
+        self.retrieval_config = None
+        self.create(config_or_path=config_path)
 
 
     @staticmethod
-    def read_config(config_path):
+    def read_config(config_or_path):
         """
         Reads the configuration file at the specified path and returns the retrieved values for retrieval
         and reranking. The configuration file is consistent to the mf-coga config file (if that doesn't make sense
@@ -33,8 +38,8 @@ class SearchEngine:
           file is assumed to be flat.
           * The 'retrieval' parameter should have a value 'name' which will be used to decide the engine type.
 
-        :param config_path: The path to the configuration file.
-        :type config_path: str
+        :param config_or_path: The path to the configuration file.
+        :type config_or_path: str
 
         :return: A tuple containing the retrieved values for retrieval and reranking.
                  If the configuration file does not contain values for retrieval or reranking,
@@ -43,17 +48,20 @@ class SearchEngine:
 
         :raises yaml.YAMLError: If there is an error while loading the configuration file.
         """
-        with open(config_path) as stream:
-            try:
-                vals = yaml.safe_load(stream=stream)
-                return vals['retrieval'] if 'retrieval' in vals else vals, vals[
-                    'reranking'] if 'reranking' in vals else None
+        if os.path.exists(config_or_path):
+            with open(config_or_path) as stream:
+                try:
+                    vals = yaml.safe_load(stream=stream)
+                    return vals['retrieval'] if 'retrieval' in vals else vals, vals[
+                        'reranking'] if 'reranking' in vals else None
 
-            except yaml.YAMLError as exc:
-                raise exc
+                except yaml.YAMLError as exc:
+                    raise exc
+        elif isinstance(config_or_path, DocUVerseConfig):
+            return config_or_path
 
-    def create(self, config_path, **kwargs):
-        self.retrieval_config, self.reranking_config = SearchEngine.read_config(config_path)
+    def create(self, config_or_path, **kwargs):
+        self.retrieval_config, self.reranking_config = SearchEngine.read_config(config_or_path)
 
         if self.reranking_config is not None:
             self.reranker = SearchEngine._create_reranker(self.reranking_config)
@@ -64,11 +72,10 @@ class SearchEngine:
         return RetrievalEngine(retrieval_config)
 
     @classmethod
-    def _create_reranker(cls, reranking_config):
-        if reranking_config == None:
+    def _create_reranker(cls, reranking_config=None) -> Reranker:
+        if reranking_config is None:
             return None
 
-        from docuverse.engines.reranking.Reranker import Reranker
         reranker = Reranker(reranking_config)
         return reranker
 
@@ -86,3 +93,4 @@ class SearchEngine:
 
     def compute_score(self, queries: SearchQueries, results: SearchResult) -> EvaluationOutput:
         pass
+

@@ -38,6 +38,9 @@ class SearchResult:
 
         self.read_data(data)
 
+    def __len__(self):
+        return len(self.results)
+
     def append(self, data: Dict[str, str], **kwargs):
         self.results.append(SearchResult.SearchDatum(data, **kwargs))
 

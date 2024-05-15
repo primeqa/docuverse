@@ -68,6 +68,7 @@ class DenseEmbeddingFunction:
             #     embs = self.queries_to_vectors(self.tokenizer, self.model, texts, max_query_length=500).tolist()
         return embs
 
+    @staticmethod
     def normalize(passage_vectors):
         return [v / np.linalg.norm(v) for v in passage_vectors if np.linalg.norm(v) > 0]
 

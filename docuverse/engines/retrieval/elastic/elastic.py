@@ -4,10 +4,9 @@ except:
     print(f"You need to install elasticsearch to be using ElasticSearch functionality!")
     raise RuntimeError("fYou need to install elasticsearch to be using ElasticSearch functionality!")
 from docuverse.engines.search_result import SearchResult
-from docuverse.utils.config_params import ConfigParams
+from docuverse.engines.search_engine_config_params import SearchEngineConfig
 
 import os
-import json
 from dotenv import load_dotenv
 
 class ElasticEngine:
@@ -26,7 +25,7 @@ class ElasticEngine:
         self.ssl_fingerprint = os.getenv('ES_SSL_FINGERPRINT')
     
     def _init_config(self, config_params):
-        config_params = ConfigParams(config=config_params)
+        config_params = SearchEngineConfig(config=config_params)
         self.index_name = config_params.index
         self.title_field = config_params.title_field
         self.text_field = config_params.text_field
@@ -95,8 +94,6 @@ class ElasticEngine:
         return super().create_query(text, kwargs)
 
     def ingest(self, corpus, **kwargs):
-        import json
-        from elasticsearch.helpers import bulk
         from tqdm import tqdm
         for index, record in tqdm(enumerate(corpus)):
             resp = self.client.index(index=self.index_name, id=1, document=record)

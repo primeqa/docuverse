@@ -10,7 +10,8 @@ from docuverse.utils.text_tiler import TextTiler
 class DefaultProcessor:
     product_counts = {}
     stopwords = None
-    def __init__(self, title_name:str= "title", _stopwords=None, lang:str= "en"):
+
+    def __init__(self, title_name: str = "title", _stopwords=None, lang: str = "en"):
         self.title = title_name
         self.lang = lang
         self.read_stopwords()
@@ -19,11 +20,11 @@ class DefaultProcessor:
     def read_stopwords():
         if DefaultProcessor.stopwords is None:
             stopword_file = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
-                                     "resources","stopwords.json")
+                                         "resources", "stopwords.json")
             stopwords_list = json.load(open(stopword_file))
             stopwords = {}
             for lang, vals in stopwords_list.items():
-                stopwords[lang] = re.compile(f"\\b({'|'.join(vals)})\\b",re.IGNORECASE)
+                stopwords[lang] = re.compile(f"\\b({'|'.join(vals)})\\b", re.IGNORECASE)
 
     def _init(self, **kwargs):
         pass
@@ -35,7 +36,7 @@ class DefaultProcessor:
             itm['title'] = ""
         return itm
 
-    def remove_stopwords(self, text:str, lang:str="en", do_replace: bool=False) -> str:
+    def remove_stopwords(self, text: str, lang: str = "en", do_replace: bool = False) -> str:
         if not do_replace or self.stopwords[lang] is None:
             return text
         else:
@@ -49,10 +50,9 @@ class DefaultProcessor:
             DefaultProcessor.product_counts[product_id] += 1
 
 
-
 class SAPProccesor(DefaultProcessor):
 
-    def __init__(self, title_name:str= "title", hana_file2url:List[str]=None):
+    def __init__(self, title_name: str = "title", hana_file2url: List[str] = None):
         super().__init__(title_name)
         self.docname2url_title = {}
         self._init(hana_file2url=hana_file2url)
@@ -155,7 +155,7 @@ class SAPProccesor(DefaultProcessor):
             return "", ["", "", "", "", "", ""]
 
     @staticmethod
-    def fix_title(title:str):
+    def fix_title(title: str):
         return re.sub(r' {2,}', ' ', title.replace(" | SAP Help Portal", ""))
 
     @staticmethod
@@ -183,14 +183,14 @@ class SAPProccesor(DefaultProcessor):
         self.increment_product_counts(product_id)
 
         return {
-                'productId': product_id,
-                'deliverableLoio': ("" if doc_url == "" else fields[-2]),
-                'filePath': "" if doc_url == "" else fields[-1],
-                'title': title,
-                'url': doc_url,
-                'app_name': "",
-                'courseGrainedProductId': self.get_course_product_id(product_id)
-              }
+            'productId': product_id,
+            'deliverableLoio': ("" if doc_url == "" else fields[-2]),
+            'filePath': "" if doc_url == "" else fields[-1],
+            'title': title,
+            'url': doc_url,
+            'app_name': "",
+            'courseGrainedProductId': self.get_course_product_id(product_id)
+        }
 
 
 class SearchData:
@@ -205,12 +205,12 @@ class SearchData:
     }
 
     class Entry:
-        def __init__(self, keys: Dict[str, str]):
-            self.__dict__.update(keys)
+        def __init__(self, config: Dict[str, str]):
+            self.__dict__.update(config)
 
     def __init__(self, filenames,
-                 text_field_name: str="text",
-                 title_field_name: str="title",
+                 text_field_name: str = "text",
+                 title_field_name: str = "title",
                  **data):
         self.entries = []
         self.tiler = None
@@ -222,7 +222,7 @@ class SearchData:
         # self.dict = data
         # self.__dict__.update(data)
 
-    def get_text(self, i:int) -> str:
+    def get_text(self, i: int) -> str:
         return self.entries[i][self.default_labels['text']]
 
     def __getitem__(self, i: int):
@@ -372,7 +372,6 @@ class SearchData:
         #                 re.IGNORECASE)
         #         return re.sub(r' {2,}', ' ', re.sub(stopwords, " ", text))
 
-
         passages = []
         doc_based = kwargs.get('doc_based', True)
         docid_map = kwargs.get('docid_map', {})
@@ -428,7 +427,8 @@ class SearchData:
                         if 'answers' in row:
                             if remove_url:
                                 row['text'] = (re.sub(url, lang, 'URL', row['text']), remv_stopwords)
-                            itm = {'text': (self.remove_stopwords(row["title"]) + ' ' if 'title' in row else '') + row["text"],
+                            itm = {'text': (self.remove_stopwords(row["title"]) + ' ' if 'title' in row else '') + row[
+                                "text"],
                                    'id': row['id']}
                             if 'title' in row:
                                 itm['title'] = self.remove_stopwords(row['title'], lang, remv_stopwords)
@@ -441,19 +441,19 @@ class SearchData:
                         else:
                             tpassages.extend(
                                 self.process_text(tiler=tiler,
-                                                 id=row['id'],
-                                                 title=self.remove_stopwords(row['title'], lang,
-                                                                        remv_stopwords) if 'title' in row else '',
-                                                 text=self.remove_stopwords(row['text'], lang, remv_stopwords),
-                                                 max_doc_size=max_doc_size,
-                                                 stride=stride,
-                                                 remove_url=remove_url,
-                                                 tokenizer=tokenizer,
-                                                 doc_url=url,
-                                                 uniform_product_name=None,
-                                                 data_type=data_type,
-                                                 title_handling=title_handling
-                                             ))
+                                                  id=row['id'],
+                                                  title=self.remove_stopwords(row['title'], lang,
+                                                                              remv_stopwords) if 'title' in row else '',
+                                                  text=self.remove_stopwords(row['text'], lang, remv_stopwords),
+                                                  max_doc_size=max_doc_size,
+                                                  stride=stride,
+                                                  remove_url=remove_url,
+                                                  tokenizer=tokenizer,
+                                                  doc_url=url,
+                                                  uniform_product_name=None,
+                                                  data_type=data_type,
+                                                  title_handling=title_handling
+                                                  ))
                 elif input_file.endswith('.json') or input_file.endswith(".jsonl"):
                     # This should be the SAP or BEIR json format
                     if input_file.endswith('.json'):
@@ -499,34 +499,35 @@ class SearchData:
                             if doc_based:
                                 tpassages.extend(
                                     self.process_text(tiler=tiler,
-                                                     id=doc[docidname],
-                                                     title=self.remove_stopwords(title, lang, remv_stopwords),
-                                                     text=self.remove_stopwords(doc[txtname], remv_stopwords),
-                                                     max_doc_size=max_doc_size,
-                                                     stride=stride,
-                                                     remove_url=remove_url,
-                                                     tokenizer=tokenizer,
-                                                     doc_url=url,
-                                                     uniform_product_name=uniform_product_name,
-                                                     data_type=data_type
-                                                 ))
+                                                      id=doc[docidname],
+                                                      title=self.remove_stopwords(title, lang, remv_stopwords),
+                                                      text=self.remove_stopwords(doc[txtname], remv_stopwords),
+                                                      max_doc_size=max_doc_size,
+                                                      stride=stride,
+                                                      remove_url=remove_url,
+                                                      tokenizer=tokenizer,
+                                                      doc_url=url,
+                                                      uniform_product_name=uniform_product_name,
+                                                      data_type=data_type
+                                                      ))
                             else:
                                 for pi, passage in enumerate(doc['passages']):
                                     passage_id = passage['passage_id'] if 'passage_id' in passage else pi
                                     tpassages.extend(
                                         self.process_text(tiler=tiler,
-                                                         id=f"{doc[docidname]}-{passage_id}",
-                                                         title=self.remove_stopwords(title, lang, remv_stopwords),
-                                                         text=self.remove_stopwords(passage[psg_txtname], remv_stopwords),
-                                                         max_doc_size=max_doc_size,
-                                                         stride=stride,
-                                                         remove_url=remove_url,
-                                                         tokenizer=tokenizer,
-                                                         doc_url=url,
-                                                         uniform_product_name=uniform_product_name,
-                                                         data_type=data_type,
-                                                         title_handling=title_handling
-                                                     ))
+                                                          id=f"{doc[docidname]}-{passage_id}",
+                                                          title=self.remove_stopwords(title, lang, remv_stopwords),
+                                                          text=self.remove_stopwords(passage[psg_txtname],
+                                                                                     remv_stopwords),
+                                                          max_doc_size=max_doc_size,
+                                                          stride=stride,
+                                                          remove_url=remove_url,
+                                                          tokenizer=tokenizer,
+                                                          doc_url=url,
+                                                          uniform_product_name=uniform_product_name,
+                                                          data_type=data_type,
+                                                          title_handling=title_handling
+                                                          ))
                         except Exception as e:
                             print(f"Error at line {di}: {e}")
                             raise e
@@ -566,7 +567,8 @@ class SearchData:
                         itm['relevant'] = ids
                         tpassages.append(itm)
                     self.write_cache_file(
-                        self.get_cached_filename(input_file, max_doc_size, stride, tiler, title_handling=title_handling),
+                        self.get_cached_filename(input_file, max_doc_size, stride, tiler,
+                                                 title_handling=title_handling),
                         tpassages,
                         use_cache)
                     if return_unmapped_ids:
