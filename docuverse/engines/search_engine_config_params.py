@@ -9,8 +9,13 @@ from dataclasses import dataclass, field
 from transformers import HfArgumentParser
 
 
+class GenericArguments:
+    def get(self, key:str, default=None):
+        return self.__dict__[key] if key in self.__dict__ else None
+
+
 @dataclass
-class SearchEngineArguments:
+class SearchEngineArguments(GenericArguments):
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
@@ -135,12 +140,26 @@ class SearchEngineArguments:
         }
     )
 
+    text_field: Optional[str] = field(
+        default="text",
+        metadata={
+            "help": "Defines the text field name in the document json line (default: 'text')."
+        }
+    )
+
+    title_field: Optional[str] = field(
+        default="title",
+        metadata={
+            "help": "Defines the title field name in the document json line (default: 'title')."
+        }
+    )
+
     def __post_init__(self):
         pass
 
 
 @dataclass
-class EngineArguments:
+class EngineArguments(GenericArguments):
     output_file: Optional[str] = field(
         default=None,
         metadata={
@@ -174,7 +193,7 @@ class EngineArguments:
                 setattr(self, action_flag, True)
 
 @dataclass
-class EvaluationArguments:
+class EvaluationArguments(GenericArguments):
     compute_rouge: Optional[bool] = field(
         default=False,
         metadata={
@@ -225,12 +244,12 @@ class SearchEngineConfig:
     rouge_duplicate_threshold: float
 
     def __init__(self, config: dict):
-        self.index = config['index']
-        self.title_field = config.get('title_field', None)
-        self.text_field = config.get('text_field', None)
+        self.index = get_param(config, 'index|index_name')
+        self.title_field = get_param(config, 'title_field', None)
+        self.text_field = get_param(config, 'text_field', None)
         self.productId_field = get_param(config, 'productId_field', None)
         self.fields = get_param(config, 'fields', None)
-        self.n_docs = get_param(config, 'n_docs', 30)
+        self.n_docs = get_param(config, 'n_docs|top_k', 30)
         self.search_type = get_param(config, 'search-type', None)
         self.filters = get_param(config, 'filters', None)
         # "Defines the strategy for removing duplicates (default: don't remove). It can be 'rouge' (based on rouge similarity) or 'exact' (exact match)")
@@ -248,9 +267,10 @@ class SearchEngineConfig:
         self.max_doc_length = int(config.get("max-doc-length")) if 'max-doc-length' in config else None
         self.doc_based = config.get("doc-based", False)
         self.db_engine = config.get("db-engine", "es-dense")
+        self.server = config.get("server", None)
 
 
-class RunConfig:
+class RunConfig(GenericArguments):
     pass
 
 
@@ -276,7 +296,7 @@ class EvaluationConfig:
         self.__dict__.update(data)
 
 
-class DocUVerseConfig:
+class DocUVerseConfig(GenericArguments):
     """
     class DocUVerseConfig:
         Represents the configuration for DocUVerse.

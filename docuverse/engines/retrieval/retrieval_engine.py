@@ -29,15 +29,15 @@ class RetrievalEngine:
         engine: A retriever object.
 
         """
-        name = get_param(retriever_config, 'name')
-        if name.startswith('elastic'):
-            if name == 'elastic_bm25':
+        name = retriever_config.get('db_engine')
+        if name.startswith('elastic-') or name.startswith('es-'):
+            if name in ['es-bm25', 'elastic-bm25']:
                 engine = elastic.ElasticBM25Engine(retriever_config)
-            elif name == 'elastic_dense':
+            elif name in ['es-dense','elastic-dense']:
                 engine = elastic.ElasticDenseEngine(retriever_config)
-            elif name == 'elastic_elser':
+            elif name in ['es-elser', 'elastic-elser']:
                 engine = elastic.ElasticElserEngine(retriever_config)
-            elif name == "elastic_hybrid":
+            elif name in ['es-hybrid', "elastic-hybrid"]:
                 engine = elastic.ElasticHybridEngine(retriever_config)
         elif name.startswith('primeqa'):
             pass

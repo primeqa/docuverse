@@ -1,7 +1,7 @@
 import yaml
 import os
 
-from docuverse.engines.search_engine_config_params import DocUVerseConfig
+from docuverse.engines.search_engine_config_params import DocUVerseConfig, SearchEngineArguments
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
@@ -48,17 +48,21 @@ class SearchEngine:
 
         :raises yaml.YAMLError: If there is an error while loading the configuration file.
         """
-        if os.path.exists(config_or_path):
-            with open(config_or_path) as stream:
-                try:
-                    vals = yaml.safe_load(stream=stream)
-                    return vals['retrieval'] if 'retrieval' in vals else vals, vals[
-                        'reranking'] if 'reranking' in vals else None
+        if isinstance(config_or_path, str):
+            if os.path.exists(config_or_path):
+                with open(config_or_path) as stream:
+                    try:
+                        vals = yaml.safe_load(stream=stream)
+                        return vals['retrieval'] if 'retrieval' in vals else vals, vals[
+                            'reranking'] if 'reranking' in vals else None
 
-                except yaml.YAMLError as exc:
-                    raise exc
-        elif isinstance(config_or_path, DocUVerseConfig):
-            return config_or_path
+                    except yaml.YAMLError as exc:
+                        raise exc
+            else:
+                print(f"The configuration file '{config_or_path}' does not exist.")
+                raise FileNotFoundError(f"The configuration file '{config_or_path}' does not exist.")
+        elif isinstance(config_or_path, DocUVerseConfig|SearchEngineArguments):
+            return config_or_path, None
 
     def create(self, config_or_path, **kwargs):
         self.retrieval_config, self.reranking_config = SearchEngine.read_config(config_or_path)

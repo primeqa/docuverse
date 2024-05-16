@@ -1,4 +1,14 @@
 from .embedding_function import DenseEmbeddingFunction
 
-def get_param(dictionary, key, default=None):
-    return dictionary[key] if key in dictionary else default
+
+def get_param(dictionary, key: str, default: str|None=None):
+    if key.find("|") > 0:
+        weird_value = ":+:+"
+        keys = key.split("|")
+        for k in keys:
+            k = dictionary.get(k, weird_value)
+            if k != weird_value:
+                return k
+        return default
+    else:
+        return dictionary.get(key, default)
