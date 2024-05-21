@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Union
 from tqdm import tqdm
 
 
@@ -41,15 +41,15 @@ class SearchResult:
     def __len__(self):
         return len(self.results)
 
-    def append(self, data: Dict[str, str], **kwargs):
-        self.results.append(SearchResult.SearchDatum(data, **kwargs))
-
-    def append(self, datum: SearchDatum):
-        self.results.append(datum)
+    def append(self, data: Union[Dict[str, str], SearchDatum], **kwargs):
+        if isinstance(data, SearchResult.SearchDatum):
+            self.results.append(data)
+        else:
+            self.results.append(SearchResult.SearchDatum(data, **kwargs))
 
     def remove_duplicates(self, duplicate_removal: str = "none",
                           rouge_duplicate_threshold: float = -1.0):
-        if duplicate_removal == "none" or self.results == []:
+        if duplicate_removal is None or duplicate_removal == "none" or self.results == []:
             return
         ret = SearchResult([])
         if duplicate_removal == "exact":
@@ -77,6 +77,12 @@ class SearchResult:
                 if not found:
                     ret.append(r)
         return ret
+
+    def __getitem__(self, i: int) -> SearchDatum:
+        return self.results[i]
+
+    def __iter__(self):
+        return iter(self.results)
 
     def read_data(self, data):
         if isinstance(data, dict):

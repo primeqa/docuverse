@@ -1,5 +1,10 @@
+import copy
 import json
+from typing import Union
+
 import yaml
+
+from docuverse.engines import SearchData
 
 try:
     from elasticsearch import Elasticsearch
@@ -8,13 +13,14 @@ except:
     raise RuntimeError("fYou need to install elasticsearch to be using ElasticSearch functionality!")
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_engine_config_params import SearchEngineConfig
+from docuverse.utils import get_param
 
 import os
 from dotenv import load_dotenv
 
 
 class ElasticServers:
-    def __init__(self, config="servers.json"):
+    def __init__(self, config="../../../../config/elastic_servers.json"):
         self.servers = {}
         if os.path.exists(config):
             if config.endswith(".json"):
@@ -27,17 +33,26 @@ class ElasticServers:
 
 
 class ElasticEngine:
-    es_servers = ElasticServers("servers.json")
+    es_servers = ElasticServers("config/elastic_servers.json")
+    languages = ['en', 'es', 'fr', 'pt', 'ja', 'de']
 
     @staticmethod
     def read_config(config: str):
         es_servers = ElasticServers(config)
 
     def __init__(self, config_params, **kwargs):
-        super().__init__(**kwargs)
+        # super().__init__(**kwargs)
+        self.index_name = None
+        self.filters = None
+        self.duplicate_removal = None
+        self.coga_mappings = {}
+        self.settings = {}
         self._init_connection_info(config_params.get('server'))
         self._init_config(config_params)
         self._init_client()
+        self._read_mappings("config/elastic_config.json")
+        self._set_pipelines()
+        self.config = config_params
 
     def _init_connection_info(self, server:str=None):
         if server is None:
@@ -48,38 +63,43 @@ class ElasticEngine:
             self.api_key = os.getenv('ES_API_KEY')
             self.ssl_fingerprint = os.getenv('ES_SSL_FINGERPRINT')
         else:
-            server_info = self.es_servers.get(server)
+            server_info = self.es_servers.get(server.lower())
             if server_info is None:
                 raise RuntimeError(f"ElasticSearch server {server} not found.")
-            self.host, self.api_key, self.ssl_fingerprint = \
-                [server_info.get(key) for key in ['host', 'api_key', 'ssl_fingerprint']]
+            for key, val in server_info.items():
+                setattr(self, key, val)
+            # self.host, self.api_key, self.ssl_fingerprint = \
+            #     [server_info.get(key) for key in ['host', 'api_key', 'ssl_fingerprint']]
 
-    def _init_config(self, config_params):
+
+    def _init_config(self, config_params: Union[dict, SearchEngineConfig]):
         if isinstance(config_params, dict):
             config_params = SearchEngineConfig(config=config_params)
 
-        self.index_name = config_params.index_name
-        self.title_field = config_params.title_field
-        self.text_field = config_params.text_field
-        self.fields = config_params.fields
-        self.n_docs = config_params.n_docs
+        # Elastic doesn't accept _ -> convert them to dashes.
+        config_params.index_name = config_params.index_name.replace("_", "-")
+        PARAM_NAMES = ["index_name", "title_field", "text_field", "n_docs", "filters", "duplicate_removal",
+                       "rouge_duplicate_threshold"]
+
+        for param_name in PARAM_NAMES:
+            setattr(self, param_name, get_param(config_params, param_name))
+
+
+
         self.config = config_params
-        self.filters = config_params.filters
-        self.duplicate_removal = config_params.duplicate_removal
-        self.rouge_duplicate_threshold = config_params.rouge_duplicate_threshold
 
     def _init_client(self):
-        if self.password is not None:
-            self.client = Elasticsearch(
-                f"{self.host}:9200",
-                basic_auth=(self.user, self.password),
-                ssl_assert_fingerprint=self.ssl_fingerprint
-            )
-        elif self.api_key is not None:
+        if self.api_key is not None:
             self.client = Elasticsearch(f"{self.host}",
                                         ssl_assert_fingerprint=self.ssl_fingerprint,
                                         api_key=self.api_key,
                                         request_timeout=60)
+        elif self.password is not None:
+            self.client = Elasticsearch(
+                f"{self.host}",
+                basic_auth=(self.user, self.password),
+                ssl_assert_fingerprint=self.ssl_fingerprint
+            )
         try:
             _ = self.client.info()
         except Exception as e:
@@ -89,8 +109,8 @@ class ElasticEngine:
     def info(self):
         return f"Elasticsearch client.info(): \n{self.client.info().body}"
 
-    def search(self, text, **kwargs) -> SearchResult:
-        query, knn, rank = self.create_query(text, **kwargs)
+    def search(self, input: str, **kwargs) -> SearchResult:
+        query, knn, rank = self.create_query(input['text'], **kwargs)
         if self.filters:
             for filter in self.filters:
                 print(filter)
@@ -106,7 +126,7 @@ class ElasticEngine:
             # TODO - top_k and n_docs is the same argument or am I missing something?
             size=self.n_docs,
             # TODO - This should be specified in the retrieval config too
-            source_excludes=['vector', 'ml.predicted_value']
+            source_excludes=['vector', 'ml.predicted_value', 'ml.tokens']
         )
 
         result = SearchResult(data=self.read_results(res))
@@ -122,8 +142,9 @@ class ElasticEngine:
             results.append(r)
         return results
 
-    def create_query(self, text, **kwargs):
-        return super().create_query(text, kwargs)
+    def create_query(self, text: str, **kwargs):
+        pass
+        # return super().create_query(text, kwargs)
 
     def ingest(self, corpus, **kwargs):
         from tqdm import tqdm
@@ -152,4 +173,31 @@ class ElasticEngine:
         return query
 
     def ingest_documents(self, documents, **kwargs):
+        pass
+
+    def _read_mappings(self, param_file):
+        def union(a, b):
+            if a == {}:
+                return copy.deepcopy(b)
+            else:
+                c = copy.deepcopy(a)
+                for k in b.keys():
+                    if k in a:
+                        c[k] = union(a[k], b[k])
+                    else:
+                        c[k] = copy.deepcopy(b[k])
+            return c
+
+        with open(param_file) as f:
+            config = json.load(f)
+            standard_mappings = config['settings']['standard']
+            for lang in ElasticEngine.languages:
+                self.settings[lang] = union(config['settings']['common'],
+                                       config['settings'][lang if lang in config['settings'] else 'en']
+                                       )
+                self.coga_mappings[lang] = union(config['mappings']['common'],
+                                            config['mappings'][lang if lang in config['mappings'] else 'en']
+                                            )
+
+    def _set_pipelines(self, config_params):
         pass

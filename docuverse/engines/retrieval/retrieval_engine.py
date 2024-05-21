@@ -4,7 +4,34 @@ from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.retrieval import elastic
 from docuverse.utils import get_param
 
+
 class RetrievalEngine:
+    """
+
+    RetrievalEngine
+
+    Class representing a retrieval engine for searching and ingesting data.
+
+    Methods:
+    - __init__(self, config_params, **kwargs)
+        Initializes a RetrievalEngine object with the given configuration parameters.
+
+    - search(self, query, **kwargs)
+        Performs a search using the retrieval engine.
+
+    - ingest(self, corpus: SearchCorpus, **kwargs)
+        Ingests a corpus into the retrieval engine.
+
+    - info(self)
+        Retrieves information about the retrieval engine.
+
+    - create_engine(retriever_config: dict) -> engine
+        Creates a retriever object based on the given retrieval configuration.
+
+    - create_query(text, **kwargs) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]
+        Creates a query based on the given text.
+
+    """
     def __init__(self, config_params, **kwargs):
         self.args = kwargs
         self.engine = self.create_engine(retriever_config=config_params)
@@ -12,13 +39,14 @@ class RetrievalEngine:
     def search(self, query, **kwargs):
         return self.engine.search(query)
 
-    def ingest(self, corpus: SearchCorpus,**kwargs):
+    def ingest(self, corpus: SearchCorpus, **kwargs):
         self.engine.ingest(corpus)
-    
+
     def info(self):
         return self.engine.info()
-    
-    def create_engine(self, retriever_config:dict):
+
+    @staticmethod
+    def create_engine(retriever_config: dict):
         """
         Create a retriever object based on the given retrieval configuration.
 
@@ -30,10 +58,11 @@ class RetrievalEngine:
 
         """
         name = retriever_config.get('db_engine')
+        engine = None
         if name.startswith('elastic-') or name.startswith('es-'):
             if name in ['es-bm25', 'elastic-bm25']:
                 engine = elastic.ElasticBM25Engine(retriever_config)
-            elif name in ['es-dense','elastic-dense']:
+            elif name in ['es-dense', 'elastic-dense']:
                 engine = elastic.ElasticDenseEngine(retriever_config)
             elif name in ['es-elser', 'elastic-elser']:
                 engine = elastic.ElasticElserEngine(retriever_config)
@@ -55,8 +84,9 @@ class RetrievalEngine:
             except ImportError as e:
                 print("You need to install docuverse_chomadb package.")
                 raise e
-        
+
         return engine
 
-    def create_query(self, text, **kwargs) -> Tuple[Dict[str,str], Dict[str,str], Dict[str,str]]:
+    @staticmethod
+    def create_query(text, **kwargs) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
         return None, None, None

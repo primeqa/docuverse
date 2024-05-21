@@ -988,7 +988,7 @@ if __name__ == '__main__':
     engine = SearchEngine(config.search_config)
     scorer = None
 
-    if config.eval_config is not None:
+    if config.evaluate and config.eval_config is not None:
         scorer = EvaluationEngine(config.eval_config)
 
     if config.ingest or config.update:
@@ -998,6 +998,7 @@ if __name__ == '__main__':
     if config.retrieve:
         queries = SearchQueries.read(config.input_queries, **vars(config.search_config))
         output = engine.search(queries)
+        output.save(config.output_file)
         if config.evaluate:
             results = scorer.compute_score(queries, output)
             print(f"Results:\n{results}")

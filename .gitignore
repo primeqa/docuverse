@@ -139,3 +139,4 @@ results.jsonl
 examples/tmp.ipynb
 /benchmark/
 /models/
+/config

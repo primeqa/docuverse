@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from docuverse import SearchResult, SearchQueries
 from docuverse.engines import SearchData
-from docuverse.engines.search_engine_config_params import EvaluationConfig
+from docuverse.engines.search_engine_config_params import EvaluationConfig, EvaluationArguments
 from .evaluation_output import EvaluationOutput
 
 
@@ -18,11 +18,12 @@ class EvaluationEngine:
         self.read(config)
 
     def read(self, config):
-        if isinstance(config, EvaluationConfig):
+        if isinstance(config, EvaluationArguments):
+            for param in vars(config):
+                setattr(self, param, getattr(config, param))
+        elif isinstance(config, str) and os.path.exists(config): # It's a file
             pass
-        elif os.path.exists(config): # It's a file
-            pass
-        if self.config.compute_rouge_score:
+        if self.config.compute_rouge:
             self.rouge_scorer = Rouge()
 
     def compute_score(self, input_queries: SearchQueries, system: SearchResult) -> EvaluationOutput:

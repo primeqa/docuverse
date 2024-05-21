@@ -21,6 +21,7 @@ class SearchEngineArguments(GenericArguments):
     """
 
     model_name: str = field(
+        default="",
         metadata={"help": "Pre-trained model name or path if not the same as model_name"}
     )
 
@@ -154,6 +155,27 @@ class SearchEngineArguments(GenericArguments):
         }
     )
 
+    filters: Optional[str]|None = field(
+        default=None,
+        metadata={
+            "help": "Defines the fields to filter on when searching with ElasticSearch (default: None)."
+        }
+    )
+
+    server: Optional[str]|None = field(
+        default=None,
+        metadata={
+            "help": "The server to use (convai, resconvai, ailang)."
+        }
+    )
+
+    lang: Optional[str] = field(
+        default="en",
+        metadata={
+            "help": "The language of the documents (default: en)."
+        }
+    )
+
     def __post_init__(self):
         pass
 
@@ -187,6 +209,8 @@ class EngineArguments(GenericArguments):
     rerank: Optional[bool] = False
 
     def __post_init__(self):
+        for _, val in self.action_flags.items():
+            setattr(self, val, False)
         for a in self.actions:
             action_flag = self.action_flags.get(a)
             if action_flag is not None:
@@ -214,13 +238,6 @@ class EvaluationArguments(GenericArguments):
         default="1,3,5",
         metadata={
             "help": "Defines the R@i evaluation ranks."
-        }
-    )
-
-    server: Optional[str]|None = field(
-        default=None,
-        metadata={
-            "help": "The server to use (convai, resconvai, ailang)."
         }
     )
 

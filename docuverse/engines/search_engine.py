@@ -1,5 +1,9 @@
+from typing import List
+
 import yaml
 import os
+
+from tqdm import tqdm
 
 from docuverse.engines.search_engine_config_params import DocUVerseConfig, SearchEngineArguments
 from docuverse.engines.search_result import SearchResult
@@ -89,8 +93,9 @@ class SearchEngine:
     def get_retriever_info(self):
         return self.retriever.info()
 
-    def search(self, corpus: SearchQueries) -> SearchResult:
-        pass
+    def search(self, queries: SearchQueries) -> List[SearchResult]:
+        answers = [self.retriever.search(query) for query in tqdm(queries, desc="Processing queries: ")]
+        return answers
 
     def set_index(self, index=None):
         pass

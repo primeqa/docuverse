@@ -201,12 +201,16 @@ class SearchData:
     default_cache_dir = os.path.join(f"{os.getenv('HOME')}", ".local", "share", "elastic_ingestion")
     processor_map = {
         'default': DefaultProcessor(),
+        'auto': DefaultProcessor(),
         'sap': SAPProccesor(title_name='title')
     }
 
     class Entry:
         def __init__(self, config: Dict[str, str]):
             self.__dict__.update(config)
+
+        def get_text(self):
+            return getattr(self, "text")
 
     def __init__(self, filenames,
                  text_field_name: str = "text",
@@ -225,8 +229,8 @@ class SearchData:
     def get_text(self, i: int) -> str:
         return self.entries[i][self.default_labels['text']]
 
-    def __getitem__(self, i: int):
-        return self.entries[i]
+    def __getitem__(self, i: int) -> Entry:
+        return SearchData.Entry(**self.entries[i])
 
     def get_cached_filename(input_file: str,
                             max_doc_size: int,
@@ -234,7 +238,7 @@ class SearchData:
                             tiler: TextTiler,
                             title_handling="all",
                             cache_dir: str = default_cache_dir):
-        tok_dir_name = os.path.basename(tiler.tokenizer.name_or_path)
+        tok_dir_name = os.path.basename(tiler.tokenizer.name_or_path) if tiler is not None else "none"
         if tok_dir_name == "":
             tok_dir_name = os.path.basename(os.path.dirname(tiler.tokenizer.name_or_path))
         cache_file_name = os.path.join(cache_dir, "_".join([f"{input_file.replace('/', '__')}",
@@ -292,7 +296,8 @@ class SearchData:
             output_stream.write(f"{json.dumps(p)}\n".encode("utf-8"))
         output_stream.close()
 
-    def process_text(self,
+    @classmethod
+    def process_text(cls,
                      tiler,
                      id,
                      title,
@@ -331,7 +336,7 @@ class SearchData:
         """
 
         if processor is None:
-            processor = self.processor_map[data_type]
+            processor = cls.processor_map[data_type]
 
         itm = processor(id=id, title=title, text=text, remove_url=remove_url, doc_url=doc_url,
                         uniform_product_name=uniform_product_name, data_type=data_type, title_handling=title_handling)
@@ -345,12 +350,14 @@ class SearchData:
                                   template=itm,
                                   title_handling=title_handling)
 
-    def remove_stopwords(self, txt, **kwargs):
+    @staticmethod
+    def remove_stopwords(txt, **kwargs):
         return txt
 
-    @staticmethod
-    def read_data(self, input_files,
-                  lang,
+    @classmethod
+    def read_data(cls,
+                  input_files,
+                  lang="en",
                   fields=None,
                   remove_url=False,
                   tokenizer=None,
@@ -361,16 +368,6 @@ class SearchData:
                   cache_dir=default_cache_dir,
                   title_handling='all',
                   **kwargs):
-        # def remove_stopwords(text: str, lang, do_replace: bool = False) -> str:
-        #     global stopwords, settings
-        #     if not do_replace:
-        #         return text
-        #     else:
-        #         if stopwords is None:
-        #             stopwords = re.compile(
-        #                 "\\b(" + "|".join(settings["analysis"]["filter"][f"{lang}_stop"]["stopwords"]) + ")\\b",
-        #                 re.IGNORECASE)
-        #         return re.sub(r' {2,}', ' ', re.sub(stopwords, " ", text))
 
         passages = []
         doc_based = kwargs.get('doc_based', True)
@@ -400,18 +397,22 @@ class SearchData:
                 productId, input_file = input_file.split(":")
             else:
                 productId = None
-            cached_passages = SearchData.read_cache_file_if_needed(
-                SearchData.get_cached_filename(input_file,
-                                               max_doc_size=max_doc_size,
-                                               stride=stride,
-                                               title_handling=title_handling,
-                                               tiler=tiler),
+            cached_passages = cls.read_cache_file_if_needed(
+                cls.get_cached_filename(input_file,
+                                        max_doc_size=max_doc_size,
+                                        stride=stride,
+                                        title_handling=title_handling,
+                                        tiler=tiler),
                 input_file)
             if cached_passages:
                 passages.extend(cached_passages)
                 continue
             print(f"Reading {input_file}")
             tpassages = []
+
+            def cleanup(text):
+                return cls.remove_stopwords(text, lang=lang, remv_stopwords=remv_stopwords)
+
             with open(input_file) as in_file:
                 if input_file.endswith(".tsv"):
                     # We'll assume this is the PrimeQA standard format
@@ -424,36 +425,20 @@ class SearchData:
                         if docs_read >= max_num_documents:
                             break
                         assert len(row) in [2, 3, 4], f'Invalid .tsv record (has to contain 2 or 3 fields): {row}'
-                        if 'answers' in row:
-                            if remove_url:
-                                row['text'] = (re.sub(url, lang, 'URL', row['text']), remv_stopwords)
-                            itm = {'text': (self.remove_stopwords(row["title"]) + ' ' if 'title' in row else '') + row[
-                                "text"],
-                                   'id': row['id']}
-                            if 'title' in row:
-                                itm['title'] = self.remove_stopwords(row['title'], lang, remv_stopwords)
-                            if 'relevant' in row:
-                                itm['relevant'] = row['relevant'].split(",")
-                            if 'answers' in row:
-                                itm['answers'] = row['answers'].split("::")
-                                itm['passages'] = itm['answers']
-                            tpassages.append(itm)
-                        else:
-                            tpassages.extend(
-                                self.process_text(tiler=tiler,
-                                                  id=row['id'],
-                                                  title=self.remove_stopwords(row['title'], lang,
-                                                                              remv_stopwords) if 'title' in row else '',
-                                                  text=self.remove_stopwords(row['text'], lang, remv_stopwords),
-                                                  max_doc_size=max_doc_size,
-                                                  stride=stride,
-                                                  remove_url=remove_url,
-                                                  tokenizer=tokenizer,
-                                                  doc_url=url,
-                                                  uniform_product_name=None,
-                                                  data_type=data_type,
-                                                  title_handling=title_handling
-                                                  ))
+                        tpassages.extend(
+                            cls.process_text(tiler=tiler,
+                                             id=row['id'],
+                                             title=cleanup(row['title']) if 'title' in row else '',
+                                             text=cleanup(row['text']),
+                                             max_doc_size=max_doc_size,
+                                             stride=stride,
+                                             remove_url=remove_url,
+                                             tokenizer=tokenizer,
+                                             doc_url=url,
+                                             uniform_product_name=None,
+                                             data_type=data_type,
+                                             title_handling=title_handling
+                                             ))
                 elif input_file.endswith('.json') or input_file.endswith(".jsonl"):
                     # This should be the SAP or BEIR json format
                     if input_file.endswith('.json'):
@@ -498,36 +483,35 @@ class SearchData:
                         try:
                             if doc_based:
                                 tpassages.extend(
-                                    self.process_text(tiler=tiler,
-                                                      id=doc[docidname],
-                                                      title=self.remove_stopwords(title, lang, remv_stopwords),
-                                                      text=self.remove_stopwords(doc[txtname], remv_stopwords),
-                                                      max_doc_size=max_doc_size,
-                                                      stride=stride,
-                                                      remove_url=remove_url,
-                                                      tokenizer=tokenizer,
-                                                      doc_url=url,
-                                                      uniform_product_name=uniform_product_name,
-                                                      data_type=data_type
-                                                      ))
+                                    cls.process_text(tiler=tiler,
+                                                     id=doc[docidname],
+                                                     title=cleanup(title),
+                                                     text=cleanup(doc[txtname]),
+                                                     max_doc_size=max_doc_size,
+                                                     stride=stride,
+                                                     remove_url=remove_url,
+                                                     tokenizer=tokenizer,
+                                                     doc_url=url,
+                                                     uniform_product_name=uniform_product_name,
+                                                     data_type=data_type
+                                                     ))
                             else:
                                 for pi, passage in enumerate(doc['passages']):
                                     passage_id = passage['passage_id'] if 'passage_id' in passage else pi
                                     tpassages.extend(
-                                        self.process_text(tiler=tiler,
-                                                          id=f"{doc[docidname]}-{passage_id}",
-                                                          title=self.remove_stopwords(title, lang, remv_stopwords),
-                                                          text=self.remove_stopwords(passage[psg_txtname],
-                                                                                     remv_stopwords),
-                                                          max_doc_size=max_doc_size,
-                                                          stride=stride,
-                                                          remove_url=remove_url,
-                                                          tokenizer=tokenizer,
-                                                          doc_url=url,
-                                                          uniform_product_name=uniform_product_name,
-                                                          data_type=data_type,
-                                                          title_handling=title_handling
-                                                          ))
+                                        cls.process_text(tiler=tiler,
+                                                         id=f"{doc[docidname]}-{passage_id}",
+                                                         title=cleanup(title),
+                                                         text=cleanup(passage[psg_txtname]),
+                                                         max_doc_size=max_doc_size,
+                                                         stride=stride,
+                                                         remove_url=remove_url,
+                                                         tokenizer=tokenizer,
+                                                         doc_url=url,
+                                                         uniform_product_name=uniform_product_name,
+                                                         data_type=data_type,
+                                                         title_handling=title_handling
+                                                         ))
                         except Exception as e:
                             print(f"Error at line {di}: {e}")
                             raise e
@@ -540,7 +524,7 @@ class SearchData:
                     for i in range(len(data)):
                         itm = {}
                         itm['id'] = i
-                        itm['text'] = self.remove_stopwords(data.Question[i].strip(), remv_stopwords)
+                        itm['text'] = cleanup(data.Question[i].strip())
                         itm['answers'] = data['Gold answer'][i]
                         psgs = []
                         ids = []
@@ -566,17 +550,17 @@ class SearchData:
                         itm['passages'] = psgs
                         itm['relevant'] = ids
                         tpassages.append(itm)
-                    self.write_cache_file(
-                        self.get_cached_filename(input_file, max_doc_size, stride, tiler,
-                                                 title_handling=title_handling),
+                    cls.write_cache_file(
+                        cls.get_cached_filename(input_file, max_doc_size, stride, tiler,
+                                                title_handling=title_handling),
                         tpassages,
                         use_cache)
                     if return_unmapped_ids:
                         return tpassages, unmapped_ids
                 else:
                     raise RuntimeError(f"Unknown file extension: {os.path.splitext(input_file)[1]}")
-            self.write_cache_file(
-                self.get_cached_filename(input_file, max_doc_size, stride, tiler, title_handling),
+            cls.write_cache_file(
+                cls.get_cached_filename(input_file, max_doc_size, stride, tiler, title_handling),
                 tpassages,
                 use_cache)
             passages.extend(tpassages)
@@ -586,3 +570,34 @@ class SearchData:
             return passages, unmapped_ids
         else:
             return passages
+
+    @classmethod
+    def read_question_data(cls, in_files, fields=None, lang="en", remv_stopwords=False, url=None, **kwargs):
+        tpassages = []
+        if isinstance(in_files, str):
+            in_files = [in_files]
+        elif not isinstance(in_files, list):
+            raise RuntimeError(f"Invalid argument 'in_files' type: {type(in_files)}")
+
+        for in_file in in_files:
+            with open(in_file, "r", encoding="utf-8") as file_stream:
+                csv_reader = \
+                    csv.DictReader(file_stream, fieldnames=fields, delimiter="\t") \
+                        if fields is not None \
+                        else csv.DictReader(file_stream, delimiter="\t")
+                next(csv_reader)
+                for row in csv_reader:
+                    if url is not None:
+                        row['text'] = (re.sub(url, lang, 'URL', row['text']), remv_stopwords)
+                    itm = {'text': (row["title"] + ' ' if 'title' in row else '') + row[
+                        "text"],
+                           'id': row['id']}
+                    if 'title' in row:
+                        itm['title'] = row['title']
+                    if 'relevant' in row:
+                        itm['relevant'] = row['relevant'].split(",")
+                    if 'answers' in row:
+                        itm['answers'] = row['answers'].split("::")
+                        itm['passages'] = itm['answers']
+                    tpassages.append(itm)
+        return tpassages
