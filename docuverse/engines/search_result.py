@@ -1,3 +1,4 @@
+import json
 from typing import List, Dict, Union
 from tqdm import tqdm
 
@@ -12,7 +13,7 @@ class SearchResult:
         def __init__(self, data: Dict[str,str], **kwargs):
             self.__dict__.update(data)
 
-        def __get__(self, key, default=None):
+        def __getitem__(self, key, default=None):
             if key in self.__dict__:
                 return self.__dict__[key]
             else:
@@ -32,30 +33,33 @@ class SearchResult:
                 datum_str = f"{datum_str}Key: {key}\tValue: {value}\n"
             return datum_str
 
-    def __init__(self, data, **kwargs):
-        self.results = []
-        self.rouge_scorer = None
+        def as_dict(self):
+            return self.__dict__
 
+    def __init__(self, question, data, **kwargs):
+        self.retrieved_passages = []
+        self.rouge_scorer = None
+        self.question = question
         self.read_data(data)
 
     def __len__(self):
-        return len(self.results)
+        return len(self.retrieved_passages)
 
     def append(self, data: Union[Dict[str, str], SearchDatum], **kwargs):
         if isinstance(data, SearchResult.SearchDatum):
-            self.results.append(data)
+            self.retrieved_passages.append(data)
         else:
-            self.results.append(SearchResult.SearchDatum(data, **kwargs))
+            self.retrieved_passages.append(SearchResult.SearchDatum(data, **kwargs))
 
     def remove_duplicates(self, duplicate_removal: str = "none",
                           rouge_duplicate_threshold: float = -1.0):
-        if duplicate_removal is None or duplicate_removal == "none" or self.results == []:
+        if duplicate_removal is None or duplicate_removal == "none" or self.retrieved_passages == []:
             return
         ret = SearchResult([])
         if duplicate_removal == "exact":
-            seen = {self.results[0].get_text(): 1}
-            ret = [self.results[0]]
-            for r in self.results[1:]:
+            seen = {self.retrieved_passages[0].get_text(): 1}
+            ret = [self.retrieved_passages[0]]
+            for r in self.retrieved_passages[1:]:
                 text_ = r.get_text()
                 if text_ not in seen:
                     seen[text_] = 1
@@ -66,7 +70,7 @@ class SearchResult:
                 self.rouge_scorer = RougeScorer(['rouge1', 'rougeL'],
                                                 use_stemmer=True)
 
-            for r in self.results[1:]:
+            for r in self.retrieved_passages[1:]:
                 found = False
                 text_ = r.get_text()
                 for c in ret:
@@ -79,10 +83,10 @@ class SearchResult:
         return ret
 
     def __getitem__(self, i: int) -> SearchDatum:
-        return self.results[i]
+        return self.retrieved_passages[i]
 
     def __iter__(self):
-        return iter(self.results)
+        return iter(self.retrieved_passages)
 
     def read_data(self, data):
         if isinstance(data, dict):
@@ -92,7 +96,7 @@ class SearchResult:
                     # {'_index': 'jatin-testing', '_id': '1231', '_score': 0.3945668, '_ignored': ['text.keyword'], '_source': {'text': '\nRed Hat Enterprise Linux 4- all architectures Red Hat Enterprise Linux 5- all archit...Hat Enterprise Linux 6- all architectures '}}
                     # r = SearchResult.SearchDatum(d['_source'])
                     r = SearchResult.SearchDatum(d)
-                    self.results.append(r)
+                    self.retrieved_passages.append(r)
             else:
                 raise Exception("TODO: Pending implementation")
                 # for d in data:
@@ -103,7 +107,7 @@ class SearchResult:
                 return []
             elif data[0].__class__ == SearchResult.SearchDatum:
                 for item in data:
-                    self.results.append(item)
+                    self.retrieved_passages.append(item)
             else: # Need to deal with other structures.
                 raise Exception("TODO: Pending implementation")
         else: # Need to deal with other structures.
@@ -111,7 +115,7 @@ class SearchResult:
             return
 
     def as_list(self):
-        return self.results
+        return {"question": self.question.as_list(), "retrieved_passages": [r.as_dict() for r in self.retrieved_passages]}
 
-    def __iter__(self):
-        return iter(self.results)
+    def as_json(self, **kwargs):
+        return json.dumps(self.as_list(), **kwargs)

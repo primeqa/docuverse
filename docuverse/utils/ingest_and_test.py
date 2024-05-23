@@ -1,4 +1,5 @@
 # from __future__ import annotations
+import json
 
 # import bz2
 # import os, re, json, csv
@@ -997,8 +998,12 @@ if __name__ == '__main__':
 
     if config.retrieve:
         queries = SearchQueries.read(config.input_queries, **vars(config.search_config))
+        queries = queries[:10]
         output = engine.search(queries)
-        output.save(config.output_file)
+        # output.save(config.output_file)
+        with open(config.output_file, "w") as outfile:
+            outp = [r.as_list() for r in output]
+            outfile.write(json.dumps(outp, indent=2))
         if config.evaluate:
             results = scorer.compute_score(queries, output)
             print(f"Results:\n{results}")

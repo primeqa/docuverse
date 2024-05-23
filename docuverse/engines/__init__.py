@@ -7,4 +7,7 @@ from docuverse.engines.search_engine import SearchEngine
 
 
 def get_param(dictionary, key, default=None):
-    return dictionary[key] if key in dictionary else default
+    if isinstance(dictionary, dict):
+        return dictionary[key] if key in dictionary else default
+    else:
+        return getattr(dictionary, key, default)

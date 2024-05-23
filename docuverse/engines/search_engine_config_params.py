@@ -176,6 +176,13 @@ class SearchEngineArguments(GenericArguments):
         }
     )
 
+    max_num_documents: Optional[str]|None = field(
+        default=None,
+        metadata={
+            "help": "The maximum number of documents to ingest (for testing purposes)."
+        }
+    )
+
     def __post_init__(self):
         pass
 
@@ -242,6 +249,14 @@ class EvaluationArguments(GenericArguments):
     )
 
     iranks: List[int]|None = None
+
+    eval_measure: Optional[str] = field(
+        default="match",
+        metadata={
+            "help": "Defines the evaluation measure to use (default: match). Can be 'match' or 'ndcg' "
+                    "- more to be added"
+        }
+    )
 
     def __post_init__(self):
         self.iranks = [int(r) for r in self.ranks.split(",")]

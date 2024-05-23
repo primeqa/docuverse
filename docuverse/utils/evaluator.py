@@ -1,11 +1,12 @@
 import os
 import sys
+from typing import List
 
 from rouge import Rouge
 from tqdm import tqdm
 
 from docuverse import SearchResult, SearchQueries
-from docuverse.engines import SearchData
+from docuverse.engines import SearchData, get_param
 from docuverse.engines.search_engine_config_params import EvaluationConfig, EvaluationArguments
 from .evaluation_output import EvaluationOutput
 
@@ -14,6 +15,7 @@ class EvaluationEngine:
     def __init__(self, config):
         self.rouge_scorer = None
         self.compute_rouge_score = None
+        self.eval_measure = config.eval_measure
         self.config = config
         self.read(config)
 
@@ -26,11 +28,11 @@ class EvaluationEngine:
         if self.config.compute_rouge:
             self.rouge_scorer = Rouge()
 
-    def compute_score(self, input_queries: SearchQueries, system: SearchResult) -> EvaluationOutput:
+    def compute_score(self, input_queries: SearchQueries, system: List[SearchResult]) -> EvaluationOutput:
         if self.compute_rouge_score:
             from rouge_score.rouge_scorer import RougeScorer
             scorer = RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
-        if "relevant" not in input_queries[0] or input_queries[0]['relevant'] is None:
+        if get_param(input_queries[0], 'relevant', None) is None:
             print("The input question file does not contain answers. Please fix that and restart.")
             return EvaluationOutput()
         ranks = self.config.iranks
@@ -74,24 +76,31 @@ class EvaluationEngine:
         rqmap = reverse_map(input_queries)
 
         num_eval_questions = 0
+        self.relevant = []
         for rid, record in tqdm(enumerate(system),
                                 total=len(system),
                                 desc='Evaluating questions: '):
-            qid = record['qid']
+            qid = get_param(record.question, 'id', rid)
             query = input_queries[rqmap[qid]]
             if '-1' in gt[qid]:
                 continue
             num_eval_questions += 1
             tmp_scores = {r: 0 for r in ranks}
             tmp_pscores = {r: 0 for r in ranks}
-            for aid, answer in enumerate(record['answers']):
+            self.relevant.append([])
+            for aid, answer in enumerate(record.retrieved_passages):
                 if aid >= ranks[-1]:
                     break
                 docid = get_doc_id(answer['id'])
 
-                if str(docid) in gt[qid]:  # Great, we found a match.
-                    update_scores(ranks, aid, 1, sum, tmp_scores)
-                if not self.config.compute_rouge_score:
+                # if str(docid) in gt[qid]:  # Great, we found a match.
+                #     update_scores(ranks, aid, 1, sum, tmp_scores)
+                #     self.relevant[rid].append(1)
+                # else:
+                #     self.relevant[rid].append(1)
+                self.relevant[rid].append(str(docid) in gt[qid])
+
+                if not self.config.compute_rouge:
                     continue
                 if len(query['passages']) == 0:
                     scr = 0.
@@ -102,19 +111,23 @@ class EvaluationEngine:
                             query['passages']
                         ]
                     )
-                update_scores(ranks, aid, scr, max, tmp_pscores)
+                # update_scores(ranks, aid, scr, max, tmp_pscores)
 
-            for r in ranks:
-                docm_scores[r] += int(tmp_scores[r] >= 1)
-                if self.compute_rouge_score:
-                    rouge_scores[r] += tmp_pscores[r]
+            # for r in ranks:
+            #     docm_scores[r] += int(tmp_scores[r] >= 1)
+            #     if self.compute_rouge:
+            #         rouge_scores[r] += tmp_pscores[r]
 
         _result = EvaluationOutput(num_ranked_queries=num_eval_questions,
                                    num_judged_queries=num_eval_questions,
-                                   doc_scores={r: int(1000 * docm_scores[r] / num_eval_questions) / 1000.0 for r in ranks})
+                                   doc_scores=self.relevant,
+                                   ranks = self.iranks,
+                                   rouge_scores=rouge_scores,
+                                   compute_macro_scores=True,
+                                   metrics=self.eval_measure)
 
 
-        if self.config.compute_rouge_score:
+        if self.config.compute_rouge:
             _result['rouge_scores'] = \
                 {r: int(1000 * rouge_scores[r] / num_eval_questions) / 1000.0 for r in ranks}
 

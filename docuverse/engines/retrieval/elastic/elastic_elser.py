@@ -2,10 +2,11 @@ from docuverse.engines.retrieval.elastic import ElasticEngine
 
 class ElasticElserEngine(ElasticEngine):
     def __init__(self, config_params, **kwargs):
+        super().__init__(config_params, **kwargs)
         self.output_name = kwargs.get('elser_name', 'ml')
         self.output_feature_name = kwargs.get('elser_feature_name', 'tokens')
         self.elser_name = f'{self.output_name}.{self.output_feature_name}'
-        super().__init__(config_params, **kwargs)
+        self._init_connection()
 
     def create_query(self, text, **kwargs):
         return {

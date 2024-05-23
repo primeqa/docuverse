@@ -47,14 +47,18 @@ class ElasticEngine:
         self.duplicate_removal = None
         self.coga_mappings = {}
         self.settings = {}
-        self._init_connection_info(config_params.get('server'))
-        self._init_config(config_params)
-        self._init_client()
         self._read_mappings("config/elastic_config.json")
-        self._set_pipelines()
-        self.config = config_params
+        self.config = None
+        self._init_config(config_params)
+        self.source_excludes = []
+        self.client = None
 
-    def _init_connection_info(self, server:str=None):
+    def _init_connection(self, ):
+        self._init_connection_info(self.config.get('server'))
+        self._init_client()
+        self._set_pipelines()
+
+    def _init_connection_info(self, server: str = None):
         if server is None:
             load_dotenv()
             self.host = os.getenv('ES_HOST')
@@ -71,7 +75,6 @@ class ElasticEngine:
             # self.host, self.api_key, self.ssl_fingerprint = \
             #     [server_info.get(key) for key in ['host', 'api_key', 'ssl_fingerprint']]
 
-
     def _init_config(self, config_params: Union[dict, SearchEngineConfig]):
         if isinstance(config_params, dict):
             config_params = SearchEngineConfig(config=config_params)
@@ -83,8 +86,6 @@ class ElasticEngine:
 
         for param_name in PARAM_NAMES:
             setattr(self, param_name, get_param(config_params, param_name))
-
-
 
         self.config = config_params
 
@@ -109,8 +110,8 @@ class ElasticEngine:
     def info(self):
         return f"Elasticsearch client.info(): \n{self.client.info().body}"
 
-    def search(self, input: str, **kwargs) -> SearchResult:
-        query, knn, rank = self.create_query(input['text'], **kwargs)
+    def search(self, question: str, **kwargs) -> SearchResult:
+        query, knn, rank = self.create_query(question['text'], **kwargs)
         if self.filters:
             for filter in self.filters:
                 print(filter)
@@ -129,7 +130,7 @@ class ElasticEngine:
             source_excludes=['vector', 'ml.predicted_value', 'ml.tokens']
         )
 
-        result = SearchResult(data=self.read_results(res))
+        result = SearchResult(question=question, data=self.read_results(res))
         result.remove_duplicates(self.duplicate_removal,
                                  self.rouge_duplicate_threshold)
         return result
@@ -193,11 +194,11 @@ class ElasticEngine:
             standard_mappings = config['settings']['standard']
             for lang in ElasticEngine.languages:
                 self.settings[lang] = union(config['settings']['common'],
-                                       config['settings'][lang if lang in config['settings'] else 'en']
-                                       )
-                self.coga_mappings[lang] = union(config['mappings']['common'],
-                                            config['mappings'][lang if lang in config['mappings'] else 'en']
+                                            config['settings'][lang if lang in config['settings'] else 'en']
                                             )
+                self.coga_mappings[lang] = union(config['mappings']['common'],
+                                                 config['mappings'][lang if lang in config['mappings'] else 'en']
+                                                 )
 
     def _set_pipelines(self, config_params):
         pass
