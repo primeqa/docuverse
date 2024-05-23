@@ -998,7 +998,7 @@ if __name__ == '__main__':
 
     if config.retrieve:
         queries = SearchQueries.read(config.input_queries, **vars(config.search_config))
-        queries = queries[:10]
+        # queries = queries[:10]
         output = engine.search(queries)
         # output.save(config.output_file)
         with open(config.output_file, "w") as outfile:

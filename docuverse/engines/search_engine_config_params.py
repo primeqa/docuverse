@@ -274,6 +274,7 @@ class SearchEngineConfig:
     filters: dict
     duplicate_removal: str
     rouge_duplicate_threshold: float
+    hidden_dim: float = 384
 
     def __init__(self, config: dict):
         self.index = get_param(config, 'index|index_name')
