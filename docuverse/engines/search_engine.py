@@ -5,6 +5,8 @@ import os
 
 from tqdm import tqdm
 
+import docuverse.utils
+from docuverse.engines import SearchData
 from docuverse.engines.search_engine_config_params import DocUVerseConfig, SearchEngineArguments
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_corpus import SearchCorpus
@@ -12,6 +14,8 @@ from docuverse.engines.search_queries import SearchQueries
 from docuverse.utils.evaluation_output import EvaluationOutput
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.engines.reranking.Reranker import Reranker
+from docuverse.utils.text_tiler import TextTiler
+
 
 class SearchEngine:
     DEFAULT_CACHE_DIR = os.path.join(f"{os.getenv('HOME')}", ".local", "share", "elastic_ingestion")
@@ -27,8 +31,9 @@ class SearchEngine:
         self.retriever = None
         self.reranker = None
         self.reranking_config = None
-        self.retrieval_config = None
+        self.retriever_config = None
         self.create(config_or_path=config_path)
+        self.tiler = None
 
 
     @staticmethod
@@ -69,15 +74,17 @@ class SearchEngine:
             return config_or_path, None
 
     def create(self, config_or_path, **kwargs):
-        self.retrieval_config, self.reranking_config = SearchEngine.read_config(config_or_path)
+        self.retriever_config, self.reranking_config = SearchEngine.read_config(config_or_path)
 
         if self.reranking_config is not None:
             self.reranker = SearchEngine._create_reranker(self.reranking_config)
-        self.retriever = SearchEngine._create_retriever(self.retrieval_config)
+        # self.retriever = docuverse.utils.create_retrieval_engine(self.retriever_config)
+        self.retriever = self._create_retriever()
 
-    @staticmethod
-    def _create_retriever(retrieval_config) -> RetrievalEngine:
-        return RetrievalEngine(retrieval_config)
+
+    def _create_retriever(self) -> RetrievalEngine:
+        from docuverse.utils.retrievers import create_retrieval_engine
+        return create_retrieval_engine(self.retriever_config)
 
     @classmethod
     def _create_reranker(cls, reranking_config=None) -> Reranker:
@@ -87,8 +94,8 @@ class SearchEngine:
         reranker = Reranker(reranking_config)
         return reranker
 
-    def ingest(self, corpus: SearchCorpus):
-        self.retriever.ingest(corpus=corpus)
+    def ingest(self, corpus: SearchCorpus, update:bool=False):
+        self.retriever.ingest(corpus=corpus, update=update)
     
     def get_retriever_info(self):
         return self.retriever.info()
@@ -102,4 +109,17 @@ class SearchEngine:
 
     def compute_score(self, queries: SearchQueries, results: SearchResult) -> EvaluationOutput:
         pass
+
+    def read_data(self, file):
+        if self.tiler is None:
+            if getattr(self.retriever,'model', None) is not None:
+                tokenizer = self.retriever.model.tokenizer
+            else:
+                tokenizer = self.retriever_config.model_name
+                if tokenizer.startswith("."):
+                    tokenizer = "sentence-transformers/all-MiniLM-L6-v2"
+            self.tiler = TextTiler(max_doc_size=self.retriever_config.max_doc_length,
+                                   stride=self.retriever_config.stride,
+                                   tokenizer=tokenizer)
+        return SearchData.read_data(input_files=file, tiler=self.tiler, **vars(self.retriever_config))
 

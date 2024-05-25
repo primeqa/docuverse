@@ -1,8 +1,12 @@
+import os.path
 import unicodedata
 import re
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Union
 import pyizumo
 from collections import deque
+
+from transformers import AutoTokenizer, PreTrainedTokenizer, RobertaTokenizer, RobertaTokenizerFast
+
 
 class TextTiler:
     """
@@ -11,11 +15,17 @@ class TextTiler:
     or not.
     """
 
-    def __init__(self, max_doc_size, stride, tokenizer,
+    def __init__(self, max_doc_size: int, stride: int,
+                 tokenizer: Union[str,PreTrainedTokenizer],
                  aligned_on_sentences: bool = True):
         self.max_doc_size = max_doc_size
         self.stride = stride
-        self.tokenizer = tokenizer
+        if isinstance(tokenizer, str):
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
+        elif isinstance(tokenizer, PreTrainedTokenizer|RobertaTokenizerFast):
+            self.tokenizer = tokenizer
+        else:
+            raise RuntimeError("The tokenizer argument must be either a string or a PreTrainedTokenizer class.")
         self.tokenizer_num_special_tokens = self.tokenizer.num_special_tokens_to_add()
         self.max_doc_size -= self.tokenizer_num_special_tokens
         self.product_counts = {}
@@ -138,7 +148,8 @@ class TextTiler:
         """
         added_titles = []
         title_length = self.get_tokenized_length(title)
-        def get_expanded_text(text:str, title:str, pos:int=0, title_handling:str="all", title_in_text:bool=False):
+        def get_expanded_text(text:str, title:str, pos:int=0,
+                              title_handling:str="all", title_in_text:bool=False):
             if title_handling == "none" or title_handling == "first" and pos > 0 or title_in_text:
                 return text
             else:

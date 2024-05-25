@@ -38,8 +38,8 @@ class ElasticDenseEngine(ElasticEngine):
         _rank = None
         _knn = {
             "field": self.vector_field_name,
-            "k": get_param(kwargs, 'top_k'),
-            "num_candidates": get_param('num_candidates', 1000),
+            "k": int(get_param(kwargs, 'top_k', self.config.top_k)),
+            "num_candidates": int(get_param(kwargs, 'num_candidates', self.config.num_candidates)),
         }
         _query = {"bool": {
             "must": {
@@ -102,4 +102,11 @@ class ElasticDenseEngine(ElasticEngine):
             "dims": self.hidden_dim,
             "index": "true"
         }
-        self.client.ingest.put_pipeline(processors=processors, id=self.config.model_name + "-test")
+        self.pipeline_name = self.config.model_name + "-test"
+        self.client.ingest.put_pipeline(processors=processors, id=self.pipeline_name)
+
+    def add_fields(self, actions, bulk_batch, corpus, k, num_passages):
+        if not self.config.model_on_server:
+            passage_vectors = self.model.encode([d['text'] for d in corpus[k:k+bulk_batch]])
+            for pi, (action, row) in enumerate(zip(actions, corpus[k:min(k + bulk_batch, num_passages)])):
+                action["_source"]['vector'] = passage_vectors[pi]

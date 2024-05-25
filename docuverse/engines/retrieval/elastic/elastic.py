@@ -1,10 +1,11 @@
 import copy
 import json
-from typing import Union
+from typing import Union, Tuple, List
 
 import yaml
 
-from docuverse.engines import SearchData
+from docuverse.engines.search_queries import SearchQueries
+from docuverse.engines import SearchData, RetrievalEngine
 
 try:
     from elasticsearch import Elasticsearch
@@ -32,9 +33,12 @@ class ElasticServers:
         return self.servers.get(name, (None, None, None))
 
 
-class ElasticEngine:
+class ElasticEngine(RetrievalEngine):
     es_servers = ElasticServers("config/elastic_servers.json")
     languages = ['en', 'es', 'fr', 'pt', 'ja', 'de']
+    default_all_keys_to_index = ['title', 'id', 'url', 'productId',  # 'versionId',
+                         'filePath', 'deliverableLoio', 'text',
+                         'app_name', 'courseGrainedProductId']
 
     @staticmethod
     def read_config(config: str):
@@ -42,6 +46,8 @@ class ElasticEngine:
 
     def __init__(self, config_params, **kwargs):
         # super().__init__(**kwargs)
+        self.pipeline_name = None
+        self.rouge_duplicate_threshold = 0.7
         self.index_name = None
         self.filters = None
         self.duplicate_removal = None
@@ -51,9 +57,15 @@ class ElasticEngine:
         self.config = None
         self._init_config(config_params)
         self.source_excludes = []
+        self.pipeline = None
         self.client = None
+        if 'all_keys_to_index' in kwargs:
+            self.all_keys_to_index = kwargs['all_keys_to_index']
+        else:
+            self.all_keys_to_index = self.default_all_keys_to_index
 
-    def _init_connection(self, ):
+
+    def _init_connection(self):
         self._init_connection_info(self.config.get('server'))
         self._init_client()
         self._set_pipelines()
@@ -110,7 +122,7 @@ class ElasticEngine:
     def info(self):
         return f"Elasticsearch client.info(): \n{self.client.info().body}"
 
-    def search(self, question: str, **kwargs) -> SearchResult:
+    def search(self, question: SearchQueries.Query, **kwargs) -> SearchResult:
         query, knn, rank = self.create_query(question['text'], **kwargs)
         if self.filters:
             for filter in self.filters:
@@ -125,7 +137,7 @@ class ElasticEngine:
             query=query,
             rank=rank,
             # TODO - top_k and n_docs is the same argument or am I missing something?
-            size=self.n_docs,
+            size=self.config.top_k,
             # TODO - This should be specified in the retrieval config too
             source_excludes=['vector', 'ml.predicted_value', 'ml.tokens']
         )
@@ -143,31 +155,118 @@ class ElasticEngine:
             results.append(r)
         return results
 
-    def create_query(self, text: str, **kwargs):
+    def create_query(self, text: str, **kwargs) -> Tuple[dict[str:str], dict[str:str], dict[str:str]]:
         pass
         # return super().create_query(text, kwargs)
 
-    def ingest(self, corpus, **kwargs):
-        from tqdm import tqdm
-        for index, record in tqdm(enumerate(corpus)):
-            resp = self.client.index(index=self.index_name, id=1, document=record)
-            if index > 10:
-                return None
+    def _get_keys_to_index(self, input_passages):
+        keys_to_index = []
+        for k in self.all_keys_to_index:
+            if k not in input_passages[0]:
+                print(f"Dropping key {k} - they are not in the passages")
+            else:
+                keys_to_index.append(k)
+        return keys_to_index
 
-            # TODO: Find out the exact format of the records to be indexed
-            # TODO: Move to bulk API
-            # keys_to_index = self.fields
-            # actions = [
-            #     {
-            #         "_index": self.index_name,
-            #         "_id": record['id'],
-            #         "_source": {k: record[k] for k in keys_to_index}
-            #     }
-            # ]
-            # try:
-            #     response = bulk(client=self.client, actions=actions)
-            # except Exception as e:
-            #     print(f"Got an error in indexing: {e}, {len(actions)}")
+    def check_index_rebuild(self):
+        index_name = self.config.index_name
+        import sys
+        while True:
+            r = input(
+                f"Are you sure you want to recreate the index {index_name}? It might take a long time!! Say 'yes' or 'no':").strip()
+            if r == 'no':
+                print("OK - exiting. Run with '--actions r'")
+                sys.exit(0)
+            elif r == 'yes':
+                break
+            else:
+                print(f"Please type 'yes' or 'no', not {r}!")
+
+    def create_update_index(self, do_update=True):
+        if self.client.indices.exists(index=self.config.index_name):
+            if not do_update:
+                self.check_index_rebuild()
+                self.client.options(ignore_status=[400, 404]).indices.delete(index=self.config.index_name)
+            else:
+                print(f"Using existent index {self.config.index_name}.")
+        else:
+            if do_update:
+                print("You are trying to update an index that does not exist "
+                      "- will ignore your command and create the index.")
+        if not self.client.indices.exists(index=self.config.index_name):
+            self.client.indices.create(index=self.config.index_name,
+                                       mappings=self.coga_mappings[self.config.lang],
+                                       settings=self.settings[self.config.lang])
+
+    def ingest(self, corpus: SearchData, **kwargs):
+        from tqdm import tqdm
+        from elasticsearch.helpers import bulk
+        bulk_batch = self.config.get('bulk_batch', 40)
+        num_passages = len(corpus)
+        t = tqdm(total=num_passages, desc="Ingesting dense documents: ", smoothing=0.05)
+        # print(input_passages[0].keys())
+        keys_to_index = self._get_keys_to_index(corpus)
+        actions = []
+        update=kwargs.get('update', False)
+        self.create_update_index(do_update=update)
+        for k in range(0, num_passages, bulk_batch):
+            actions = [
+                {
+                    "_index": self.config.index_name,
+                    "_id": row['id'],
+                    "_source": {k: row[k] for k in keys_to_index}
+                }
+                for pi, row in enumerate(corpus[k:min(k + bulk_batch, num_passages)])
+            ]
+            self.add_fields(actions, bulk_batch, corpus, k, num_passages)
+            try:
+                bulk(self.client, actions=actions, pipeline=self.pipeline_name)
+            except Exception as e:
+                print(f"Got an error in indexing: {e}")
+            t.update(bulk_batch)
+        t.close()
+        if len(actions) > 0:
+            try:
+                bulk(client=self.client, actions=actions, pipeline=self.pipeline_name)
+            except Exception as e:
+                print(f"Got an error in indexing: {e}, {len(actions)}")
+
+        # for index, record in tqdm(enumerate(corpus)):
+        #     resp = self.client.index(index=self.index_name, id=1, document=record)
+        #     if index > 10:
+        #         return None
+        #
+        #     # TODO: Find out the exact format of the records to be indexed
+        #     # TODO: Move to bulk API
+        #     # keys_to_index = self.fields
+        #     # actions = [
+        #     #     {
+        #     #         "_index": self.index_name,
+        #     #         "_id": record['id'],
+        #     #         "_source": {k: record[k] for k in keys_to_index}
+        #     #     }
+        #     # ]
+        #     # try:
+        #     #     response = bulk(client=self.client, actions=actions)
+        #     # except Exception as e:
+        #     #     print(f"Got an error in indexing: {e}, {len(actions)}")
+
+    def add_fields(self, actions:List[dict], bulk_batch:int, corpus:SearchData, k:int, num_passages:int):
+        """
+        This function is used for adding fields to the indexed passage (e.g., the embedding vector
+        for dense models where the model is not on the server.
+
+        Parameters:
+            actions (List[str]): List of actions to perform.
+            bulk_batch (List[str]): List of bulk batches to process.
+            corpus (str): The corpus to add fields to.
+            k (int): The value of k.
+            num_passages (int): The number of passages.
+
+        Returns:
+            None
+        """
+        pass
 
     def add_filter(self, query, type: str = "filter", field: str = "productId", terms: list = None):
         query["bool"][type] = {"terms": {field: [term for term in terms]}}
@@ -200,5 +299,5 @@ class ElasticEngine:
                                                  config['mappings'][lang if lang in config['mappings'] else 'en']
                                                  )
 
-    def _set_pipelines(self, config_params):
+    def _set_pipelines(self, **kwargs):
         pass

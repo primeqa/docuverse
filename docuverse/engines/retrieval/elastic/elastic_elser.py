@@ -40,4 +40,5 @@ class ElasticElserEngine(ElasticEngine):
                         }
                     }}
             ]
-        self.client.ingest.put_pipeline(processors=processors, id=self.config.model_name + "-test")
+        self.pipeline_name = self.config.model_name + "-test"
+        self.client.ingest.put_pipeline(processors=processors, id=self.pipeline_name)

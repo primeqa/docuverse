@@ -1,6 +1,5 @@
 from .embedding_function import DenseEmbeddingFunction
 
-
 def get_param(dictionary, key: str, default: str|None=None):
     if key.find("|") > 0:
         weird_value = ":+:+"

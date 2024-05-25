@@ -48,7 +48,7 @@ class EvaluationOutput:
             doc_map = get_zeros(max_rank)
             rank_first = -1
             found = False
-            for i in range(0, max(len(relevant), self.ranks[-1])):
+            for i in range(0, min(len(relevant), self.ranks[-1])):
                 if not found and relevant[i]:
                     rank_first = i+1
                     found = True

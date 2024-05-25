@@ -173,7 +173,7 @@ class SAPProccesor(DefaultProcessor):
         uniform_product_name = kwargs.get("uniform_product_name", "")
         product_id = self.process_product_id(fields, uniform_product_name, data_type)
         title = kwargs.get("title")
-        docid = self.find_document_id(kwargs)
+        docid = str(self.find_document_id(kwargs))
         if docid != "":
             if docid.endswith(".txt"):
                 docid = docid[:-4]
@@ -231,6 +231,9 @@ class SearchData:
 
     def __getitem__(self, i: int) -> Entry:
         return SearchData.Entry(**self.entries[i])
+
+    def __len__(self) -> int:
+        return len(self.entries)
 
     def get_cached_filename(input_file: str,
                             max_doc_size: int,
@@ -361,18 +364,18 @@ class SearchData:
                   fields=None,
                   remove_url=False,
                   tokenizer=None,
-                  tiler=None,
-                  max_doc_size=None,
-                  stride=None,
-                  use_cache=True,
-                  cache_dir=default_cache_dir,
-                  title_handling='all',
+                  tiler:TextTiler|str=None,
+                  max_doc_length: int | None=None,
+                  stride:int|None=None,
+                  use_cache:bool=True,
+                  cache_dir:str=default_cache_dir,
+                  title_handling:str='all',
                   **kwargs):
 
         passages = []
         doc_based = kwargs.get('doc_based', True)
         docid_map = kwargs.get('docid_map', {})
-        max_num_documents = kwargs.get('max_num_documents', 1000000000)
+        max_num_documents = int(kwargs.get('max_num_documents', 1000000000))
         url = r'https?://(?:www\.)?(?:[-a-zA-Z0-9@:%._\+~#=]{1,256})\.(:?[a-zA-Z0-9()]{1,6})(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)*\b'
         data_type = kwargs.get('data_type', 'auto')
         if fields is None:
@@ -387,7 +390,7 @@ class SearchData:
             raise RuntimeError(f"Unsupported type for {input_files}")
         docname2url = kwargs.get('docname2url', None)
         docs_read = 0
-        remv_stopwords = kwargs.get('remove_stopwords', False)
+        remv_stopwords = bool(kwargs.get('remove_stopwords', False))
         unmapped_ids = []
         return_unmapped_ids = kwargs.get('return_unmapped', None)
 
@@ -399,7 +402,7 @@ class SearchData:
                 productId = None
             cached_passages = cls.read_cache_file_if_needed(
                 cls.get_cached_filename(input_file,
-                                        max_doc_size=max_doc_size,
+                                        max_doc_size=max_doc_length,
                                         stride=stride,
                                         title_handling=title_handling,
                                         tiler=tiler),
@@ -430,7 +433,7 @@ class SearchData:
                                              id=row['id'],
                                              title=cleanup(row['title']) if 'title' in row else '',
                                              text=cleanup(row['text']),
-                                             max_doc_size=max_doc_size,
+                                             max_doc_size=max_doc_length,
                                              stride=stride,
                                              remove_url=remove_url,
                                              tokenizer=tokenizer,
@@ -465,7 +468,7 @@ class SearchData:
                                         smoothing=0.05):
                         if di >= max_num_documents:
                             break
-                        docid = doc[docidname]
+                        docid = str(doc[docidname])
 
                         if ".txt" in docid:
                             docid = docid.replace(".txt", "")
@@ -487,7 +490,7 @@ class SearchData:
                                                      id=doc[docidname],
                                                      title=cleanup(title),
                                                      text=cleanup(doc[txtname]),
-                                                     max_doc_size=max_doc_size,
+                                                     max_doc_size=max_doc_length,
                                                      stride=stride,
                                                      remove_url=remove_url,
                                                      tokenizer=tokenizer,
@@ -503,7 +506,7 @@ class SearchData:
                                                          id=f"{doc[docidname]}-{passage_id}",
                                                          title=cleanup(title),
                                                          text=cleanup(passage[psg_txtname]),
-                                                         max_doc_size=max_doc_size,
+                                                         max_doc_size=max_doc_length,
                                                          stride=stride,
                                                          remove_url=remove_url,
                                                          tokenizer=tokenizer,
@@ -551,7 +554,7 @@ class SearchData:
                         itm['relevant'] = ids
                         tpassages.append(itm)
                     cls.write_cache_file(
-                        cls.get_cached_filename(input_file, max_doc_size, stride, tiler,
+                        cls.get_cached_filename(input_file, max_doc_length, stride, tiler,
                                                 title_handling=title_handling),
                         tpassages,
                         use_cache)
@@ -560,7 +563,7 @@ class SearchData:
                 else:
                     raise RuntimeError(f"Unknown file extension: {os.path.splitext(input_file)[1]}")
             cls.write_cache_file(
-                cls.get_cached_filename(input_file, max_doc_size, stride, tiler, title_handling),
+                cls.get_cached_filename(input_file, max_doc_length, stride, tiler, title_handling),
                 tpassages,
                 use_cache)
             passages.extend(tpassages)

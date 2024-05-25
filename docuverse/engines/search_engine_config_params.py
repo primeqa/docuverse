@@ -183,6 +183,21 @@ class SearchEngineArguments(GenericArguments):
         }
     )
 
+    bulk_batch: Optional[int] = field(
+        default=40,
+        metadata={
+            "help": "If provided, the documents will be ingested with the provided bulk batch size."
+        }
+    )
+
+    num_candidates: Optional[int] = field(
+        default=1000,
+        metadata={
+            "help": "If provided, it specifies the provided number of candidates nodes to "
+                    "search in the HNSW algorithm."
+        }
+    )
+
     def __post_init__(self):
         pass
 
