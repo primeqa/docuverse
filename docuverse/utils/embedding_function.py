@@ -38,17 +38,17 @@ class DenseEmbeddingFunction:
     def tokenizer(self):
         return self.model.tokenizer
 
-    def encode(self, texts: Union[str, List[str]], _batch_size: int = -1) -> \
+    def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
         embs = []
         if _batch_size == -1:
             _batch_size = self.batch_size
+        if show_progress_bar is None:
+            show_progress_bar = isinstance(texts, str) or max(len(texts), _batch_size) <= 1
+
         if not self.pqa:
             embs = self.model.encode(texts,
-                                     show_progress_bar=False \
-                                         if isinstance(texts, str) or \
-                                            max(len(texts), _batch_size) <= 1 \
-                                         else True,
+                                     show_progress_bar=show_progress_bar,
                                      normalize_embeddings=True
                                      ).tolist()
         else:

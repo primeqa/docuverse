@@ -57,7 +57,7 @@ class ElasticDenseEngine(ElasticEngine):
                 }
             }
         else:
-            _knn['query_vector'] = self.model.encode(text, self.normalize_embs)
+            _knn['query_vector'] = self.model.encode(text, self.normalize_embs, show_progress_bar=False)
 
         return _query, _knn, _rank
 
@@ -107,6 +107,6 @@ class ElasticDenseEngine(ElasticEngine):
 
     def add_fields(self, actions, bulk_batch, corpus, k, num_passages):
         if not self.config.model_on_server:
-            passage_vectors = self.model.encode([d['text'] for d in corpus[k:k+bulk_batch]])
+            passage_vectors = self.model.encode([d['text'] for d in corpus[k:k+bulk_batch]], show_progress_bar=False)
             for pi, (action, row) in enumerate(zip(actions, corpus[k:min(k + bulk_batch, num_passages)])):
                 action["_source"]['vector'] = passage_vectors[pi]

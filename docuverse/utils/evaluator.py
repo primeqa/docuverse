@@ -2,7 +2,6 @@ import os
 import sys
 from typing import List
 
-from rouge import Rouge
 from tqdm import tqdm
 
 from docuverse import SearchResult, SearchQueries

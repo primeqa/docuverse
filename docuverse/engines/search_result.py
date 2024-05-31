@@ -1,6 +1,5 @@
 import json
 from typing import List, Dict, Union
-from tqdm import tqdm
 
 
 class SearchResult:
@@ -12,6 +11,7 @@ class SearchResult:
     class SearchDatum:
         def __init__(self, data: Dict[str,str], **kwargs):
             self.__dict__.update(data)
+            self.__dict__.update(kwargs)
 
         def __getitem__(self, key, default=None):
             if key in self.__dict__:
@@ -91,11 +91,11 @@ class SearchResult:
     def read_data(self, data):
         if isinstance(data, dict):
             if 'hits' in data and 'hits' in data['hits']:  # Looks like Elasticsearch results
-                for d in tqdm(data['hits']['hits']):
+                for i, d in enumerate(data['hits']['hits']):
                     # TODO - Do we need to store metadata or just the source text is ok?
                     # {'_index': 'jatin-testing', '_id': '1231', '_score': 0.3945668, '_ignored': ['text.keyword'], '_source': {'text': '\nRed Hat Enterprise Linux 4- all architectures Red Hat Enterprise Linux 5- all archit...Hat Enterprise Linux 6- all architectures '}}
                     # r = SearchResult.SearchDatum(d['_source'])
-                    r = SearchResult.SearchDatum(d)
+                    r = SearchResult.SearchDatum(d, rank=i)
                     self.retrieved_passages.append(r)
             else:
                 raise Exception("TODO: Pending implementation")

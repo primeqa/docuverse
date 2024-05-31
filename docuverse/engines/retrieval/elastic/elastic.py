@@ -203,12 +203,12 @@ class ElasticEngine(RetrievalEngine):
         from elasticsearch.helpers import bulk
         bulk_batch = self.config.get('bulk_batch', 40)
         num_passages = len(corpus)
-        t = tqdm(total=num_passages, desc="Ingesting dense documents: ", smoothing=0.05)
         # print(input_passages[0].keys())
         keys_to_index = self._get_keys_to_index(corpus)
         actions = []
         update=kwargs.get('update', False)
         self.create_update_index(do_update=update)
+        t = tqdm(total=num_passages, desc="Ingesting dense documents: ", smoothing=0.05)
         for k in range(0, num_passages, bulk_batch):
             actions = [
                 {
@@ -230,26 +230,6 @@ class ElasticEngine(RetrievalEngine):
                 bulk(client=self.client, actions=actions, pipeline=self.pipeline_name)
             except Exception as e:
                 print(f"Got an error in indexing: {e}, {len(actions)}")
-
-        # for index, record in tqdm(enumerate(corpus)):
-        #     resp = self.client.index(index=self.index_name, id=1, document=record)
-        #     if index > 10:
-        #         return None
-        #
-        #     # TODO: Find out the exact format of the records to be indexed
-        #     # TODO: Move to bulk API
-        #     # keys_to_index = self.fields
-        #     # actions = [
-        #     #     {
-        #     #         "_index": self.index_name,
-        #     #         "_id": record['id'],
-        #     #         "_source": {k: record[k] for k in keys_to_index}
-        #     #     }
-        #     # ]
-        #     # try:
-        #     #     response = bulk(client=self.client, actions=actions)
-        #     # except Exception as e:
-        #     #     print(f"Got an error in indexing: {e}, {len(actions)}")
 
     def add_fields(self, actions:List[dict], bulk_batch:int, corpus:SearchData, k:int, num_passages:int):
         """
