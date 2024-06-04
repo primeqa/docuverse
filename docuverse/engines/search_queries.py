@@ -4,6 +4,7 @@ import re
 
 from docuverse.engines import SearchData
 from docuverse.engines.preprocessors import *
+from docuverse.utils import get_param
 
 
 class SearchQueries(SearchData):
@@ -48,20 +49,32 @@ class SearchQueries(SearchData):
                     csv.DictReader(file_stream, fieldnames=fields, delimiter="\t") \
                         if fields is not None \
                         else csv.DictReader(file_stream, delimiter="\t")
-                next(csv_reader)
+                # next(csv_reader)
                 for row in csv_reader:
+                    question = get_param(row, "text|question")
                     if url is not None:
-                        row['text'] = (re.sub(url, lang, 'URL', row['text']), remv_stopwords)
-                    itm = {'text': (row["title"] + ' ' if 'title' in row else '') + row[
-                        "text"],
-                           'id': row['id']}
-                    if 'title' in row:
-                        itm['title'] = row['title']
-                    if 'relevant' in row:
-                        itm['relevant'] = row['relevant'].split(",")
-                    if 'answers' in row:
-                        itm['answers'] = row['answers'].split("::")
-                        itm['passages'] = itm['answers']
+                        question = (re.sub(url, lang, 'URL', question), remv_stopwords)
+                    itm = {'text': question, 'id': get_param(row, 'id|qid'),
+                           'relevant': get_param(row, 'relevant|doc-id-list')}
+                    # itm = {'text': (row["title"] + ' ' if 'title' in row else '') + row["text"],
+                    #        'id': row['id']}
+                    # if 'title' in row:
+                    #     itm['title'] = row['title']
+                    # itm['title'] = get_param(row, 'title|question')
+                    # if 'relevant' in row:
+                    #     itm['relevant'] = row['relevant'].split(",")
+                    answers = get_param(row, 'answers')
+                    if isinstance(answers, str):
+                        if "::" in answers:
+                            itm['answers'] = answers.split("::")
+                        else:
+                            itm['answers'] = [answers]
+                    elif isinstance(answers, list):
+                        itm['answers'] = answers
+                    itm['passages'] = answers
+                    # if 'answers' in row:
+                    #     itm['answers'] = row['answers'].split("::")
+                    #     itm['passages'] = itm['answers']
                     tpassages.append(SearchQueries.Query(**itm))
         return tpassages
 
