@@ -48,9 +48,9 @@ class SearchEngineArguments(GenericArguments):
     )
 
     hybrid: Optional[str] = field(
-        default="rrf",
+        default="none",
         metadata={
-            "choices": ["rrf"],
+            "choices": ["rrf", "none"],
             "help": "The type of hybrid combination to use (default is RRF)."
         }
     )

@@ -10,6 +10,10 @@ class EvaluationOutput:
                  rouge_scores=None,
                  compute_macro_scores=True,
                  metrics="match"):
+        self.map = None
+        self.mrr = None
+        self.ndcg = None
+        self.match = None
         self.idcg = None
         for i in EvaluationOutput.mappable_metrics:
             setattr(self, i, None)
@@ -31,7 +35,11 @@ class EvaluationOutput:
         def get_zero_dict():
             return {r:0 for r in self.ranks}
 
-        self.match = {r:0 for r in self.ranks}
+        self.match = get_zero_dict()
+        self.ndcg = get_zero_dict()
+        self.mrr = get_zero_dict()
+        self.map = get_zero_dict()
+
         max_rank = self.ranks[-1]
         self.idcg = get_zeros(max_rank)
         for k in range(1, max_rank+1):
@@ -57,7 +65,7 @@ class EvaluationOutput:
                 doc_mrr[i+1] = 1.0/rank_first if rank_first>0 else 0
 
             doc_map = list(itertools.accumulate(doc_match, operator.add))
-            doc_match = list(itertools.accumulate(doc_dcg, max))
+            doc_match = list(itertools.accumulate(doc_match, max))
             doc_dcg = list(itertools.accumulate(doc_dcg, operator.add))
 
             for i in self.ranks:
@@ -65,6 +73,7 @@ class EvaluationOutput:
                 self.match[i] += doc_match[i]
                 self.mrr[i] += doc_mrr[i]
                 self.map[i] = doc_map[i]*1.0/i
+            # print(self.match)
 
 
         for i in self.ranks:

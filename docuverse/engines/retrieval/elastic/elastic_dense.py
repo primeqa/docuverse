@@ -41,14 +41,16 @@ class ElasticDenseEngine(ElasticEngine):
             "k": int(get_param(kwargs, 'top_k', self.config.top_k)),
             "num_candidates": int(get_param(kwargs, 'num_candidates', self.config.num_candidates)),
         }
-        _query = {"bool": {
-            "must": {
-                "multi_match": {
-                    "query": text,
-                    "fields": [self.config.text_field, self.config.title_field]
+        if self.config.hybrid == "rrf":
+            _query = {"bool": {
+                "must": {
+                    "multi_match": {
+                        "query": text,
+                        "fields": [self.config.text_field, self.config.title_field]
+                    }
                 }
-            }
-        }}
+            }}
+            _rank ={"rrf": {"window_size": 200}}
         if self.model_on_server:
             _knn["query_vector_builder"] = {
                 "text_embedding": {
