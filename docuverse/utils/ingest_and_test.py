@@ -1,5 +1,9 @@
 # from __future__ import annotations
 import json
+from datetime import datetime
+import os
+import sys
+
 from docuverse import SearchEngine, SearchQueries
 from docuverse.engines import SearchData
 from docuverse.engines.search_engine_config_params import DocUVerseConfig
@@ -10,6 +14,10 @@ from docuverse.utils.evaluator import EvaluationEngine
 # from transformers.hf_argparser import HfArgumentParser
 
 if __name__ == '__main__':
+    with open("logfile", "a") as cmdlog:
+        cmdlog.write(f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')} - {os.getenv('USER')} - "
+                     f"{' '.join(sys.argv)}\n")
+
     config = DocUVerseConfig.get_stdargs()
 
     engine = SearchEngine(config.search_config)

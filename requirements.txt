@@ -1,13 +1,12 @@
 rouge-score
-# pyyaml~=6.0.1
+pyyaml~=6.0.1
 elasticsearch~=8.13.2
 sentence-transformers
-# python-dotenv~=1.0.0
-# setuptools~=69.1.1
+python-dotenv~=1.0.1
 numpy~=1.26.1
-# pyizumo~=1.20.1
-# urllib3~=1.26.18
-# torch~=2.1.0
-# tqdm~=4.66.1
-# rouge~=1.0.1
-# transformers~=4.34.1
+pyizumo~=1.25.1
+urllib3~=1.26.18
+torch~=2.3.1
+tqdm~=4.66.4
+transformers~=4.41.2
+optimum[openvino,onnxruntime]~=1.20.0

@@ -5,7 +5,7 @@ import re
 from typing import Dict, List
 from tqdm import tqdm
 from docuverse.utils.text_tiler import TextTiler
-
+from docuverse.utils import get_param
 
 class DefaultProcessor:
     product_counts = {}
@@ -375,7 +375,11 @@ class SearchData:
         passages = []
         doc_based = kwargs.get('doc_based', True)
         docid_map = kwargs.get('docid_map', {})
-        max_num_documents = int(kwargs.get('max_num_documents', 1000000000))
+        max_num_documents = kwargs.get('max_num_documents')
+        if max_num_documents is None:
+            max_num_documents = 1e20
+        else:
+            max_num_documents = int(max_num_documents)
         url = r'https?://(?:www\.)?(?:[-a-zA-Z0-9@:%._\+~#=]{1,256})\.(:?[a-zA-Z0-9()]{1,6})(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)*\b'
         data_type = kwargs.get('data_type', 'auto')
         if fields is None:
