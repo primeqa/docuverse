@@ -45,6 +45,9 @@ class SearchResult:
     def __len__(self):
         return len(self.retrieved_passages)
 
+    def __add__(self, other):
+        return self.append(other)
+
     def append(self, data: Union[Dict[str, str], SearchDatum], **kwargs):
         if isinstance(data, SearchResult.SearchDatum):
             self.retrieved_passages.append(data)

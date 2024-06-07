@@ -16,7 +16,7 @@ class ElasticDenseEngine(ElasticEngine):
         self.normalize_embs = get_param(kwargs, 'normalize_embs', False)
         self._init_connection()
 
-    def _init_connection(self, ):
+    def _init_connection(self):
         self._init_connection_info(self.config.get('server'))
         self._init_client()
 

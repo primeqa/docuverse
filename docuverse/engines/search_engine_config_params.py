@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional, List
+from typing import Optional, List, Literal
 
 from optimum.utils.runs import RunConfig
 
@@ -239,6 +239,37 @@ class EngineArguments(GenericArguments):
                 setattr(self, action_flag, True)
 
 @dataclass
+class RerankerArguments(GenericArguments):
+    reranker_model: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "The model to use for reranking - can be a HuggingFace model name or a path."
+        }
+    )
+
+    reranker_batch_size: Optional[int] = field(
+        default=32,
+        metadata={
+            "help": "The batch size to use for reranking."
+        }
+    )
+
+    reranker_combine_weight: Optional[float] = field(
+        default=1.0,
+        metadata={
+            "help": "The weight to use in combining the previous scores with the current scores (default is 1.0 "
+                    "- only use the reranker scores, 0.0 is keep the original scores, ignore the reranker)."
+        }
+    )
+
+    reranker_combination_type: Literal['rrf', 'weight'] = field(
+        default="rrf",
+        metadata={
+            "help": "The combination type to use for reranking."
+        }
+    )
+
+@dataclass
 class EvaluationArguments(GenericArguments):
     compute_rouge: Optional[bool] = field(
         default=False,
@@ -392,7 +423,7 @@ class DocUVerseConfig(GenericArguments):
                 self.__setattr__(key, value)
 
     @staticmethod
-    def get_stdargs():
+    def get_stdargs_config():
         config = DocUVerseConfig()
         config.read_args()
         return config

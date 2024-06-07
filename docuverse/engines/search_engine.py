@@ -13,7 +13,7 @@ from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.utils.evaluation_output import EvaluationOutput
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
-from docuverse.engines.reranking.Reranker import Reranker
+from docuverse.engines.reranking.reranker import Reranker
 from docuverse.utils.text_tiler import TextTiler
 
 

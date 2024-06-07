@@ -18,7 +18,7 @@ if __name__ == '__main__':
         cmdlog.write(f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')} - {os.getenv('USER')} - "
                      f"{' '.join(sys.argv)}\n")
 
-    config = DocUVerseConfig.get_stdargs()
+    config = DocUVerseConfig.get_stdargs_config()
 
     engine = SearchEngine(config.search_config)
     scorer = None
