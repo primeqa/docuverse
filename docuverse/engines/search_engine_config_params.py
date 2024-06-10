@@ -10,8 +10,11 @@ from transformers import HfArgumentParser
 
 
 class GenericArguments:
-    def get(self, key:str, default=None):
-        return self.__dict__[key] if key in self.__dict__ else None
+    def get(self, key: str, default=None):
+        return self.__dict__[key] if key in self.__dict__ else default
+
+    def __getitem__(self, item, default=None):
+        return self.get(item, default)
 
 
 @dataclass
@@ -20,6 +23,7 @@ class SearchEngineArguments(GenericArguments):
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
 
+    _argument_group_name = "Search Arguments"
     model_name: str = field(
         default="",
         metadata={"help": "Pre-trained model name or path if not the same as model_name"}
@@ -155,14 +159,14 @@ class SearchEngineArguments(GenericArguments):
         }
     )
 
-    filters: Optional[str]|None = field(
+    filters: Optional[str] | None = field(
         default=None,
         metadata={
             "help": "Defines the fields to filter on when searching with ElasticSearch (default: None)."
         }
     )
 
-    server: Optional[str]|None = field(
+    server: Optional[str] | None = field(
         default=None,
         metadata={
             "help": "The server to use (convai, resconvai, ailang)."
@@ -176,7 +180,7 @@ class SearchEngineArguments(GenericArguments):
         }
     )
 
-    max_num_documents: Optional[str]|None = field(
+    max_num_documents: Optional[str] | None = field(
         default=None,
         metadata={
             "help": "The maximum number of documents to ingest (for testing purposes)."
@@ -204,6 +208,7 @@ class SearchEngineArguments(GenericArguments):
 
 @dataclass
 class EngineArguments(GenericArguments):
+    _argument_group_name = "Engine Arguments"
     output_file: Optional[str] = field(
         default=None,
         metadata={
@@ -238,8 +243,10 @@ class EngineArguments(GenericArguments):
             if action_flag is not None:
                 setattr(self, action_flag, True)
 
+
 @dataclass
 class RerankerArguments(GenericArguments):
+    _argument_group_name = "Reranker Arguments"
     reranker_model: Optional[str] = field(
         default=None,
         metadata={
@@ -269,8 +276,11 @@ class RerankerArguments(GenericArguments):
         }
     )
 
+
 @dataclass
 class EvaluationArguments(GenericArguments):
+    _argument_group_name = "Evaluation Arguments"
+
     compute_rouge: Optional[bool] = field(
         default=False,
         metadata={
@@ -294,7 +304,7 @@ class EvaluationArguments(GenericArguments):
         }
     )
 
-    iranks: List[int]|None = None
+    iranks: List[int] | None = None
 
     eval_measure: Optional[str] = field(
         default="match",
@@ -353,6 +363,10 @@ class RunConfig(GenericArguments):
     pass
 
 
+class RerankerConfig(RerankerArguments):
+    pass
+
+
 class EvaluationConfig:
     def __init__(self, config, **kwargs):
         data = {}
@@ -396,12 +410,14 @@ class DocUVerseConfig(GenericArguments):
             get_stdargs(): Returns the standard arguments configuration.
 
         """
-    def __init__(self, config: dict=None):
-        self.params = HfArgumentParser((SearchEngineArguments, EvaluationArguments, EngineArguments))
+
+    def __init__(self, config: dict = None):
+        self.params = HfArgumentParser((SearchEngineArguments, RerankerArguments, EvaluationArguments, EngineArguments))
         self.config = config
-        self.eval_config: EvaluationConfig|None = None
-        self.search_config: SearchEngineConfig|None = None
-        self.run_config: RunConfig|None = None
+        self.reranker_config: RerankerConfig | None = None
+        self.eval_config: EvaluationConfig | None = None
+        self.search_config: SearchEngineConfig | None = None
+        self.run_config: RunConfig | None = None
 
     def read_dict(self, **kwargs):
         self._process_params(self.params.parse_dict, **kwargs)
@@ -414,11 +430,11 @@ class DocUVerseConfig(GenericArguments):
 
     def _process_params(self, parse_method, *args, **kwargs):
         self.config = kwargs
-        (self.search_config, self.eval_config, self.run_config) = parse_method(*args, **kwargs)
+        (self.search_config, self.reranker_config, self.eval_config, self.run_config) = parse_method(*args, **kwargs)
         self.ingest_params()
 
     def ingest_params(self):
-        for _dict in [self.search_config, self.eval_config, self.run_config]:
+        for _dict in [self.search_config, self.reranker_config, self.eval_config, self.run_config]:
             for key, value in _dict.__dict__.items():
                 self.__setattr__(key, value)
 

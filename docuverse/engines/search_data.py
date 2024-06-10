@@ -377,7 +377,7 @@ class SearchData:
         docid_map = kwargs.get('docid_map', {})
         max_num_documents = kwargs.get('max_num_documents')
         if max_num_documents is None:
-            max_num_documents = 1e20
+            max_num_documents = 100000000
         else:
             max_num_documents = int(max_num_documents)
         url = r'https?://(?:www\.)?(?:[-a-zA-Z0-9@:%._\+~#=]{1,256})\.(:?[a-zA-Z0-9()]{1,6})(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)*\b'
@@ -412,7 +412,9 @@ class SearchData:
                                         tiler=tiler),
                 input_file)
             if cached_passages:
-                passages.extend(cached_passages)
+                passages.extend(cached_passages[:max_num_documents]
+                                if 'max_num_documents' in kwargs
+                                else cached_passages)
                 continue
             print(f"Reading {input_file}")
             tpassages = []

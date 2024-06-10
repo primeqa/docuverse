@@ -16,11 +16,11 @@ from docuverse.utils.evaluator import EvaluationEngine
 if __name__ == '__main__':
     with open("logfile", "a") as cmdlog:
         cmdlog.write(f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')} - {os.getenv('USER')} - "
-                     f"{' '.join(sys.argv)}\n")
+                     f"{' '.join([__file__] + sys.argv)}\n")
 
     config = DocUVerseConfig.get_stdargs_config()
 
-    engine = SearchEngine(config.search_config)
+    engine = SearchEngine(config)
     scorer = None
 
     if config.evaluate and config.eval_config is not None:

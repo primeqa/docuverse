@@ -3,6 +3,7 @@ from importlib import import_module
 from docuverse.engines import SearchCorpus
 from docuverse.utils import get_param
 
+
 class RetrievalEngine:
     def __init__(self, **kwargs):
         self.args = kwargs

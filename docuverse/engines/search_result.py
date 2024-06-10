@@ -1,7 +1,6 @@
 import json
 from typing import List, Dict, Union
 
-
 class SearchResult:
     """
     Represents the list of relevant text units (documents or paraphaphs) returned from a seqrch query.

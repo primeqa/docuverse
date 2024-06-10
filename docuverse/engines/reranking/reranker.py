@@ -3,5 +3,5 @@ class Reranker(object):
         self.config = reranking_config
         self.name = reranking_config['name']
 
-    def rerank(self, documents, combine_score=None):
+    def rerank(self, documents):
         return None

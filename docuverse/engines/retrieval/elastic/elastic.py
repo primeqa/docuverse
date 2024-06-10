@@ -151,7 +151,7 @@ class ElasticEngine(RetrievalEngine):
     def read_results(self, data):
         results = []
         for d in data['hits']['hits']:
-            r = SearchResult.SearchDatum(d['_source'])
+            r = SearchResult.SearchDatum(score=d['_score'],data=d['_source'])
             results.append(r)
         return results
 

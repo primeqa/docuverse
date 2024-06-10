@@ -1,4 +1,7 @@
 import docuverse.engines.retrieval.elastic as elastic
+from docuverse.engines.reranking.dense_reranker import DenseReranker
+from docuverse.engines.search_engine_config_params import RerankerArguments
+
 
 def create_retrieval_engine(retriever_config: dict):
     """
@@ -40,3 +43,13 @@ def create_retrieval_engine(retriever_config: dict):
             raise e
 
     return engine
+
+
+def create_reranker_engine(reranker_config: dict|RerankerArguments):
+    name = reranker_config.get('reranker_engine', 'dense')
+    if name == 'dense':
+        if reranker_config.reranker_model is None:
+            return None
+        return DenseReranker(reranker_config)
+    else:
+        raise RuntimeError("The only available reranking engine is 'dense'")
