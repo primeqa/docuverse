@@ -8,10 +8,12 @@ from docuverse import SearchResult, SearchQueries
 from docuverse.engines import SearchData, get_param
 from docuverse.engines.search_engine_config_params import EvaluationConfig, EvaluationArguments
 from .evaluation_output import EvaluationOutput
+from rouge_score.rouge_scorer import RougeScorer
 
 
 class EvaluationEngine:
     def __init__(self, config):
+        self.relevant = None
         self.rouge_scorer = None
         self.compute_rouge_score = None
         self.eval_measure = config.eval_measure
@@ -22,10 +24,10 @@ class EvaluationEngine:
         if isinstance(config, EvaluationArguments):
             for param in vars(config):
                 setattr(self, param, getattr(config, param))
-        elif isinstance(config, str) and os.path.exists(config): # It's a file
+        elif isinstance(config, str) and os.path.exists(config):  # It's a file
             pass
         if self.config.compute_rouge:
-            self.rouge_scorer = Rouge()
+            self.rouge_scorer = RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
 
     def compute_score(self, input_queries: SearchQueries, system: List[SearchResult]) -> EvaluationOutput:
         if self.compute_rouge_score:
@@ -120,11 +122,10 @@ class EvaluationEngine:
         _result = EvaluationOutput(num_ranked_queries=num_eval_questions,
                                    num_judged_queries=num_eval_questions,
                                    doc_scores=self.relevant,
-                                   ranks = self.iranks,
+                                   ranks=self.iranks,
                                    rouge_scores=rouge_scores,
                                    compute_macro_scores=True,
                                    metrics=self.eval_measure)
-
 
         if self.config.compute_rouge:
             _result['rouge_scores'] = \

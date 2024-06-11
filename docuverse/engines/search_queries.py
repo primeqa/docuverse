@@ -3,7 +3,7 @@ import csv
 import re
 
 from docuverse.engines import SearchData
-from docuverse.engines.preprocessors import *
+from docuverse.engines.data_template import default_query_template
 from docuverse.utils import get_param
 
 
@@ -32,11 +32,15 @@ class SearchQueries(SearchData):
         return self.queries[i]
 
     @staticmethod
-    def read(query_file, **kwargs):
-        return SearchQueries.read_question_data(in_files=query_file, **kwargs)
+    def read(query_file, template=default_query_template, **kwargs):
+        return SearchQueries.read_question_data(in_files=query_file, template=template, **kwargs)
 
     @classmethod
-    def read_question_data(cls, in_files, fields=None, lang="en", remv_stopwords=False, url=None, **kwargs):
+    def read_question_data(cls, in_files, fields=None, lang="en",
+                           remv_stopwords=False,
+                           url=None,
+                           query_template=default_query_template,
+                           **kwargs):
         tpassages = []
         if isinstance(in_files, str):
             in_files = [in_files]
@@ -45,25 +49,21 @@ class SearchQueries(SearchData):
 
         for in_file in in_files:
             with open(in_file, "r", encoding="utf-8") as file_stream:
+                delim = "," if ".csv" in in_file else "\t"
                 csv_reader = \
-                    csv.DictReader(file_stream, fieldnames=fields, delimiter="\t") \
+                    csv.DictReader(file_stream, fieldnames=fields, delimiter=delim) \
                         if fields is not None \
-                        else csv.DictReader(file_stream, delimiter="\t")
+                        else csv.DictReader(file_stream, delimiter=delim)
                 # next(csv_reader)
-                for row in csv_reader:
-                    question = get_param(row, "text|question")
+                for it, row in enumerate(csv_reader):
+                    question = get_param(row, query_template.text_header)
                     if url is not None:
                         question = (re.sub(url, lang, 'URL', question), remv_stopwords)
-                    itm = {'text': question, 'id': get_param(row, 'id|qid'),
-                           'relevant': get_param(row, 'relevant|doc-id-list')}
-                    # itm = {'text': (row["title"] + ' ' if 'title' in row else '') + row["text"],
-                    #        'id': row['id']}
-                    # if 'title' in row:
-                    #     itm['title'] = row['title']
-                    # itm['title'] = get_param(row, 'title|question')
-                    # if 'relevant' in row:
-                    #     itm['relevant'] = row['relevant'].split(",")
-                    answers = get_param(row, 'answers')
+                    itm = {'text': question,
+                           'id': get_param(row, query_template.id_header, str(it)),
+                           'relevant': get_param(row, query_template.relevant_header).split(",")
+                           }
+                    answers = get_param(row, query_template.answers_header, "")
                     if isinstance(answers, str):
                         if "::" in answers:
                             itm['answers'] = answers.split("::")
@@ -72,9 +72,6 @@ class SearchQueries(SearchData):
                     elif isinstance(answers, list):
                         itm['answers'] = answers
                     itm['passages'] = answers
-                    # if 'answers' in row:
-                    #     itm['answers'] = row['answers'].split("::")
-                    #     itm['passages'] = itm['answers']
+
                     tpassages.append(SearchQueries.Query(**itm))
         return tpassages
-

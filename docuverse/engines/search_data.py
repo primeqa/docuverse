@@ -1,18 +1,32 @@
+import itertools
 import os
 import json
 import csv
 import re
 from typing import Dict, List
 from tqdm import tqdm
+
+from docuverse.engines import data_template
+from docuverse.engines.data_template import (
+    DataTemplate,
+    default_data_template,
+    sap_data_template,
+    beir_data_template
+)
 from docuverse.utils.text_tiler import TextTiler
 from docuverse.utils import get_param
+
 
 class DefaultProcessor:
     product_counts = {}
     stopwords = None
 
-    def __init__(self, title_name: str = "title", _stopwords=None, lang: str = "en"):
-        self.title = title_name
+    @classmethod
+    def cleanup(cls, text, lang='en', remv_stopwords=False):
+        return cls.remove_stopwords(text, lang=lang, do_replace=remv_stopwords)
+
+    def __init__(self, data_template: DataTemplate = default_data_template, _stopwords=None, lang: str = "en"):
+        self.template = data_template
         self.lang = lang
         self.read_stopwords()
 
@@ -29,18 +43,25 @@ class DefaultProcessor:
     def _init(self, **kwargs):
         pass
 
-    def __call__(self, **kwargs):
+    def __call__(self, unit, id, data_template, **kwargs):
         # itm = {self.title: item[self.title]} if self.title in item else {self.title: ""}
-        itm = kwargs
-        if 'title' not in itm:
-            itm['title'] = ""
+        #itm = kwargs
+        itm = {
+            'id': id,
+            'title': self.cleanup(get_param(unit, data_template.title_header)),
+            'text':  self.cleanup(get_param(unit, data_template.text_header))
+        }
+        for key in data_template.extra_fields:
+            if key in unit:
+                itm[key] = unit[key]
         return itm
 
-    def remove_stopwords(self, text: str, lang: str = "en", do_replace: bool = False) -> str:
-        if not do_replace or self.stopwords[lang] is None:
+    @classmethod
+    def remove_stopwords(cls, text: str, lang: str = "en", do_replace: bool = False) -> str:
+        if not do_replace or cls.stopwords[lang] is None:
             return text
         else:
-            return re.sub(r' {2,}', ' ', re.sub(self.stopwords[lang], " ", text))
+            return re.sub(r' {2,}', ' ', re.sub(cls.stopwords[lang], " ", text))
 
     @staticmethod
     def increment_product_counts(product_id):
@@ -52,8 +73,8 @@ class DefaultProcessor:
 
 class SAPProccesor(DefaultProcessor):
 
-    def __init__(self, title_name: str = "title", hana_file2url: List[str] = None):
-        super().__init__(title_name)
+    def __init__(self, data_template: DataTemplate = sap_data_template, hana_file2url: List[str] = None):
+        super().__init__(data_template)
         self.docname2url_title = {}
         self._init(hana_file2url=hana_file2url)
 
@@ -172,7 +193,7 @@ class SAPProccesor(DefaultProcessor):
         full_url, fields = self.process_url(doc_url, data_type)
         uniform_product_name = kwargs.get("uniform_product_name", "")
         product_id = self.process_product_id(fields, uniform_product_name, data_type)
-        title = kwargs.get("title")
+        title = kwargs.get(self.template.title_header)
         docid = str(self.find_document_id(kwargs))
         if docid != "":
             if docid.endswith(".txt"):
@@ -202,7 +223,7 @@ class SearchData:
     processor_map = {
         'default': DefaultProcessor(),
         'auto': DefaultProcessor(),
-        'sap': SAPProccesor(title_name='title')
+        'sap': SAPProccesor()
     }
 
     class Entry:
@@ -213,21 +234,14 @@ class SearchData:
             return getattr(self, "text")
 
     def __init__(self, filenames,
-                 text_field_name: str = "text",
-                 title_field_name: str = "title",
-                 **data):
+                 data_template=default_data_template,
+                 **kwargs):
         self.entries = []
         self.tiler = None
-        self.default_labels = {
-            'title': title_field_name,
-            'text': text_field_name,
-            'id': data['document_id_field_name'] if 'document_id_field_name' in data else ""
-        }
-        # self.dict = data
-        # self.__dict__.update(data)
+        self.template = data_template
 
     def get_text(self, i: int) -> str:
-        return self.entries[i][self.default_labels['text']]
+        return self.entries[i][self.template.text_header]
 
     def __getitem__(self, i: int) -> Entry:
         return SearchData.Entry(**self.entries[i])
@@ -253,28 +267,25 @@ class SearchData:
         return cache_file_name
 
     @staticmethod
-    def open_cache_file(cache_file_name: str, write: bool = False):
+    def _open_file(file_name: str, write: bool = False):
         if write:
             mode = "w"
-            cache_dir = os.path.dirname(cache_file_name)
+            cache_dir = os.path.dirname(file_name)
             if not os.path.exists(cache_dir):
                 os.makedirs(cache_dir)
         else:
             mode = "r"
-            if not os.path.exists(cache_file_name):
+            if not os.path.exists(file_name):
                 return None
         input_stream = None
-        if cache_file_name.endswith(".jsonl.bz2"):
+        if file_name.endswith(".bz2"):
             import bz2
-            input_stream = bz2.open(cache_file_name, mode)
-        elif cache_file_name.endswith(".jsonl.gz"):
+            input_stream = bz2.open(file_name, mode)
+        elif file_name.endswith(".gz"):
             import gzip
-            input_stream = gzip.open(cache_file_name, mode)
-        elif cache_file_name.endswith(".jsonl"):
-            input_stream = open(cache_file_name, mode)
-        else:
-            print(f"Unknown file extension for file: {cache_file_name}")
-            raise RuntimeError(f"Unknown file extension for file: {cache_file_name}")
+            input_stream = gzip.open(file_name, mode)
+        else:  # if file_name.endswith(".jsonl"):
+            input_stream = open(file_name, mode)
         return input_stream
 
     @staticmethod
@@ -282,7 +293,7 @@ class SearchData:
         passages = []
 
         if os.path.exists(cache_file_name) and os.path.getmtime(cache_file_name) > os.path.getmtime(input_file):
-            input_stream = SearchData.open_cache_file(cache_file_name, write=False)
+            input_stream = SearchData._open_file(cache_file_name, write=False)
             for line in input_stream:
                 passages.append(json.loads(line.decode('utf-8')))
 
@@ -294,7 +305,7 @@ class SearchData:
     def write_cache_file(cache_filename, passages, use_cache=True):
         if not use_cache:
             return
-        output_stream = SearchData.open_cache_file(cache_filename, write=True)
+        output_stream = SearchData._open_file(cache_filename, write=True)
         for p in passages:
             output_stream.write(f"{json.dumps(p)}\n".encode("utf-8"))
         output_stream.close()
@@ -302,11 +313,10 @@ class SearchData:
     @classmethod
     def process_text(cls,
                      tiler,
-                     id,
-                     title,
-                     text,
+                     unit,
                      max_doc_size,
                      stride,
+                     id=None,
                      remove_url=True,
                      tokenizer=None,
                      doc_url=None,
@@ -314,12 +324,11 @@ class SearchData:
                      data_type="sap",
                      title_handling="all",
                      processor=None,
+                     data_template=default_data_template
                      ):
         """
         Convert a given document or passage (from 'output.json') to a dictionary, splitting the text as necessary.
-        :param id: str - the prefix of the id of the resulting piece/pieces
-        :param title: str - the title of the new piece
-        :param text: the input text to be split
+        :param unit: the paragraph/document structure to proces
         :param max_doc_size: int - the maximum size (in word pieces) of the resulting sub-document/sub-passage texts
         :param stride: int - the stride/overlap for consecutive pieces
         :param remove_url: Boolean - if true, URL in the input text will be replaced with "URL"
@@ -335,18 +344,25 @@ class SearchData:
         :param processor: Processor - the processor to use to extract the additional keys for indexing. By default, only
                'text' and 'title' are extracted, but for the 'sap' data we also extract productId, coarseProductId,
                'deliverableLoio', 'filePath', 'url', 'appname', etc.
+        :param data_template: DataTemplate - the template for the data - it defines what fields to look for (e.g.,
+               'title', 'text')
+
         :return - a list of indexable items, each containing a title, id, text, and url.
         """
 
         if processor is None:
             processor = cls.processor_map[data_type]
 
-        itm = processor(id=id, title=title, text=text, remove_url=remove_url, doc_url=doc_url,
-                        uniform_product_name=uniform_product_name, data_type=data_type, title_handling=title_handling)
+        if id is None:
+            id = get_param(unit, data_template.id_header)
+
+        itm = processor(unit=unit, id=id, remove_url=remove_url, doc_url=doc_url,
+                        uniform_product_name=uniform_product_name, data_type=data_type, title_handling=title_handling,
+                        data_template=data_template)
 
         return tiler.create_tiles(id_=id,
-                                  text=text,
-                                  title=title,
+                                  text=itm['text'],
+                                  title=itm['title'],
                                   max_doc_size=max_doc_size,
                                   stride=stride,
                                   remove_url=remove_url,
@@ -364,12 +380,13 @@ class SearchData:
                   fields=None,
                   remove_url=False,
                   tokenizer=None,
-                  tiler:TextTiler|str=None,
-                  max_doc_length: int | None=None,
-                  stride:int|None=None,
-                  use_cache:bool=True,
-                  cache_dir:str=default_cache_dir,
-                  title_handling:str='all',
+                  tiler: TextTiler | str = None,
+                  max_doc_length: int | None = None,
+                  stride: int | None = None,
+                  use_cache: bool = True,
+                  cache_dir: str = default_cache_dir,
+                  title_handling: str = 'all',
+                  data_template: DataTemplate = default_data_template,
                   **kwargs):
 
         passages = []
@@ -419,11 +436,8 @@ class SearchData:
             print(f"Reading {input_file}")
             tpassages = []
 
-            def cleanup(text):
-                return cls.remove_stopwords(text, lang=lang, remv_stopwords=remv_stopwords)
-
-            with open(input_file) as in_file:
-                if input_file.endswith(".tsv"):
+            with SearchData._open_file(input_file) as in_file:
+                if SearchData.is_of_type(input_file, extensions=[".tsv"]):
                     # We'll assume this is the PrimeQA standard format
                     csv_reader = \
                         csv.DictReader(in_file, fieldnames=fields, delimiter="\t") \
@@ -436,9 +450,7 @@ class SearchData:
                         assert len(row) in [2, 3, 4], f'Invalid .tsv record (has to contain 2 or 3 fields): {row}'
                         tpassages.extend(
                             cls.process_text(tiler=tiler,
-                                             id=row['id'],
-                                             title=cleanup(row['title']) if 'title' in row else '',
-                                             text=cleanup(row['text']),
+                                             unit=row,
                                              max_doc_size=max_doc_length,
                                              stride=stride,
                                              remove_url=remove_url,
@@ -446,27 +458,23 @@ class SearchData:
                                              doc_url=url,
                                              uniform_product_name=None,
                                              data_type=data_type,
-                                             title_handling=title_handling
+                                             title_handling=title_handling,
+                                             data_template=data_template
                                              ))
-                elif input_file.endswith('.json') or input_file.endswith(".jsonl"):
+                elif SearchData.is_of_type(input_file, ['.json', '.jsonl']):
                     # This should be the SAP or BEIR json format
-                    if input_file.endswith('.json'):
-                        data = json.load(in_file)
+                    if input_file.find('.jsonl') >= 0:
+                        data = [json.loads(line) for line in in_file]
                     else:
-                        data = [json.loads(line) for line in open(input_file).readlines()]
+                        data = json.load(in_file)
+
                     uniform_product_name = kwargs.get('uniform_product_name', productId)
                     docid_filter = kwargs.get('docid_filter', [])
                     # data_type = get_attr(kwargs, 'data_type', 'sap')
-                    if data_type in ['auto', 'sap']:
-                        txtname = "document"
-                        psg_txtname = "text"
-                        docidname = "document_id"
-                        titlename = "title"
-                        data_type = "sap"
+                    if data_type in ['sap']:
+                        data_template = sap_data_template
                     elif data_type == "beir":
-                        txtname = "text"
-                        docidname = "_id"
-                        titlename = 'title'
+                        data_template = beir_data_template
 
                     for di, doc in tqdm(enumerate(data),
                                         total=min(max_num_documents, len(data)),
@@ -474,44 +482,36 @@ class SearchData:
                                         smoothing=0.05):
                         if di >= max_num_documents:
                             break
-                        docid = str(doc[docidname])
+                        docid = str(doc[data_template.id_header])
 
                         if ".txt" in docid:
                             docid = docid.replace(".txt", "")
 
                         if docid_filter != [] and docid not in docid_filter:
                             continue
-                        url = doc['document_url'] if 'document_url' in doc else \
-                            doc['url'] if 'url' in doc else ""
-                        title = doc[titlename] if 'title' in doc else None
-                        if title is None:
-                            title = ""
-                        # if docname2url and docid in docname2url:
-                        #     url = docname2url[docid]
-                        #     title = docname2title[docid]
+                        url = get_param(doc, 'document_url|url', "")
+                        title = get_param(doc, data_template.title_header, "")
                         try:
                             if doc_based:
                                 tpassages.extend(
                                     cls.process_text(tiler=tiler,
-                                                     id=doc[docidname],
-                                                     title=cleanup(title),
-                                                     text=cleanup(doc[txtname]),
+                                                     unit=doc,
                                                      max_doc_size=max_doc_length,
                                                      stride=stride,
                                                      remove_url=remove_url,
                                                      tokenizer=tokenizer,
                                                      doc_url=url,
                                                      uniform_product_name=uniform_product_name,
-                                                     data_type=data_type
+                                                     data_type=data_type,
+                                                     data_template=data_template
                                                      ))
                             else:
-                                for pi, passage in enumerate(doc['passages']):
-                                    passage_id = passage['passage_id'] if 'passage_id' in passage else pi
+                                for pi, passage in enumerate(doc[data_template.passage_header]):
+                                    passage_id = get_param(passage, data_template.passage_id_header, str(pi))
                                     tpassages.extend(
                                         cls.process_text(tiler=tiler,
-                                                         id=f"{doc[docidname]}-{passage_id}",
-                                                         title=cleanup(title),
-                                                         text=cleanup(passage[psg_txtname]),
+                                                         id=f"{doc[data_template.id_header]}-{passage_id}",
+                                                         unit=passage,
                                                          max_doc_size=max_doc_length,
                                                          stride=stride,
                                                          remove_url=remove_url,
@@ -519,7 +519,8 @@ class SearchData:
                                                          doc_url=url,
                                                          uniform_product_name=uniform_product_name,
                                                          data_type=data_type,
-                                                         title_handling=title_handling
+                                                         title_handling=title_handling,
+                                                         data_template=data_template
                                                          ))
                         except Exception as e:
                             print(f"Error at line {di}: {e}")
@@ -531,10 +532,11 @@ class SearchData:
                     passages = []
                     docid_map = kwargs.get('docid_map', {})
                     for i in range(len(data)):
-                        itm = {}
-                        itm['id'] = i
-                        itm['text'] = cleanup(data.Question[i].strip())
-                        itm['answers'] = data['Gold answer'][i]
+                        # itm = {}
+                        # itm['id'] = i
+                        # itm['text'] = cleanup(data.Question[i].strip())
+                        # itm['answers'] = data[data_template.answers_header][i]
+                        itm = cls.processor_map[data_type](unit=data, data_template=data_template)
                         psgs = []
                         ids = []
                         for val, loio in [[f'passage {k}', f'loio {k}'] for k in range(1, 4)]:
@@ -580,3 +582,17 @@ class SearchData:
         else:
             return passages
 
+    @classmethod
+    def is_of_type(cls, input_file, extensions):
+        """
+        Check if the given file is of any of the specified file types, cross-product with compressed extensions.
+
+        Parameters:
+            input_file (str): The file path or name to be checked.
+            extensions (list): A list of file extensions to check against.
+
+        Returns:
+            bool: True if the file is of any of the specified types, False otherwise.
+        """
+        return any(input_file.endswith(f"{ext[0]}{ext[1]}")
+                   for ext in itertools.product(extensions, ['', ".bz2", ".gz", ".xz"]))

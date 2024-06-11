@@ -27,8 +27,8 @@ class ElasticDenseEngine(ElasticEngine):
             else:
                 self.hidden_dim = 384  # Some default value, the system might crash if it's wrong.
         else:
-            print("Encoding corpus documents:")
-            self.hidden_dim = len(self.model.encode('text'))
+            self.hidden_dim = len(self.model.encode('text', show_progress_bar=False))
+            print(f"Hidden dimension for model: {self.hidden_dim}")
 
         self._set_pipelines()
 

@@ -43,11 +43,11 @@ class SearchEngine:
     @staticmethod
     def read_configs(search_config_or_path: str, reranker_config_or_path: str) -> \
             Tuple[GenericArguments, GenericArguments]:
-        return SearchEngine._read_config(search_config_or_path, SearchEngineArguments), \
-            SearchEngine._read_config(reranker_config_or_path, RerankerArguments)
+        return SearchEngine._read_config(search_config_or_path, 'retrieval'), \
+            SearchEngine._read_config(reranker_config_or_path, 'reranking')
 
     @staticmethod
-    def _read_config(config_or_path: str, TYPE) -> GenericArguments:
+    def _read_config(config_or_path: str|GenericArguments, subtype='retrieval') -> GenericArguments:
         """
         Reads the configuration file at the specified path and returns the retrieved values for retrieval
         and reranking. The configuration file is consistent to the mf-coga config file (if that doesn't make sense
@@ -72,15 +72,14 @@ class SearchEngine:
                 with open(config_or_path) as stream:
                     try:
                         vals = yaml.safe_load(stream=stream)
-                        return vals['retrieval'] if 'retrieval' in vals else vals, vals[
-                            'reranking'] if 'reranking' in vals else None
+                        return vals[subtype] if subtype in vals else vals
 
                     except yaml.YAMLError as exc:
                         raise exc
             else:
                 print(f"The configuration file '{config_or_path}' does not exist.")
                 raise FileNotFoundError(f"The configuration file '{config_or_path}' does not exist.")
-        elif isinstance(config_or_path, TYPE):
+        elif isinstance(config_or_path, GenericArguments):
             return config_or_path
 
     def create(self, search_config_or_path, reranker_config_or_path, **kwargs):
@@ -130,4 +129,9 @@ class SearchEngine:
             self.tiler = TextTiler(max_doc_size=self.retriever_config.max_doc_length,
                                    stride=self.retriever_config.stride,
                                    tokenizer=tokenizer)
-        return SearchData.read_data(input_files=file, tiler=self.tiler, **vars(self.retriever_config))
+        return SearchData.read_data(input_files=file,
+                                    tiler=self.tiler,
+                                    **vars(self.retriever_config))
+
+    def read_questions(self, file):
+        return SearchQueries.read(file, **vars(self.retriever_config))
