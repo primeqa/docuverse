@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
-from typing import List
-
+from typing import List, Tuple
+from docuverse.utils import read_config_file
 
 @dataclass
 class DataTemplate:
@@ -74,6 +74,13 @@ class DataTemplate:
     def __post_init__(self):
         if self.keep_fields is not None:
             self.extra_fields = self.keep_fields.split("|")
+
+
+def read_doc_query_format(filename: str) -> Tuple[DataTemplate, DataTemplate]:
+    config = read_config_file(filename)
+    if 'data_format' not in config or 'query_format' not in config:
+        raise RuntimeError(f"The config file {filename} does not contain 'data_format' and 'query_format' fields.")
+    return DataTemplate(**config['data_format']), DataTemplate(**config['query_format'])
 
 
 default_query_template = DataTemplate(id_header='id|qid',

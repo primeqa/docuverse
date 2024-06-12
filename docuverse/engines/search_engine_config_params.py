@@ -7,8 +7,12 @@ from optimum.utils.runs import RunConfig
 from docuverse.utils import get_param
 from dataclasses import dataclass, field
 from transformers import HfArgumentParser
-from docuverse.engines.data_template import DataTemplate, default_query_template, default_data_template
-
+from docuverse.engines.data_template import (
+    DataTemplate,
+    default_query_template,
+    default_data_template,
+    read_doc_query_format
+)
 
 class GenericArguments:
     def get(self, key: str, default=None):
@@ -203,6 +207,14 @@ class SearchEngineArguments(GenericArguments):
         }
     )
 
+    data_format: Optional[str]|None = field(
+        default=None,
+        metadata={
+            "help": "Defines the configuration file associated with the data and query format of the documents/queries "
+                    "(default: None)."
+        }
+    )
+
     query_header_format: Optional[str] = field(
         default=None,
         metadata={
@@ -232,20 +244,24 @@ class SearchEngineArguments(GenericArguments):
 
     def __post_init__(self):
         # parse the query_header_template
-        def create_template(param):
-            items = param.split(',')
-            val = {}
-            for item in items:
-                a = item.split(':')
-                if len(a) == 2:
-                    val[a[0]] = a[1]
-            return DataTemplate(**val)
 
-        if self.query_header_format is not None:
-            self.query_template = create_template(self.query_header_format)
+        if self.data_format is not None:
+            self.data_template, self.query_template = read_doc_query_format(self.data_format)
+        else:
+            def create_template(param):
+                items = param.split(',')
+                val = {}
+                for item in items:
+                    a = item.split(':')
+                    if len(a) == 2:
+                        val[a[0]] = a[1]
+                return DataTemplate(**val)
 
-        if self.data_header_format is not None:
-            self.data_template = create_template(self.data_header_format)
+            if self.query_header_format is not None:
+                self.query_template = create_template(self.query_header_format)
+
+            if self.data_header_format is not None:
+                self.data_template = create_template(self.data_header_format)
 
 
 

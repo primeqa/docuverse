@@ -3,6 +3,7 @@ import os
 import json
 import csv
 import re
+from functools import partial
 from typing import Dict, List
 from tqdm import tqdm
 
@@ -44,13 +45,14 @@ class DefaultProcessor:
         pass
 
     def __call__(self, unit, id, data_template, **kwargs):
-        # itm = {self.title: item[self.title]} if self.title in item else {self.title: ""}
-        #itm = kwargs
         itm = {
             'id': id,
             'title': self.cleanup(get_param(unit, data_template.title_header)),
             'text':  self.cleanup(get_param(unit, data_template.text_header))
         }
+        url = get_param(unit, 'document_url|url', "")
+        if url != "":
+            itm['url'] = url
         for key in data_template.extra_fields:
             if key in unit:
                 itm[key] = unit[key]
@@ -318,7 +320,6 @@ class SearchData:
                      stride,
                      id=None,
                      remove_url=True,
-                     tokenizer=None,
                      doc_url=None,
                      uniform_product_name=None,
                      data_type="sap",
@@ -377,7 +378,6 @@ class SearchData:
     def read_data(cls,
                   input_files,
                   lang="en",
-                  fields=None,
                   remove_url=False,
                   tokenizer=None,
                   tiler: TextTiler | str = None,
@@ -399,10 +399,6 @@ class SearchData:
             max_num_documents = int(max_num_documents)
         url = r'https?://(?:www\.)?(?:[-a-zA-Z0-9@:%._\+~#=]{1,256})\.(:?[a-zA-Z0-9()]{1,6})(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)*\b'
         data_type = kwargs.get('data_type', 'auto')
-        if fields is None:
-            num_args = 3
-        else:
-            num_args = len(fields)
         if isinstance(input_files, list):
             files = input_files
         elif isinstance(input_files, str):
@@ -414,19 +410,34 @@ class SearchData:
         remv_stopwords = bool(kwargs.get('remove_stopwords', False))
         unmapped_ids = []
         return_unmapped_ids = kwargs.get('return_unmapped', None)
+        if data_type in ['sap']:
+            data_template = sap_data_template
+        elif data_type == "beir":
+            data_template = beir_data_template
+
+        docid_filter = kwargs.get('docid_filter', [])
+        uniform_product_name = kwargs.get('uniform_product_name')
 
         for input_file in files:
             docs_read = 0
             if input_file.find(":") >= 0:
                 productId, input_file = input_file.split(":")
             else:
-                productId = None
+                productId = uniform_product_name
+
+            process_text = partial(cls.process_text,
+                                   tiler=tiler,
+                                   max_doc_size=max_doc_length,
+                                   stride=stride,
+                                   remove_url=remove_url,
+                                   uniform_product_name=productId,
+                                   data_type=data_type,
+                                   data_template=data_template)
+
+            cache_filename = cls.get_cached_filename(input_file, max_doc_size=max_doc_length, stride=stride,
+                                                     title_handling=title_handling, tiler=tiler)
             cached_passages = cls.read_cache_file_if_needed(
-                cls.get_cached_filename(input_file,
-                                        max_doc_size=max_doc_length,
-                                        stride=stride,
-                                        title_handling=title_handling,
-                                        tiler=tiler),
+                cache_filename,
                 input_file)
             if cached_passages:
                 passages.extend(cached_passages[:max_num_documents]
@@ -439,141 +450,20 @@ class SearchData:
             with SearchData._open_file(input_file) as in_file:
                 if SearchData.is_of_type(input_file, extensions=[".tsv"]):
                     # We'll assume this is the PrimeQA standard format
-                    csv_reader = \
-                        csv.DictReader(in_file, fieldnames=fields, delimiter="\t") \
-                            if fields is not None \
-                            else csv.DictReader(in_file, delimiter="\t")
-                    next(csv_reader)
-                    for ri, row in tqdm(enumerate(csv_reader)):
-                        if docs_read >= max_num_documents:
-                            break
-                        assert len(row) in [2, 3, 4], f'Invalid .tsv record (has to contain 2 or 3 fields): {row}'
-                        tpassages.extend(
-                            cls.process_text(tiler=tiler,
-                                             unit=row,
-                                             max_doc_size=max_doc_length,
-                                             stride=stride,
-                                             remove_url=remove_url,
-                                             tokenizer=tokenizer,
-                                             doc_url=url,
-                                             uniform_product_name=None,
-                                             data_type=data_type,
-                                             title_handling=title_handling,
-                                             data_template=data_template
-                                             ))
+                    tpassages, docs_read1 = cls._read_csv_file(process_text, in_file, max_num_documents)
+                    docs_read += docs_read1
                 elif SearchData.is_of_type(input_file, ['.json', '.jsonl']):
-                    # This should be the SAP or BEIR json format
-                    if input_file.find('.jsonl') >= 0:
-                        data = [json.loads(line) for line in in_file]
-                    else:
-                        data = json.load(in_file)
-
-                    uniform_product_name = kwargs.get('uniform_product_name', productId)
-                    docid_filter = kwargs.get('docid_filter', [])
-                    # data_type = get_attr(kwargs, 'data_type', 'sap')
-                    if data_type in ['sap']:
-                        data_template = sap_data_template
-                    elif data_type == "beir":
-                        data_template = beir_data_template
-
-                    for di, doc in tqdm(enumerate(data),
-                                        total=min(max_num_documents, len(data)),
-                                        desc="Reading json documents",
-                                        smoothing=0.05):
-                        if di >= max_num_documents:
-                            break
-                        docid = str(doc[data_template.id_header])
-
-                        if ".txt" in docid:
-                            docid = docid.replace(".txt", "")
-
-                        if docid_filter != [] and docid not in docid_filter:
-                            continue
-                        url = get_param(doc, 'document_url|url', "")
-                        title = get_param(doc, data_template.title_header, "")
-                        try:
-                            if doc_based:
-                                tpassages.extend(
-                                    cls.process_text(tiler=tiler,
-                                                     unit=doc,
-                                                     max_doc_size=max_doc_length,
-                                                     stride=stride,
-                                                     remove_url=remove_url,
-                                                     tokenizer=tokenizer,
-                                                     doc_url=url,
-                                                     uniform_product_name=uniform_product_name,
-                                                     data_type=data_type,
-                                                     data_template=data_template
-                                                     ))
-                            else:
-                                for pi, passage in enumerate(doc[data_template.passage_header]):
-                                    passage_id = get_param(passage, data_template.passage_id_header, str(pi))
-                                    tpassages.extend(
-                                        cls.process_text(tiler=tiler,
-                                                         id=f"{doc[data_template.id_header]}-{passage_id}",
-                                                         unit=passage,
-                                                         max_doc_size=max_doc_length,
-                                                         stride=stride,
-                                                         remove_url=remove_url,
-                                                         tokenizer=tokenizer,
-                                                         doc_url=url,
-                                                         uniform_product_name=uniform_product_name,
-                                                         data_type=data_type,
-                                                         title_handling=title_handling,
-                                                         data_template=data_template
-                                                         ))
-                        except Exception as e:
-                            print(f"Error at line {di}: {e}")
-                            raise e
-                        docs_read += 1
-                elif kwargs.get('read_sap_qfile', False) or input_file.endswith(".csv"):
-                    import pandas as pd
-                    data = pd.read_csv(in_file)
-                    passages = []
-                    docid_map = kwargs.get('docid_map', {})
-                    for i in range(len(data)):
-                        # itm = {}
-                        # itm['id'] = i
-                        # itm['text'] = cleanup(data.Question[i].strip())
-                        # itm['answers'] = data[data_template.answers_header][i]
-                        itm = cls.processor_map[data_type](unit=data, data_template=data_template)
-                        psgs = []
-                        ids = []
-                        for val, loio in [[f'passage {k}', f'loio {k}'] for k in range(1, 4)]:
-                            if type(data[val][i]) == str:
-                                psgs.append(data[val][i])
-                                loio = str(data[loio][i]).replace('\t', '')
-                                if loio == 'nan':
-                                    loio = ""
-                                if type(loio) is not str or (loio != "" and loio.find("loio") == -1):
-                                    print(f"Error: the loio {loio} does not have the word 'loio' in it.")
-                                    continue
-                                else:
-                                    loio_v = loio.replace('loio', '')
-                                if loio == "":
-                                    continue
-                                if loio_v in docid_map:
-                                    if docid_map[loio_v] not in ids:
-                                        ids.append(docid_map[loio_v])
-                                else:
-                                    ids.append(loio_v)
-                                    unmapped_ids.append(loio_v)
-                        itm['passages'] = psgs
-                        itm['relevant'] = ids
-                        tpassages.append(itm)
-                    cls.write_cache_file(
-                        cls.get_cached_filename(input_file, max_doc_length, stride, tiler,
-                                                title_handling=title_handling),
-                        tpassages,
-                        use_cache)
-                    if return_unmapped_ids:
-                        return tpassages, unmapped_ids
+                    # This may be the SAP, BEIR, ClapNQ or similar json format
+                    tpassages, docs_read1 = cls._read_json_file(process_text, in_file, input_file, data_template,
+                                                                docid_filter, doc_based, max_num_documents)
+                    docs_read += docs_read1
+                # elif kwargs.get('read_sap_qfile', False) or input_file.endswith(".csv"):
+                #     passgs, docs_read1 = cls._read_csv_query_file(process_text, in_file)
+                #     tpassages.extend(passgs)
+                #     docs_read += docs_read1
                 else:
                     raise RuntimeError(f"Unknown file extension: {os.path.splitext(input_file)[1]}")
-            cls.write_cache_file(
-                cls.get_cached_filename(input_file, max_doc_length, stride, tiler, title_handling),
-                tpassages,
-                use_cache)
+            cls.write_cache_file(cache_filename, tpassages, use_cache)
             passages.extend(tpassages)
             max_num_documents -= docs_read
 
@@ -581,6 +471,93 @@ class SearchData:
             return passages, unmapped_ids
         else:
             return passages
+
+    @classmethod
+    def _read_csv_query_file(cls, data_template, data_type, in_file):
+        import pandas as pd
+        data = pd.read_csv(in_file)
+        passages = []
+        # docid_map = kwargs.get('docid_map', {})
+        for i in range(len(data)):
+            itm = cls.processor_map[data_type](unit=data, data_template=data_template)
+            psgs = []
+            ids = []
+            for val, loio in [[f'passage {k}', f'loio {k}'] for k in range(1, 4)]:
+                if type(data[val][i]) == str:
+                    psgs.append(data[val][i])
+                    loio = str(data[loio][i]).replace('\t', '')
+                    if loio == 'nan':
+                        loio = ""
+                    if type(loio) is not str or (loio != "" and loio.find("loio") == -1):
+                        print(f"Error: the loio {loio} does not have the word 'loio' in it.")
+                        continue
+                    else:
+                        loio_v = loio.replace('loio', '')
+                    if loio == "":
+                        continue
+                    # if loio_v in docid_map:
+                    #     if docid_map[loio_v] not in ids:
+                    #         ids.append(docid_map[loio_v])
+                    # else:
+                    #     ids.append(loio_v)
+                    #     unmapped_ids.append(loio_v)
+            itm['passages'] = psgs
+            itm['relevant'] = ids
+
+        return passages
+
+    @classmethod
+    def _read_json_file(cls, process_text, in_file, filename, data_template, docid_filter, doc_based, max_num_documents):
+        tpassages = []
+        if filename.find('.jsonl') >= 0:
+            data = [json.loads(line) for line in in_file]
+        else:
+            data = json.load(in_file)
+
+        read_docs = 0
+        for di, doc in tqdm(enumerate(data),
+                            total=min(max_num_documents, len(data)),
+                            desc="Reading json documents",
+                            smoothing=0.05):
+            if di >= max_num_documents:
+                break
+            docid = str(doc[data_template.id_header])
+
+            if ".txt" in docid:
+                docid = docid.replace(".txt", "")
+
+            if docid_filter != [] and docid not in docid_filter:
+                continue
+            try:
+                if doc_based:
+                    tpassages.extend(process_text(unit=doc))
+                else:
+                    for pi, passage in enumerate(doc[data_template.passage_header]):
+                        passage_id = get_param(passage, data_template.passage_id_header, str(pi))
+                        tpassages.extend(
+                            process_text(id=f"{doc[data_template.id_header]}-{passage_id}",
+                                         unit=passage))
+            except Exception as e:
+                print(f"Error at line {di}: {e} - skipping document {doc[data_template.id_header]}")
+                # raise e
+            read_docs += 1
+
+        return tpassages, read_docs
+
+    @classmethod
+    def _read_csv_file(cls, process_text, in_file, max_num_documents):
+        tpassages = []
+        csv_reader = csv.DictReader(in_file, delimiter="\t")
+        next(csv_reader)
+        docs_read = 0
+        for ri, row in tqdm(enumerate(csv_reader)):
+            if docs_read >= max_num_documents:
+                break
+            assert len(row) in [2, 3, 4], f'Invalid .tsv record (has to contain 2 or 3 fields): {row}'
+            tpassages.extend(
+                process_text(unit=row))
+            docs_read += 1
+        return tpassages, docs_read
 
     @classmethod
     def is_of_type(cls, input_file, extensions):
