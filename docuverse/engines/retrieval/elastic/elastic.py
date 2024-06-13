@@ -201,6 +201,7 @@ class ElasticEngine(RetrievalEngine):
     def ingest(self, corpus: SearchData, **kwargs):
         from tqdm import tqdm
         from elasticsearch.helpers import bulk
+        self._init_client() # Redo the connection to the server
         bulk_batch = self.config.get('bulk_batch', 40)
         num_passages = len(corpus)
         # print(input_passages[0].keys())
