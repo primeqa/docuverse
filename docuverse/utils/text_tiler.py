@@ -5,7 +5,11 @@ from typing import List, Any, Dict, Union
 import pyizumo
 from collections import deque
 
-from transformers import AutoTokenizer, PreTrainedTokenizer, RobertaTokenizer, RobertaTokenizerFast
+from transformers import (
+    AutoTokenizer,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast
+)
 
 
 class TextTiler:
@@ -22,7 +26,7 @@ class TextTiler:
         self.stride = stride
         if isinstance(tokenizer, str):
             self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
-        elif isinstance(tokenizer, PreTrainedTokenizer|RobertaTokenizerFast):
+        elif isinstance(tokenizer, PreTrainedTokenizer|PreTrainedTokenizerFast):
             self.tokenizer = tokenizer
         else:
             raise RuntimeError("The tokenizer argument must be either a string or a PreTrainedTokenizer class.")

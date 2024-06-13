@@ -53,9 +53,10 @@ class DefaultProcessor:
         url = get_param(unit, 'document_url|url', "")
         if url != "":
             itm['url'] = url
-        for key in data_template.extra_fields:
-            if key in unit:
-                itm[key] = unit[key]
+        if data_template.extra_fields is not None:
+            for key in data_template.extra_fields:
+                if key in unit:
+                    itm[key] = unit[key]
         return itm
 
     @classmethod
