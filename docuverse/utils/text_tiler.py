@@ -18,20 +18,45 @@ class TextTiler:
     of a specified length (in LLM tokenizer units), and can follow sentence boundaries
     or not.
     """
+    url_re = r'https?://(?:www\.)?(?:[-a-zA-Z0-9@:%._\+~#=]{1,256})\.(:?[a-zA-Z0-9()]{1,6})(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)*\b'
+    COUNT_TYPE_TOKEN=0
+    COUNT_TYPE_CHAR=1
 
     def __init__(self, max_doc_size: int, stride: int,
                  tokenizer: Union[str,PreTrainedTokenizer],
-                 aligned_on_sentences: bool = True):
+                 aligned_on_sentences: bool = True,
+                 count_type='token'):
+        """
+
+        Initialize the class instance.
+
+        :param max_doc_size: Maximum size of the document in terms of tokens/characters.
+        :param stride: Overlap between consecutive windows (yes, it's misnamed).
+        :param tokenizer: Tokenizer object or name of the tokenizer model.
+        :param aligned_on_sentences: Flag indicating whether window alignment should be performed on sentences.
+        :param count_type: Type of count to be performed, either 'tokens' or 'characters'.
+
+        :raises RuntimeError: If the tokenizer argument is neither a string nor a PreTrainedTokenizer class.
+        """
         self.max_doc_size = max_doc_size
         self.stride = stride
-        if isinstance(tokenizer, str):
-            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
-        elif isinstance(tokenizer, PreTrainedTokenizer|PreTrainedTokenizerFast):
-            self.tokenizer = tokenizer
+        if count_type == 'token':
+            self.count_type = self.COUNT_TYPE_TOKEN
+        elif count_type == 'char':
+            self.count_type = self.COUNT_TYPE_CHAR
         else:
-            raise RuntimeError("The tokenizer argument must be either a string or a PreTrainedTokenizer class.")
-        self.tokenizer_num_special_tokens = self.tokenizer.num_special_tokens_to_add()
-        self.max_doc_size -= self.tokenizer_num_special_tokens
+            raise RuntimeError('count_type must be either "token" or "chars"')
+        if count_type == self.COUNT_TYPE_CHAR:
+            self.tokenizer = None
+        else:
+            if isinstance(tokenizer, str):
+                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
+            elif isinstance(tokenizer, PreTrainedTokenizer|PreTrainedTokenizerFast):
+                self.tokenizer = tokenizer
+            else:
+                raise RuntimeError("The tokenizer argument must be either a string or a PreTrainedTokenizer class.")
+            self.tokenizer_num_special_tokens = self.tokenizer.num_special_tokens_to_add()
+            self.max_doc_size -= self.tokenizer_num_special_tokens
         self.product_counts = {}
         self.aligned_on_sentences = aligned_on_sentences
         self.nlp = None
@@ -68,12 +93,15 @@ class TextTiler:
             template = {}
         if max_doc_size is None:
             max_doc_size = self.max_doc_size
+        if self.count_type == self.COUNT_TYPE_CHAR:
+            max_doc_size -= 1
+
         if stride is None:
             stride = self.stride
         itm = template
         text = text.replace(r'\n+', '\n').replace(r' +', ' ')
         pieces = []
-        url = r'https?://(?:www\.)?(?:[-a-zA-Z0-9@:%._\+~#=]{1,256})\.(:?[a-zA-Z0-9()]{1,6})(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)*\b'
+
         if text.find("With this app") >= 0 or text.find("App ID") >= 0:
             itm['app_name'] = title
         title_in_text = False
@@ -84,12 +112,7 @@ class TextTiler:
             expanded_text = f"{title}\n{text}"
 
         if remove_url:
-            # The normalization below deals with some issue in the re library - it would get stuck
-            # if the URL has some strange chars, like `\xa0`.
-            if normalize_text:
-                text = re.sub(url, 'URL', unicodedata.normalize("NFKC", text))
-            else:
-                text = re.sub(url, 'URL', text)
+            text = self.cleanup_url(text, normalize_text)
 
         if self.tokenizer is not None:
             merged_length = self.get_tokenized_length(text=expanded_text)
@@ -115,17 +138,30 @@ class TextTiler:
             pieces.append(itm.copy())
         return pieces
 
-    def get_tokenized_length(self, text, exclude_special_tokens=True):
+    @staticmethod
+    def cleanup_url(text:str, normalize_text=True):
+        # The normalization below deals with some issue in the re library - it would get stuck
+        # if the URL has some strange chars, like `\xa0`.
+        if normalize_text:
+            text = re.sub(TextTiler.url_re, 'URL', unicodedata.normalize("NFKC", text))
+        else:
+            text = re.sub(TextTiler.url_re, 'URL', text)
+        return text
+
+    def get_tokenized_length(self, text, exclude_special_tokens=True, forced_tok=False):
         """
         Returns the size of the <text> (in tokens) after being tokenized by <tokenizer>
         :param text: str - the input text
         :return the length (in word pieces) of the tokenized text.
         """
-        if self.tokenizer is not None:
-            toks = self.tokenizer(text)
-            return len(toks['input_ids'])-(self.tokenizer_num_special_tokens if not exclude_special_tokens else 0)
+        if not forced_tok and self.count_type == self.COUNT_TYPE_CHAR:
+            return len(text)
         else:
-            return -1
+            if self.tokenizer is not None:
+                toks = self.tokenizer(text)
+                return len(toks['input_ids'])-(self.tokenizer_num_special_tokens if not exclude_special_tokens else 0)
+            else:
+                return -1
 
     def split_text(self, text: str, tokenizer, title: str = "",
                    max_length: int = -1, stride: int = -1,
@@ -154,10 +190,10 @@ class TextTiler:
         title_length = self.get_tokenized_length(title)
         def get_expanded_text(text:str, title:str, pos:int=0,
                               title_handling:str="all", title_in_text:bool=False):
-            if title_handling == "none" or title_handling == "first" and pos > 0 or title_in_text:
-                return text
-            else:
+            if self._need_to_add_title(pos, title_handling, title_in_text):
                 return f"{title}\n{text}"
+            else:
+                return text
 
         if max_length == -1:
             max_length = self.max_doc_size
@@ -165,13 +201,16 @@ class TextTiler:
             stride = self.stride
         text = re.sub(r' {2,}', ' ', text, flags=re.MULTILINE)  # remove multiple spaces.
         pos = 0
+        texts = []
+        positions = []
+        added_titles = []
         if max_length is not None:
             tok_len = self.get_tokenized_length(get_expanded_text(text=text, title=title,
                                                                   title_handling=title_handling,
                                                                   title_in_text=title_in_text)
                                                 )
             if tok_len <= max_length:
-                return [text], [[0, len(text)]], [not title_in_text and title_handling in ['all', 'first']]
+                return [text], [[0, len(text)]], [self._need_to_add_title(0, title_handling, title_in_text)]
             else:
                 if title and title_handling == "all":  # make space for the title in each split text.
                     ltitle = self.get_tokenized_length(title)
@@ -224,6 +263,7 @@ class TextTiler:
                             tsizes.append(slen)
                             begins.append(sent.begin)
                             ends.append(end)
+                    first_length = 0
                     if title_handling in ['all', 'first']:
                         first_length = max_length-title_length if not title_in_text else max_length
                     elif title_handling in ['none']:
@@ -238,22 +278,49 @@ class TextTiler:
                     texts = [text[p[0]:p[1]] for p in positions]
                     added_titles.extend([True if title_handling == 'all' else False for _ in positions])
                     added_titles[0] = False if title_in_text or title_handling=='none' else True
-                else:
-                    res = self.tokenizer(max_length=max_length, stride=stride,
-                                         return_overflowing_tokens=True, truncation=True)
-                    texts = []
-                    positions = []
-                    end = re.compile(f' {re.escape(tokenizer.sep_token)}$')
-                    init_pos = 0
-                    for split_passage in res['input_ids']:
-                        tt = end.sub(
-                            "",
-                            tokenizer.decode(split_passage).replace(f"{tokenizer.cls_token} ", "")
-                        )
-                        texts.append(tt)
-                        positions.append([init_pos, init_pos + len(tt)])
-                        init_pos += stride
-                    added_titles = [False for _ in positions]
+                else: # Not aligned on sentences
+                    if self.count_type == self.COUNT_TYPE_TOKENS:
+                        if max_length is None:
+                            max_length = self.max_doc_size
+                        res = self.tokenizer(max_length=max_length, stride=stride,
+                                             return_overflowing_tokens=True, truncation=True)
+                        texts = []
+                        positions = []
+                        end = re.compile(f' {re.escape(tokenizer.sep_token)}$')
+                        init_pos = 0
+                        for split_passage in res['input_ids']:
+                            tt = end.sub(
+                                "",
+                                tokenizer.decode(split_passage).replace(f"{tokenizer.cls_token} ", "")
+                            )
+                            texts.append(tt)
+                            positions.append([init_pos, init_pos + len(tt)])
+                            init_pos += stride
+                        added_titles = [False for _ in positions]
+                    elif self.count_type == self.COUNT_TYPE_CHAR:
+                        init_pos = 0
+                        end_pos = max_length
+                        texts = []
+                        positions = []
+                        added_titles = []
+                        title_length = len(title)
+                        max_len = len(text)
+                        idx = 0
+                        while init_pos < max_length:
+                            clen = max_length
+                            if self._need_to_add_title(idx, title_handling):
+                                clen -= title_length+1
+                            end_ch = min(init_pos+clen, max_len)
+                            while text[end_ch-1].isspace():
+                                end_ch -= 1
+                            texts.append(get_expanded_text(text[init_pos:end_ch], title,
+                                                           pos, title_handling, title_in_text))
+                            positions.append([init_pos, end_pos])
+                            added_titles.append(self._need_to_add_title(idx, title_handling, title_in_text))
+                            init_pos = end_ch - stride
+                            while text[init_pos].isspace():
+                                init_pos += 1
+
                 return texts, positions, added_titles
 
     MAX_TRIED = 10000
@@ -344,3 +411,10 @@ class TextTiler:
         print(f"Product ID histogram:")
         for k in sorted(self.product_counts.keys(), key=lambda x: self.product_counts[x], reverse=True):
             print(f" {k}\t{self.product_counts[k]}")
+
+    @staticmethod
+    def _need_to_add_title(idx:int, title_handling:str, title_in_text:bool=False):
+        if idx==0:
+            return not title_in_text and title_handling in ['first', 'all']
+        else:
+            return title_handling == 'all'

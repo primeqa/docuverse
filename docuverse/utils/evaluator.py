@@ -92,7 +92,8 @@ class EvaluationEngine:
             for aid, answer in enumerate(record.retrieved_passages):
                 if aid >= ranks[-1]:
                     break
-                docid = get_doc_id(answer['id'])
+                # docid = get_doc_id(answer['id'])
+                docid = SearchData.get_orig_docid(answer['id'])
 
                 # if str(docid) in gt[qid]:  # Great, we found a match.
                 #     update_scores(ranks, aid, 1, sum, tmp_scores)

@@ -236,6 +236,9 @@ class SearchData:
         def get_text(self):
             return getattr(self, "text")
 
+        def get_id(self):
+            return getattr(self, "id")
+
     def __init__(self, filenames,
                  data_template=default_data_template,
                  **kwargs):
@@ -375,6 +378,14 @@ class SearchData:
     def remove_stopwords(txt, **kwargs):
         return txt
 
+    @staticmethod
+    def get_orig_docid(id):
+        index = id.rfind("-", 0, id.rfind("-"))
+        if index >= 0:
+            return id[:index]
+        else:
+            return id
+
     @classmethod
     def read_data(cls,
                   input_files,
@@ -388,6 +399,7 @@ class SearchData:
                   cache_dir: str = default_cache_dir,
                   title_handling: str = 'all',
                   data_template: DataTemplate = default_data_template,
+                  verbose=False,
                   **kwargs):
 
         passages = []
@@ -455,7 +467,8 @@ class SearchData:
                     docs_read += docs_read1
                 elif SearchData.is_of_type(input_file, ['.json', '.jsonl']):
                     # This may be the SAP, BEIR, ClapNQ or similar json format
-                    tpassages, docs_read1 = cls._read_json_file(process_text, in_file, input_file, data_template,
+                    tpassages, docs_read1 = cls._read_json_file(process_text, in_file, input_file,
+                                                                data_template,
                                                                 docid_filter, doc_based, max_num_documents)
                     docs_read += docs_read1
                 # elif kwargs.get('read_sap_qfile', False) or input_file.endswith(".csv"):
@@ -468,6 +481,8 @@ class SearchData:
             passages.extend(tpassages)
             max_num_documents -= docs_read
 
+        if verbose:
+            cls.compute_statistics(passages, tiler)
         if return_unmapped_ids:
             return passages, unmapped_ids
         else:
@@ -508,7 +523,8 @@ class SearchData:
         return passages
 
     @classmethod
-    def _read_json_file(cls, process_text, in_file, filename, data_template, docid_filter, doc_based, max_num_documents):
+    def _read_json_file(cls, process_text, in_file, filename, data_template,
+                        docid_filter, doc_based, max_num_documents):
         tpassages = []
         if filename.find('.jsonl') >= 0:
             data = [json.loads(line) for line in in_file]
@@ -574,3 +590,69 @@ class SearchData:
         """
         return any(input_file.endswith(f"{ext[0]}{ext[1]}")
                    for ext in itertools.product(extensions, ['', ".bz2", ".gz", ".xz"]))
+
+    @staticmethod
+    def compute_statistics(corpus, tiler):
+        min_idx, max_idx, avg_idx, total_idx = range(0,4)
+        token_based = [1000, 0, 0, 0]
+        char_based = [1000, 0, 0, 0]
+        char_vals = []
+        token_vals = []
+        tiles = 0
+        doc_ids = {}
+        def update_stat(input, vector):
+            vector[min_idx] = min(vector[min_idx], input)
+            vector[max_idx] = max(vector[max_idx], input)
+            vector[avg_idx] += input
+            vector[total_idx] += 1
+        def compute_stats(vector):
+            return [
+                vector[min_idx],
+                vector[max_idx],
+                1.0*vector[avg_idx]/char_based[total_idx]
+            ]
+
+        tq = tqdm(desc="Computing statistics", total=len(corpus))
+        for entry in corpus:
+            tq.update(1)
+            txt = get_param(entry, 'text')
+            char_len = len(txt)
+            char_vals.append(char_len)
+            update_stat(char_len, char_based)
+            token_length = tiler.get_tokenized_length(text=txt, forced_tok=True)
+            update_stat(token_length, token_based)
+            token_vals.append(token_length)
+            tiles += 1
+            doc_ids[SearchData.get_orig_docid(get_param(entry, 'id'))] = 1
+        tq.close()
+
+        stats = {
+            'num_docs': len(doc_ids),
+            'num_tiles': tiles,
+            'char': compute_stats(char_based),
+            'token': compute_stats(token_based)
+        }
+
+        second_len = 20
+        print("=" * 60)
+        print('Statistics:')
+        print("="*60)
+        print(f"{'Number of documents:':20s}{stats['num_docs']:<10d}")
+        print(f"{'Number of tiles:':20s}{stats['num_tiles']:<10d}")
+        print(f"{'#tiles per document:':20s}{stats['num_tiles']/stats['num_docs']:<10.2f}")
+        print(f"{'':20s}{'Character-based:':<{second_len}s}{'Token-based:':<{second_len}s}")
+        print(f"{'  Minimum length:':20s}{stats['char'][min_idx]:<{second_len}d}{stats['token'][min_idx]:<{second_len}d}")
+        print(f"{'  Maximum length:':20s}{stats['char'][max_idx]:<{second_len}d}{stats['token'][max_idx]:<{second_len}d}")
+        print(f"{'  Average length:':20s}{stats['char'][avg_idx]:<{second_len}.1f}{stats['token'][avg_idx]:<{second_len}.1f}")
+        print("="*60)
+        from text_histogram import histogram
+        print("Char histogram:\n")
+        histogram(char_vals)
+        print("Token histogram:\n")
+        histogram(token_vals)
+
+
+
+
+
+

@@ -27,7 +27,7 @@ if __name__ == '__main__':
         scorer = EvaluationEngine(config.eval_config)
 
     if config.ingest or config.update:
-        corpus = engine.read_data(config.input_passages)
+        corpus = engine.read_data(config.input_passages, verbose=True)
         engine.ingest(corpus, update=config.update)
 
     if config.retrieve:

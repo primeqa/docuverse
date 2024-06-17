@@ -23,7 +23,7 @@ class GenericArguments:
 
 
 @dataclass
-class SearchEngineArguments(GenericArguments):
+class RetrievalArguments(GenericArguments):
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
@@ -80,19 +80,12 @@ class SearchEngineArguments(GenericArguments):
     )
 
     db_engine: Optional[str] = field(
-        default="es-dense",
+        default="es-bm25",
         metadata={
             "choices": ['es-dense', 'es-elser', 'es-bm25', 'es-dense'],
             "help": "Path to pretrained model or model identifier from huggingface.co/models"
         }
     )
-    # output_file: Optional[str] = field(
-    #     default=None,
-    #     metadata={
-    #         "help": "The output rank file. This file will also be used to create an output filename"
-    #                 "for metrics."
-    #     }
-    # )
 
     model_on_server: Optional[bool] = field(
         default=False,
@@ -147,6 +140,13 @@ class SearchEngineArguments(GenericArguments):
             "help": "Defines the policy of adding titles to the passages: can be 'all', 'first', or 'none'."
                     "'all' will add the document title to every tile, 'first' will add to the first split tile, "
                     "and 'none' will not add it at all."
+        }
+    )
+
+    count_type: Literal['char', 'token'] = field(
+        default="token",
+        metadata={
+            "help": "Defines what the measure for max_doc_length and stride are - can be either 'token' or 'char'. (default 'token')."
         }
     )
 
@@ -471,7 +471,7 @@ class DocUVerseConfig(GenericArguments):
         """
 
     def __init__(self, config: dict = None):
-        self.params = HfArgumentParser((SearchEngineArguments, RerankerArguments, EvaluationArguments, EngineArguments))
+        self.params = HfArgumentParser((RetrievalArguments, RerankerArguments, EvaluationArguments, EngineArguments))
         self.config = config
         self.reranker_config: RerankerConfig | None = None
         self.eval_config: EvaluationConfig | None = None

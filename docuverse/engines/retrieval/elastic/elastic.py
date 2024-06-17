@@ -92,7 +92,8 @@ class ElasticEngine(RetrievalEngine):
             config_params = SearchEngineConfig(config=config_params)
 
         # Elastic doesn't accept _ -> convert them to dashes.
-        config_params.index_name = config_params.index_name.replace("_", "-")
+        if config_params.index_name:
+            config_params.index_name = config_params.index_name.replace("_", "-")
         PARAM_NAMES = ["index_name", "title_field", "text_field", "n_docs", "filters", "duplicate_removal",
                        "rouge_duplicate_threshold"]
 
@@ -117,7 +118,8 @@ class ElasticEngine(RetrievalEngine):
             _ = self.client.info()
         except Exception as e:
             print(f"Error: {e}")
-            raise e
+            import sys
+            sys.exit(101)
 
     def info(self):
         return f"Elasticsearch client.info(): \n{self.client.info().body}"

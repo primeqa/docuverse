@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 import docuverse.utils
 from docuverse.engines import SearchData
-from docuverse.engines.search_engine_config_params import DocUVerseConfig, SearchEngineArguments, RerankerArguments, \
+from docuverse.engines.search_engine_config_params import DocUVerseConfig, RetrievalArguments, RerankerArguments, \
     GenericArguments
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_corpus import SearchCorpus
@@ -118,8 +118,9 @@ class SearchEngine:
     def compute_score(self, queries: SearchQueries, results: SearchResult) -> EvaluationOutput:
         pass
 
-    def read_data(self, file):
+    def read_data(self, file, verbose=False):
         if self.tiler is None:
+            tokenizer = None
             if getattr(self.retriever, 'model', None) is not None:
                 tokenizer = self.retriever.model.tokenizer
             else:
@@ -128,10 +129,11 @@ class SearchEngine:
                     tokenizer = "sentence-transformers/all-MiniLM-L6-v2"
             self.tiler = TextTiler(max_doc_size=self.retriever_config.max_doc_length,
                                    stride=self.retriever_config.stride,
-                                   tokenizer=tokenizer)
+                                   tokenizer=tokenizer,
+                                   count_type=self.retriever.config.count_type)
         return SearchData.read_data(input_files=file,
                                     tiler=self.tiler,
-                                    **vars(self.retriever_config))
+                                    **vars(self.retriever_config), verbose=verbose)
 
     def read_questions(self, file):
         return SearchQueries.read(file, **vars(self.retriever_config))
