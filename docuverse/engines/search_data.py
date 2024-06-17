@@ -4,6 +4,7 @@ import json
 import csv
 import re
 from functools import partial
+from multiprocessing import Manager, Queue
 from typing import Dict, List
 from tqdm import tqdm
 
@@ -329,14 +330,18 @@ class SearchData:
                      data_type="sap",
                      title_handling="all",
                      processor=None,
-                     data_template=default_data_template
+                     data_template=default_data_template,
+                     doc_filter={},
+                     doc_based=True
                      ):
         """
         Convert a given document or passage (from 'output.json') to a dictionary, splitting the text as necessary.
+        :param tiler: Tiler instance - the Tiler object that creates the tiles from the input text
         :param unit: the paragraph/document structure to proces
         :param max_doc_size: int - the maximum size (in word pieces) of the resulting sub-document/sub-passage texts
         :param stride: int - the stride/overlap for consecutive pieces
         :param remove_url: Boolean - if true, URL in the input text will be replaced with "URL"
+        :param id: the output id, if needed (by default, taken from the input unit)
         :param tokenizer: Tokenizer - the tokenizer to use while splitting the text into pieces
         :param doc_url: str - the url of the document.
         :param uniform_product_name: str - if not None, all documents will receive this productId
@@ -351,6 +356,9 @@ class SearchData:
                'deliverableLoio', 'filePath', 'url', 'appname', etc.
         :param data_template: DataTemplate - the template for the data - it defines what fields to look for (e.g.,
                'title', 'text')
+        :param doc_filter: dict - the filter for document IDs to ingest
+        :param doc_based: Boolean - if true, processing is done document based, otherwise it's paragraph based (tiles
+               from paragraphs are ingested as units, instead of tiles extracted from the document)
 
         :return - a list of indexable items, each containing a title, id, text, and url.
         """
@@ -365,14 +373,35 @@ class SearchData:
                         uniform_product_name=uniform_product_name, data_type=data_type, title_handling=title_handling,
                         data_template=data_template)
 
-        return tiler.create_tiles(id_=id,
-                                  text=itm['text'],
-                                  title=itm['title'],
-                                  max_doc_size=max_doc_size,
-                                  stride=stride,
-                                  remove_url=remove_url,
-                                  template=itm,
-                                  title_handling=title_handling)
+        if doc_filter and id not in doc_filter:
+            return []
+        else:
+            if doc_based:
+                return [tiler.create_tiles(id_=id,
+                                           text=itm['text'],
+                                           title=itm['title'],
+                                           max_doc_size=max_doc_size,
+                                           stride=stride,
+                                           remove_url=remove_url,
+                                           template=itm,
+                                           title_handling=title_handling)
+                        ]
+            else:
+                for pi, passage in enumerate(unit[data_template.passage_header]):
+                    tpassages = []
+                    passage_id = get_param(passage, data_template.passage_id_header, str(pi))
+                    tpassages.extend(
+                        tiler.create_tiles(
+                            id_=f"{id}-{passage_id}",
+                            text=passage,
+                            title=itm['title'],
+                            max_doc_size=max_doc_size,
+                            stride=stride,
+                            remove_url=remove_url,
+                            template=itm,
+                            title_handling=title_handling)
+                    )
+                    return tpassages
 
     @staticmethod
     def remove_stopwords(txt, **kwargs):
@@ -405,6 +434,7 @@ class SearchData:
         passages = []
         doc_based = kwargs.get('doc_based', True)
         docid_map = kwargs.get('docid_map', {})
+        num_threads = kwargs.get('num_threads', 1)
         max_num_documents = kwargs.get('max_num_documents')
         if max_num_documents is None:
             max_num_documents = 100000000
@@ -445,7 +475,9 @@ class SearchData:
                                    remove_url=remove_url,
                                    uniform_product_name=productId,
                                    data_type=data_type,
-                                   data_template=data_template)
+                                   data_template=data_template,
+                                   doc_based=doc_based,
+                                   docid_filter=docid_filter)
 
             cache_filename = cls.get_cached_filename(input_file, max_doc_size=max_doc_length, stride=stride,
                                                      title_handling=title_handling, tiler=tiler)
@@ -459,24 +491,58 @@ class SearchData:
                 continue
             print(f"Reading {input_file}")
             tpassages = []
+            data = cls._read_data(input_file, max_num_documents)
 
-            with SearchData._open_file(input_file) as in_file:
-                if SearchData.is_of_type(input_file, extensions=[".tsv"]):
-                    # We'll assume this is the PrimeQA standard format
-                    tpassages, docs_read1 = cls._read_csv_file(process_text, in_file, max_num_documents)
-                    docs_read += docs_read1
-                elif SearchData.is_of_type(input_file, ['.json', '.jsonl']):
-                    # This may be the SAP, BEIR, ClapNQ or similar json format
-                    tpassages, docs_read1 = cls._read_json_file(process_text, in_file, input_file,
-                                                                data_template,
-                                                                docid_filter, doc_based, max_num_documents)
-                    docs_read += docs_read1
-                # elif kwargs.get('read_sap_qfile', False) or input_file.endswith(".csv"):
-                #     passgs, docs_read1 = cls._read_csv_query_file(process_text, in_file)
-                #     tpassages.extend(passgs)
-                #     docs_read += docs_read1
-                else:
-                    raise RuntimeError(f"Unknown file extension: {os.path.splitext(input_file)[1]}")
+            # with SearchData._open_file(input_file) as in_file:
+            #     if SearchData.is_of_type(input_file, extensions=[".tsv"]):
+            #         # We'll assume this is the PrimeQA standard format
+            #         tpassages, docs_read1 = cls._read_csv_file(process_text, in_file, max_num_documents)
+            #         docs_read += docs_read1
+            #     elif SearchData.is_of_type(input_file, ['.json', '.jsonl']):
+            #         # This may be the SAP, BEIR, ClapNQ or similar json format
+            #         tpassages, docs_read1 = cls._read_json_file(process_text, in_file, input_file,
+            #                                                     data_template,
+            #                                                     docid_filter, doc_based, max_num_documents)
+            #         docs_read += docs_read1
+            #     # elif kwargs.get('read_sap_qfile', False) or input_file.endswith(".csv"):
+            #     #     passgs, docs_read1 = cls._read_csv_query_file(process_text, in_file)
+            #     #     tpassages.extend(passgs)
+            #     #     docs_read += docs_read1
+            #     else:
+            #         raise RuntimeError(f"Unknown file extension: {os.path.splitext(input_file)[1]}")
+            if num_threads==1:
+                for doc in data:
+                    items = process_text(doc)
+                    if items:
+                        tpassages.extend(items)
+            else:
+                queue = Queue()
+                manager = Manager()
+                d = manager.dict()
+                import multiprocessing as mp
+
+                def processor(inqueue, d, tiler):
+                    pid = mp.current_process().pid
+                    while True:
+                        try:
+                            id, text = inqueue.get(block=True, timeout=1)
+                        except queue.Empty:
+                            break
+                        except Exception as e:
+                            break
+                        else:
+
+                # item = cls._process_document(process_text, data, data_template, docid_filter, max_num_documents)
+
+                # if doc_based:
+                #     item = cls._process_document(process_text, data, data_template, docid_filter, max_num_documents)
+                # else:
+                #     for pi, passage in enumerate(doc[data_template.passage_header]):
+                #         passage_id = get_param(passage, data_template.passage_id_header, str(pi))
+                #         tpassages.extend(
+                #             process_text(id=f"{doc[data_template.id_header]}-{passage_id}",
+                #                          unit=passage))
+
             cls.write_cache_file(cache_filename, tpassages, use_cache)
             passages.extend(tpassages)
             max_num_documents -= docs_read
@@ -523,6 +589,25 @@ class SearchData:
         return passages
 
     @classmethod
+    def _read_data(self, filename, max_num_docs=-1) -> List[Dict[str, str]]:
+        data = None
+        with SearchData._open_file(filename) as in_file:
+            if SearchData.is_of_type(filename, extensions=[".tsv"]):
+                csv_reader = csv.DictReader(in_file, delimiter="\t")
+                # next(csv_reader)
+                data = [doc for doc in csv_reader]
+            elif SearchData.is_of_type(filename, ['.json', '.jsonl']):
+                if filename.find('.jsonl') >= 0:
+                    data = [json.loads(line) for line in in_file]
+                else:
+                    data = json.load(in_file)
+            else:
+                raise RuntimeError(f"Unknown file extension: {os.path.splitext(filename)[1]}")
+        if max_num_docs>0:
+            data = data[:max_num_docs]
+        return data
+
+    @classmethod
     def _read_json_file(cls, process_text, in_file, filename, data_template,
                         docid_filter, doc_based, max_num_documents):
         tpassages = []
@@ -560,6 +645,11 @@ class SearchData:
             read_docs += 1
 
         return tpassages, read_docs
+
+    @classmethod
+    def _process_document(cls, process_text_func, data, data_template, docid_filter, doc_based, max_num_documents):
+        if doc_based:
+            return [process_text_func(unit=data, doc_filter=docid_filter)]
 
     @classmethod
     def _read_csv_file(cls, process_text, in_file, max_num_documents):
@@ -645,7 +735,7 @@ class SearchData:
         print(f"{'  Maximum length:':20s}{stats['char'][max_idx]:<{second_len}d}{stats['token'][max_idx]:<{second_len}d}")
         print(f"{'  Average length:':20s}{stats['char'][avg_idx]:<{second_len}.1f}{stats['token'][avg_idx]:<{second_len}.1f}")
         print("="*60)
-        from text_histogram import histogram
+        from docuverse.utils.text_histogram import histogram
         print("Char histogram:\n")
         histogram(char_vals)
         print("Token histogram:\n")
