@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from docuverse import SearchResult, SearchQueries
 from docuverse.engines import SearchData, get_param
-from docuverse.engines.search_engine_config_params import EvaluationConfig, EvaluationArguments
+from docuverse.engines.search_engine_config_params import EvaluationArguments
 from .evaluation_output import EvaluationOutput
 from rouge_score.rouge_scorer import RougeScorer
 

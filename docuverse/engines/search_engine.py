@@ -33,6 +33,7 @@ class SearchEngine:
         self.reranker = None
         self.reranking_config = None
         self.retriever_config = None
+        self.scorer = None
         if isinstance(search_config, DocUVerseConfig):
             self.create(search_config_or_path=search_config.search_config,
                         reranker_config_or_path=search_config.reranker_config)
@@ -115,7 +116,7 @@ class SearchEngine:
     def set_index(self, index=None):
         pass
 
-    def compute_score(self, queries: SearchQueries, results: SearchResult) -> EvaluationOutput:
+    def compute_score(self, queries: SearchQueries, results: List[SearchResult]) -> EvaluationOutput:
         pass
 
     def read_data(self, file):

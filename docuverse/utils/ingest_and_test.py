@@ -4,14 +4,9 @@ from datetime import datetime
 import os
 import sys
 
-from docuverse import SearchEngine, SearchQueries
-from docuverse.engines import SearchData
+from docuverse import SearchEngine
 from docuverse.engines.search_engine_config_params import DocUVerseConfig
-# from docuverse.utils import DenseEmbeddingFunction
 from docuverse.utils.evaluator import EvaluationEngine
-# from docuverse.utils.text_tiler import TextTiler
-
-# from transformers.hf_argparser import HfArgumentParser
 
 if __name__ == '__main__':
     with open("logfile", "a") as cmdlog:
@@ -21,10 +16,6 @@ if __name__ == '__main__':
     config = DocUVerseConfig.get_stdargs_config()
 
     engine = SearchEngine(config)
-    scorer = None
-
-    if config.evaluate and config.eval_config is not None:
-        scorer = EvaluationEngine(config.eval_config)
 
     if config.ingest or config.update:
         corpus = engine.read_data(config.input_passages)
@@ -37,6 +28,8 @@ if __name__ == '__main__':
         with open(config.output_file, "w") as outfile:
             outp = [r.as_list() for r in output]
             outfile.write(json.dumps(outp, indent=2))
-        if config.evaluate:
+
+        if config.evaluate and config.eval_config is not None:
+            scorer = EvaluationEngine(config.eval_config)
             results = scorer.compute_score(queries, output)
             print(f"Results:\n{results}")

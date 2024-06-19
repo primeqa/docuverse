@@ -5,7 +5,6 @@ from docuverse.engines.search_result import SearchResult
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.engines.search_engine import SearchEngine
 
-
 def get_param(dictionary, key, default=None):
     if isinstance(dictionary, dict):
         return dictionary[key] if key in dictionary else default
