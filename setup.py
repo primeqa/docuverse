@@ -44,7 +44,7 @@ with open(os.path.join(cwd, "README.md"), encoding="utf-8") as readme_file:
 print(f"Building wheel {package_name}-{version}")
 
 include_packages = list(
-    chain.from_iterable(map(lambda name: [name, f"{name}.*"], ["primeqa"]))
+    chain.from_iterable(map(lambda name: [name, f"{name}.*"], ["docuverse"]))
 )
 
 # _deps = {
@@ -103,9 +103,10 @@ include_packages = list(
 #     "python-dotenv~=1.0.1": ["install"]
 # }
 _deps = {}
-with open(os.path.join(cwd, "requirements.txt"), "r", encoding="utf-8") as requirements_file:
-    for line in requirements_file:
-        _deps[line.strip()] = ['install']
+if _deps == {}:
+    with open(os.path.join(cwd, "requirements.txt"), "r", encoding="utf-8") as requirements_file:
+        for line in requirements_file:
+            _deps[line.strip()] = ['install']
 
 extras_names = ["install"]
 extras = {extra_name: [] for extra_name in extras_names}
