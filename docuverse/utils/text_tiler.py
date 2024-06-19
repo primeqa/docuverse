@@ -55,6 +55,8 @@ class TextTiler:
                 self.tokenizer = tokenizer
             else:
                 raise RuntimeError("The tokenizer argument must be either a string or a PreTrainedTokenizer class.")
+            # Force the tokenizer to not complain.
+            self.tokenizer.deprecation_warnings['sequence-length-is-longer-than-the-specified-maximum']=True
             self.tokenizer_num_special_tokens = self.tokenizer.num_special_tokens_to_add()
             self.max_doc_size -= self.tokenizer_num_special_tokens
         self.product_counts = {}
@@ -279,7 +281,7 @@ class TextTiler:
                     added_titles.extend([True if title_handling == 'all' else False for _ in positions])
                     added_titles[0] = False if title_in_text or title_handling=='none' else True
                 else: # Not aligned on sentences
-                    if self.count_type == self.COUNT_TYPE_TOKENS:
+                    if self.count_type == self.COUNT_TYPE_TOKEN:
                         if max_length is None:
                             max_length = self.max_doc_size
                         res = self.tokenizer(max_length=max_length, stride=stride,

@@ -81,7 +81,8 @@ class timer(object):
         Returns:
             The humanly readable time since the last mark()
         '''
-        return self._time_between(self._time, self._last)
+        # return self._time_between(self._time, self._last)
+        return self.time_from_milliseconds(self.milliseconds_since_last_mark())
 
     def time_since_beginning(self):
         '''Returns the humanly interpretable time since the timer was created.
@@ -134,7 +135,8 @@ class timer(object):
         '''Compute the humnly interpretable time between two times.
         Returns:
             The humanly interpretable time between two times.'''
-        return str(t1 - t2)
+        # return str(t1 - t2)
+        return timer.time_from_milliseconds(t1-t2)
 
     @staticmethod
     def time_from_milliseconds(millis, micros=0):

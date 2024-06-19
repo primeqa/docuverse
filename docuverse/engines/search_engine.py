@@ -118,7 +118,7 @@ class SearchEngine:
     def compute_score(self, queries: SearchQueries, results: SearchResult) -> EvaluationOutput:
         pass
 
-    def read_data(self, file, verbose=False):
+    def read_data(self, file):
         if self.tiler is None:
             tokenizer = None
             if getattr(self.retriever, 'model', None) is not None:
@@ -133,7 +133,7 @@ class SearchEngine:
                                    count_type=self.retriever.config.count_type)
         return SearchData.read_data(input_files=file,
                                     tiler=self.tiler,
-                                    **vars(self.retriever_config), verbose=verbose)
+                                    **vars(self.retriever_config))
 
     def read_questions(self, file):
         return SearchQueries.read(file, **vars(self.retriever_config))

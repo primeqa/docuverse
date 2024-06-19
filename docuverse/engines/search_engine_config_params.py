@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 from typing import Optional, List, Literal
 
 from optimum.utils.runs import RunConfig
@@ -207,6 +208,20 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    num_preprocessor_threads: Optional[int] = field(
+        default=1,
+        metadata={
+            "help": "If provided, it specifies the number of threads to use for preprocessing data"
+        }
+    )
+
+    no_cache: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "If provided, the cache will be ignored when reading the documents."
+        }
+    )
+
     data_format: Optional[str]|None = field(
         default=None,
         metadata={
@@ -236,6 +251,13 @@ class RetrievalArguments(GenericArguments):
                     "* text_header: str"
                     "* keep_fields: str"
                     "Example: 'query_id_header:id,query_text_header:text,query_relevant_header:relevant_docs,query_answers_header:text_answers')."
+        }
+    )
+
+    verbose: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "If provided, information about statistics on the data read will be displayed."
         }
     )
 
@@ -501,4 +523,6 @@ class DocUVerseConfig(GenericArguments):
     def get_stdargs_config():
         config = DocUVerseConfig()
         config.read_args()
+        if config.search_config.num_preprocessor_threads > 1:
+            os.environ['TOKENIZERS_PARALLELISM'] = "true"
         return config

@@ -3,10 +3,12 @@ import os
 import json
 import csv
 import re
+import time
 from functools import partial
-from multiprocessing import Manager, Queue
+from multiprocessing import Manager, Queue, Process
 from typing import Dict, List
 from tqdm import tqdm
+import queue
 
 from docuverse.engines import data_template
 from docuverse.engines.data_template import (
@@ -49,7 +51,7 @@ class DefaultProcessor:
         itm = {
             'id': id,
             'title': self.cleanup(get_param(unit, data_template.title_header)),
-            'text':  self.cleanup(get_param(unit, data_template.text_header))
+            'text': self.cleanup(get_param(unit, data_template.text_header))
         }
         url = get_param(unit, 'document_url|url', "")
         if url != "":
@@ -331,7 +333,7 @@ class SearchData:
                      title_handling="all",
                      processor=None,
                      data_template=default_data_template,
-                     doc_filter={},
+                     docid_filter={},
                      doc_based=True
                      ):
         """
@@ -356,7 +358,7 @@ class SearchData:
                'deliverableLoio', 'filePath', 'url', 'appname', etc.
         :param data_template: DataTemplate - the template for the data - it defines what fields to look for (e.g.,
                'title', 'text')
-        :param doc_filter: dict - the filter for document IDs to ingest
+        :param docid_filter: dict - the filter for document IDs to ingest
         :param doc_based: Boolean - if true, processing is done document based, otherwise it's paragraph based (tiles
                from paragraphs are ingested as units, instead of tiles extracted from the document)
 
@@ -373,19 +375,18 @@ class SearchData:
                         uniform_product_name=uniform_product_name, data_type=data_type, title_handling=title_handling,
                         data_template=data_template)
 
-        if doc_filter and id not in doc_filter:
+        if docid_filter and id not in docid_filter or 'title' not in itm or (not itm['title']):
             return []
         else:
             if doc_based:
-                return [tiler.create_tiles(id_=id,
-                                           text=itm['text'],
-                                           title=itm['title'],
-                                           max_doc_size=max_doc_size,
-                                           stride=stride,
-                                           remove_url=remove_url,
-                                           template=itm,
-                                           title_handling=title_handling)
-                        ]
+                return tiler.create_tiles(id_=id,
+                                          text=itm['text'],
+                                          title=itm['title'],
+                                          max_doc_size=max_doc_size,
+                                          stride=stride,
+                                          remove_url=remove_url,
+                                          template=itm,
+                                          title_handling=title_handling)
             else:
                 for pi, passage in enumerate(unit[data_template.passage_header]):
                     tpassages = []
@@ -431,10 +432,10 @@ class SearchData:
                   verbose=False,
                   **kwargs):
 
-        passages = []
         doc_based = kwargs.get('doc_based', True)
         docid_map = kwargs.get('docid_map', {})
-        num_threads = kwargs.get('num_threads', 1)
+        num_threads = kwargs.get('num_preprocessor_threads', 1)
+        no_cache = kwargs.get('no_cache', False)
         max_num_documents = kwargs.get('max_num_documents')
         if max_num_documents is None:
             max_num_documents = 100000000
@@ -460,6 +461,9 @@ class SearchData:
 
         docid_filter = kwargs.get('docid_filter', [])
         uniform_product_name = kwargs.get('uniform_product_name')
+        from docuverse.utils.timer import timer
+        tm = timer("Data Loading")
+        passages = []
 
         for input_file in files:
             docs_read = 0
@@ -468,55 +472,52 @@ class SearchData:
             else:
                 productId = uniform_product_name
 
-            process_text = partial(cls.process_text,
-                                   tiler=tiler,
-                                   max_doc_size=max_doc_length,
-                                   stride=stride,
-                                   remove_url=remove_url,
-                                   uniform_product_name=productId,
-                                   data_type=data_type,
-                                   data_template=data_template,
-                                   doc_based=doc_based,
-                                   docid_filter=docid_filter)
+            process_text_func = partial(cls.process_text,
+                                        tiler=tiler,
+                                        max_doc_size=max_doc_length,
+                                        stride=stride,
+                                        remove_url=remove_url,
+                                        uniform_product_name=productId,
+                                        data_type=data_type,
+                                        data_template=data_template,
+                                        doc_based=doc_based,
+                                        docid_filter=docid_filter)
 
-            cache_filename = cls.get_cached_filename(input_file, max_doc_size=max_doc_length, stride=stride,
-                                                     title_handling=title_handling, tiler=tiler)
-            cached_passages = cls.read_cache_file_if_needed(
-                cache_filename,
-                input_file)
-            if cached_passages:
-                passages.extend(cached_passages[:max_num_documents]
-                                if 'max_num_documents' in kwargs
-                                else cached_passages)
-                continue
-            print(f"Reading {input_file}")
+            if not no_cache:
+                cache_filename = cls.get_cached_filename(input_file, max_doc_size=max_doc_length, stride=stride,
+                                                         title_handling=title_handling, tiler=tiler)
+                cached_passages = cls.read_cache_file_if_needed(
+                    cache_filename,
+                    input_file)
+                if cached_passages:
+                    passages.extend(cached_passages[:max_num_documents]
+                                    if 'max_num_documents' in kwargs
+                                    else cached_passages)
+                    continue
+            if verbose:
+                print(f"Reading {input_file}", end='')
             tpassages = []
             data = cls._read_data(input_file, max_num_documents)
 
-            # with SearchData._open_file(input_file) as in_file:
-            #     if SearchData.is_of_type(input_file, extensions=[".tsv"]):
-            #         # We'll assume this is the PrimeQA standard format
-            #         tpassages, docs_read1 = cls._read_csv_file(process_text, in_file, max_num_documents)
-            #         docs_read += docs_read1
-            #     elif SearchData.is_of_type(input_file, ['.json', '.jsonl']):
-            #         # This may be the SAP, BEIR, ClapNQ or similar json format
-            #         tpassages, docs_read1 = cls._read_json_file(process_text, in_file, input_file,
-            #                                                     data_template,
-            #                                                     docid_filter, doc_based, max_num_documents)
-            #         docs_read += docs_read1
-            #     # elif kwargs.get('read_sap_qfile', False) or input_file.endswith(".csv"):
-            #     #     passgs, docs_read1 = cls._read_csv_query_file(process_text, in_file)
-            #     #     tpassages.extend(passgs)
-            #     #     docs_read += docs_read1
-            #     else:
-            #         raise RuntimeError(f"Unknown file extension: {os.path.splitext(input_file)[1]}")
-            if num_threads==1:
-                for doc in data:
-                    items = process_text(doc)
+            if verbose:
+                read_time = tm.mark_and_return_time()
+                print(f" done: {read_time}")
+
+            if num_threads == 1:
+                for doc in tqdm(data, desc="Reading docs:"):
+                    try:
+                        items = process_text_func(unit=doc)
+                    except Exception as e:
+                        items = []
                     if items:
-                        tpassages.extend(items)
+                        if verbose:
+                            for item in items:
+                                tpassages.append({**item, 'tlen': tiler.get_tokenized_length(item['text'],
+                                                                                             forced_tok=True)})
+                        else:
+                            tpassages.extend(items)
             else:
-                queue = Queue()
+                doc_queue = Queue()
                 manager = Manager()
                 d = manager.dict()
                 import multiprocessing as mp
@@ -530,25 +531,47 @@ class SearchData:
                             break
                         except Exception as e:
                             break
-                        else:
 
-                # item = cls._process_document(process_text, data, data_template, docid_filter, max_num_documents)
+                        try:
+                            items = process_text_func(unit=text)
+                            d[id] = [{**item,
+                                      'tlen': tiler.get_tokenized_length(item['text'], forced_tok=True)}
+                                     for item in items]
+                        except Exception as e:
+                            d[id] = []
 
-                # if doc_based:
-                #     item = cls._process_document(process_text, data, data_template, docid_filter, max_num_documents)
-                # else:
-                #     for pi, passage in enumerate(doc[data_template.passage_header]):
-                #         passage_id = get_param(passage, data_template.passage_id_header, str(pi))
-                #         tpassages.extend(
-                #             process_text(id=f"{doc[data_template.id_header]}-{passage_id}",
-                #                          unit=passage))
+                for i, doc in enumerate(data):
+                    doc_queue.put([i, doc])
+                processes = []
+                for i in range(num_threads):
+                    p = Process(target=processor, args=(doc_queue, d, tiler))
+                    processes.append(p)
+                    p.start()
+                tk = tqdm(desc="Reading docs:", total=doc_queue.qsize())
+                c = doc_queue.qsize()
+                while not doc_queue.empty():
+                    c1 = doc_queue.qsize()
+                    if c != c1:
+                        tk.update(c - c1)
+                        c = c1
+                    time.sleep(0.01)
+                for i, p in enumerate(processes):
+                    p.join()
+                for i in range(len(data)):
+                    tpassages.extend(d[i])
 
-            cls.write_cache_file(cache_filename, tpassages, use_cache)
+            if verbose:
+                read_time = tm.mark_and_return_time()
+                print(f"Processed in {read_time}")
+            if not no_cache:
+                cls.write_cache_file(cache_filename, tpassages, use_cache)
             passages.extend(tpassages)
             max_num_documents -= docs_read
 
         if verbose:
-            cls.compute_statistics(passages, tiler)
+            cls.compute_statistics(passages, tiler=tiler)
+            read_time = tm.mark_and_return_time()
+            print(f"Statistics computed in {read_time}")
         if return_unmapped_ids:
             return passages, unmapped_ids
         else:
@@ -603,7 +626,7 @@ class SearchData:
                     data = json.load(in_file)
             else:
                 raise RuntimeError(f"Unknown file extension: {os.path.splitext(filename)[1]}")
-        if max_num_docs>0:
+        if max_num_docs > 0:
             data = data[:max_num_docs]
         return data
 
@@ -647,11 +670,6 @@ class SearchData:
         return tpassages, read_docs
 
     @classmethod
-    def _process_document(cls, process_text_func, data, data_template, docid_filter, doc_based, max_num_documents):
-        if doc_based:
-            return [process_text_func(unit=data, doc_filter=docid_filter)]
-
-    @classmethod
     def _read_csv_file(cls, process_text, in_file, max_num_documents):
         tpassages = []
         csv_reader = csv.DictReader(in_file, delimiter="\t")
@@ -682,24 +700,26 @@ class SearchData:
                    for ext in itertools.product(extensions, ['', ".bz2", ".gz", ".xz"]))
 
     @staticmethod
-    def compute_statistics(corpus, tiler):
-        min_idx, max_idx, avg_idx, total_idx = range(0,4)
+    def compute_statistics_old(corpus, tiler):
+        min_idx, max_idx, avg_idx, total_idx = range(0, 4)
         token_based = [1000, 0, 0, 0]
         char_based = [1000, 0, 0, 0]
         char_vals = []
         token_vals = []
         tiles = 0
         doc_ids = {}
+
         def update_stat(input, vector):
             vector[min_idx] = min(vector[min_idx], input)
             vector[max_idx] = max(vector[max_idx], input)
             vector[avg_idx] += input
             vector[total_idx] += 1
+
         def compute_stats(vector):
             return [
                 vector[min_idx],
                 vector[max_idx],
-                1.0*vector[avg_idx]/char_based[total_idx]
+                1.0 * vector[avg_idx] / char_based[total_idx]
             ]
 
         tq = tqdm(desc="Computing statistics", total=len(corpus))
@@ -726,23 +746,88 @@ class SearchData:
         second_len = 20
         print("=" * 60)
         print('Statistics:')
-        print("="*60)
+        print("=" * 60)
         print(f"{'Number of documents:':20s}{stats['num_docs']:<10d}")
         print(f"{'Number of tiles:':20s}{stats['num_tiles']:<10d}")
-        print(f"{'#tiles per document:':20s}{stats['num_tiles']/stats['num_docs']:<10.2f}")
+        print(f"{'#tiles per document:':20s}{stats['num_tiles'] / stats['num_docs']:<10.2f}")
         print(f"{'':20s}{'Character-based:':<{second_len}s}{'Token-based:':<{second_len}s}")
-        print(f"{'  Minimum length:':20s}{stats['char'][min_idx]:<{second_len}d}{stats['token'][min_idx]:<{second_len}d}")
-        print(f"{'  Maximum length:':20s}{stats['char'][max_idx]:<{second_len}d}{stats['token'][max_idx]:<{second_len}d}")
-        print(f"{'  Average length:':20s}{stats['char'][avg_idx]:<{second_len}.1f}{stats['token'][avg_idx]:<{second_len}.1f}")
-        print("="*60)
+        print(
+            f"{'  Minimum length:':20s}{stats['char'][min_idx]:<{second_len}d}{stats['token'][min_idx]:<{second_len}d}")
+        print(
+            f"{'  Maximum length:':20s}{stats['char'][max_idx]:<{second_len}d}{stats['token'][max_idx]:<{second_len}d}")
+        print(
+            f"{'  Average length:':20s}{stats['char'][avg_idx]:<{second_len}.1f}{stats['token'][avg_idx]:<{second_len}.1f}")
+        print("=" * 60)
         from docuverse.utils.text_histogram import histogram
         print("Char histogram:\n")
         histogram(char_vals)
         print("Token histogram:\n")
         histogram(token_vals)
 
+    @staticmethod
+    def compute_statistics(corpus, tiler=None):
+        min_idx, max_idx, avg_idx, total_idx = range(0, 4)
+        token_based = [1000, 0, 0, 0]
+        char_based = [1000, 0, 0, 0]
+        char_vals = []
+        token_vals = []
+        tiles = 0
+        doc_ids = {}
 
+        def update_stat(input, vector):
+            vector[min_idx] = min(vector[min_idx], input)
+            vector[max_idx] = max(vector[max_idx], input)
+            vector[avg_idx] += input
+            vector[total_idx] += 1
 
+        def compute_stats(vector):
+            return [
+                vector[min_idx],
+                vector[max_idx],
+                1.0 * vector[avg_idx] / char_based[total_idx]
+            ]
 
+        tq = tqdm(desc="Computing statistics", total=len(corpus))
+        for i, entry in enumerate(corpus):
+            tq.update(1)
+            txt = get_param(entry, 'text')
+            char_len = len(txt)
+            char_vals.append(char_len)
+            update_stat(char_len, char_based)
+            if 'tlen' in entry:
+                token_length = entry['tlen']
+            else:
+                tiler.get_tokenized_length(text=txt, forced_tok=True)
+            update_stat(token_length, token_based)
+            token_vals.append(token_length)
+            tiles += 1
+            doc_ids[SearchData.get_orig_docid(get_param(entry, 'id'))] = 1
+        tq.close()
 
+        stats = {
+            'num_docs': len(doc_ids),
+            'num_tiles': tiles,
+            'char': compute_stats(char_based),
+            'token': compute_stats(token_based)
+        }
 
+        second_len = 20
+        print("=" * 60)
+        print('Statistics:')
+        print("=" * 60)
+        print(f"{'Number of documents:':20s}{stats['num_docs']:<10d}")
+        print(f"{'Number of tiles:':20s}{stats['num_tiles']:<10d}")
+        print(f"{'#tiles per document:':20s}{stats['num_tiles'] / stats['num_docs']:<10.2f}")
+        print(f"{'':20s}{'Character-based:':<{second_len}s}{'Token-based:':<{second_len}s}")
+        print(
+            f"{'  Minimum length:':20s}{stats['char'][min_idx]:<{second_len}d}{stats['token'][min_idx]:<{second_len}d}")
+        print(
+            f"{'  Maximum length:':20s}{stats['char'][max_idx]:<{second_len}d}{stats['token'][max_idx]:<{second_len}d}")
+        print(
+            f"{'  Average length:':20s}{stats['char'][avg_idx]:<{second_len}.1f}{stats['token'][avg_idx]:<{second_len}.1f}")
+        print("=" * 60)
+        from docuverse.utils.text_histogram import histogram
+        print("Char histogram:\n")
+        histogram(char_vals)
+        print("Token histogram:\n")
+        histogram(token_vals)
