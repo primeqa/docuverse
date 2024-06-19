@@ -1,4 +1,4 @@
-from transformers import SentenceTransformers
+# from transformers import SentenceTransformers
 from typing import List, Dict
 from argparse import ArgumentParser
 
@@ -13,5 +13,5 @@ class DocuVerse:
     def search(self, text, **kwargs) -> SearchResult:
         pass
 
-    def ingest_documents(self, documents: List[Dict[str: str]]):
+    def ingest_documents(self, documents: List[Dict[str, str]]):
         pass

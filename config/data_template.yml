@@ -1,0 +1,18 @@
+data_format:
+  id_header: <bla> # defines the keyword for document ID (e.g. 'id', 'docid', 'passage_id')
+  text_header: <bla> # defines the keyword for the text (e.g. 'text', 'body', 'document', etc)
+  title_header: <bla> # defines the keyword for title (e.g. 'title', 'header')
+  passage_header: <bla> # Defines the keyword for passages. The assumption in cases where the document has passages
+                        # is that the passages are under this header, and have their internal structure that is similar
+                        # to the document structure. E.g. 'passages', etc.
+  passage_text_header: <bla> # The header for passage text (e.g. 'text', 'passage_text', etc)
+  passage_id_header: <bla> # the passage id header (t.g. 'pid', etc)
+  extra_fields:
+    - <bla>
+
+query_format:
+  text_header: <bla>
+  relevant_header: <bla> # Defines the header for answers or relevant documents
+  answers_header: <bla> # Defines the header
+  extra_fields:
+    - <bla>

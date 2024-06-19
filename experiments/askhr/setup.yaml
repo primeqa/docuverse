@@ -1,0 +1,12 @@
+retrieval:
+    name: "elastic_elser"
+    index: "convai-all-ibm-elser-v1-512-100-20240305"
+    filter:
+      include_filter: 
+        type: "filter"
+        field: "productId"
+        terms: ["ADD LIST"]
+      exclude_filter: 
+        type: "must_not"
+        field: "productId"
+        terms: ["ADD LIST"]

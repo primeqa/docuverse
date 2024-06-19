@@ -809,7 +809,9 @@ def init_settings():
         return c
 
     global settings, coga_mappings, standard_mappings
-    config = json.load(open(f"{os.path.join(os.path.dirname(__file__), 'elastic_config.json')}"))
+    #config = json.load(open(f"{os.path.join(os.path.dirname(__file__), 'elastic_config.json')}"))
+    config = json.load(open(f"config/elastic_config.json"))
+
     standard_mappings = config['settings']['standard']
     for lang in languages:
         settings[lang] = union(config['settings']['common'],

@@ -1,0 +1,11 @@
+retrieval:
+  name: "elastic_bm25"
+  index: "jatin-testing"
+  title_field: "title"
+  text_field: "text"
+  productId_field: "productId"
+  fields: [ "text"]
+  n_docs: 40
+  search-type: document
+  duplicate_removal: "rouge"
+  rouge_duplicate_threshold: 0.8
