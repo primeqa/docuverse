@@ -14,7 +14,7 @@ if __name__ == '__main__':
                      f"{' '.join([__file__] + sys.argv)}\n")
 
     config = DocUVerseConfig.get_stdargs_config()
-
+#    config = DocUVerseConfig("experiments/clapnq/setup.yaml")
     engine = SearchEngine(config)
 
     if config.ingest or config.update:

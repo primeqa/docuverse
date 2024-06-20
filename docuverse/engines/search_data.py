@@ -303,7 +303,7 @@ class SearchData:
 
         if os.path.exists(cache_file_name) and os.path.getmtime(cache_file_name) > os.path.getmtime(input_file):
             input_stream = SearchData._open_file(cache_file_name, write=False)
-            for line in input_stream:
+            for line in tqdm(input_stream, desc="Reading cache file:"):
                 passages.append(json.loads(line.decode('utf-8')))
 
             input_stream.close()
@@ -549,12 +549,14 @@ class SearchData:
                     p.start()
                 tk = tqdm(desc="Reading docs:", total=doc_queue.qsize())
                 c = doc_queue.qsize()
-                while not doc_queue.empty():
+                while c>0:
                     c1 = doc_queue.qsize()
                     if c != c1:
                         tk.update(c - c1)
                         c = c1
-                    time.sleep(0.01)
+                    time.sleep(0.1)
+                print(f"Dropped out of the while loop: {doc_queue.qsize()}")
+                tk.clear()
                 for i, p in enumerate(processes):
                     p.join()
                 for i in range(len(data)):
@@ -621,7 +623,7 @@ class SearchData:
                 data = [doc for doc in csv_reader]
             elif SearchData.is_of_type(filename, ['.json', '.jsonl']):
                 if filename.find('.jsonl') >= 0:
-                    data = [json.loads(line) for line in in_file]
+                    data = [json.loads(line) for line in tqdm(in_file, desc=f"Reading {filename}:")]
                 else:
                     data = json.load(in_file)
             else:

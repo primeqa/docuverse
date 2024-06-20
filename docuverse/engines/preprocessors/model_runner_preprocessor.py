@@ -1,10 +1,12 @@
 import json
 from docuverse.engines.preprocessors.base_preprocessor import BasePreprocessor
 
+
 class ModelRunnerPreprocessor(BasePreprocessor):
     def __init__(self, filepaths):
+        super().__init__()
         self.queries = []
-        
+
         for filepath in filepaths:
             self.queries.extend(self.read_query_file(filepath))
 
