@@ -97,6 +97,7 @@ class SearchEngine:
             self.tiler = TextTiler(max_doc_size=retriever_config.max_doc_length,
                                    stride=retriever_config.stride,
                                    tokenizer=tokenizer,
+                                   aligned_on_sentences=retriever_config.aligned_on_sentences,
                                    count_type=retriever_config.count_type)
         return SearchData.read_data(input_files=file,
                                     tiler=self.tiler,

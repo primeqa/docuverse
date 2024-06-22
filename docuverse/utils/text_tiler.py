@@ -284,20 +284,29 @@ class TextTiler:
                     if self.count_type == self.COUNT_TYPE_TOKEN:
                         if max_length is None:
                             max_length = self.max_doc_size
-                        res = self.tokenizer(max_length=max_length, stride=stride,
-                                             return_overflowing_tokens=True, truncation=True)
+                        res = self.tokenizer(text=text, max_length=max_length, stride=stride,
+                                             return_overflowing_tokens=True, truncation=True,
+                                             return_offsets_mapping=True)
                         texts = []
                         positions = []
                         end = re.compile(f' {re.escape(tokenizer.sep_token)}$')
-                        init_pos = 0
-                        for split_passage in res['input_ids']:
+                        # init_pos = 0
+                        for split_passage, offsets in zip(res['input_ids'], res['offset_mapping']):
                             tt = end.sub(
                                 "",
                                 tokenizer.decode(split_passage).replace(f"{tokenizer.cls_token} ", "")
                             )
                             texts.append(tt)
-                            positions.append([init_pos, init_pos + len(tt)])
-                            init_pos += stride
+                            id = 0
+                            while split_passage[id] == tokenizer.cls_token_id:
+                                id += 1
+                            init_pos = offsets[id][0]
+                            id = -1
+                            while split_passage[id] == tokenizer.sep_token_id:
+                                id -= 1
+                            end_pos = offsets[id][1]
+                            positions.append([init_pos, end_pos])
+                            # init_pos += stride
                         added_titles = [False for _ in positions]
                     elif self.count_type == self.COUNT_TYPE_CHAR:
                         init_pos = 0

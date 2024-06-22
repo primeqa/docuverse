@@ -114,6 +114,14 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    aligned_on_sentences: Optional[bool] = field(
+        default=True,
+        metadata={
+            "help": "If present, the documents will be split into tiles such that they break only "
+                    "in-between sentences."
+        }
+    )
+
     tile_overlap: Optional[int] = field(
         default=None,
         metadata={

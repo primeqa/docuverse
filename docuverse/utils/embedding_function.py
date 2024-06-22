@@ -11,6 +11,9 @@ class DenseEmbeddingFunction:
             print(f"You are using {device}. This is much slower than using "
                   "a CUDA-enabled GPU. If on Colab you can change this by "
                   "clicking Runtime > Change runtime type > GPU.")
+            self.num_devices = 0
+        else:
+            self.num_devices = torch.cuda.device_count()
         self.pqa = False
         self.batch_size = batch_size
         # if os.path.exists(name):
@@ -38,6 +41,12 @@ class DenseEmbeddingFunction:
     def tokenizer(self):
         return self.model.tokenizer
 
+    def start_pool(self):
+        self.emb_pool = self.model.start_multi_process_pool()
+
+    def stop_pool(self):
+        self.model.stop_multi_process_pool()
+
     def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
         embs = []
@@ -47,10 +56,18 @@ class DenseEmbeddingFunction:
             show_progress_bar = isinstance(texts, str) or max(len(texts), _batch_size) <= 1
 
         if not self.pqa:
-            embs = self.model.encode(texts,
-                                     show_progress_bar=show_progress_bar,
-                                     normalize_embeddings=True
-                                     ).tolist()
+            if isinstance(texts, list) and len(texts) > 30 and self.num_devices>1:
+                if self.emb_pool is None:
+                    self.start_pool()
+                embs = self.model.encode_multi_process(pool=self.emb_pool,
+                                                       sentences=texts,
+                                                       batch_size=_batch_size)
+                embs = self.normalize(embs)
+            else:
+                embs = self.model.encode(texts,
+                                         show_progress_bar=show_progress_bar,
+                                         normalize_embeddings=True
+                                         ).tolist()
         else:
             raise NotImplemented
             # if batch_size < 0:

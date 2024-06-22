@@ -605,6 +605,7 @@ def compute_embedding(model, input_query, normalize_embs):
 
 class MyEmbeddingFunction:
     def __init__(self, name, batch_size=128):
+        self.emb_pool = None
         import torch
         device = 'cuda' if torch.cuda.is_available() else 'cpu'  # "mps" if torch.backends.mps.is_available() else 'cpu'
         if device == 'cpu':
@@ -633,6 +634,12 @@ class MyEmbeddingFunction:
     def __call__(self, texts: Union[List[str], str]) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
         return self.encode(texts)
+
+    def start_pool(self):
+        self.emb_pool = self.model.start_multi_process_pool()
+
+    def stop_pool(self):
+        self.model.stop_multi_process_pool()
 
     @property
     def tokenizer(self):

@@ -29,7 +29,7 @@ class EvaluationEngine:
         if self.config.compute_rouge:
             self.rouge_scorer = RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
 
-    def compute_score(self, input_queries: SearchQueries, system: List[SearchResult]) -> EvaluationOutput:
+    def compute_score(self, input_queries: SearchQueries, system: List[SearchResult], model_name="model") -> EvaluationOutput:
         if self.compute_rouge_score:
             from rouge_score.rouge_scorer import RougeScorer
             scorer = RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
@@ -126,6 +126,7 @@ class EvaluationEngine:
                                    ranks=self.iranks,
                                    rouge_scores=rouge_scores,
                                    compute_macro_scores=True,
+                                   model_name=model_name,
                                    metrics=self.eval_measure)
 
         if self.config.compute_rouge:
