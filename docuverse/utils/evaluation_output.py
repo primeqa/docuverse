@@ -105,12 +105,13 @@ class EvaluationOutput:
                     return "".join([f"{metric_map[_metric][i]:<10.3}" for i in ranks])
         name = self.model_name
         ranks = self.ranks
+        model_name_length = len(self.model_name)+4
 
-        headline = f"{'Model':10s}" + "".join([
+        headline = f"{'Model':{model_name_length}s}" + "".join([
             display_metric(metric, True) for metric in self.display_metrics
         ])
 
-        res = f"{name:10}" + "".join([
+        res = f"{name:{model_name_length}s}" + "".join([
             display_metric(metric, False) for metric in self.display_metrics
         ])
 
