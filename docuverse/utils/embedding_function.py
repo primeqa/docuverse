@@ -16,6 +16,7 @@ class DenseEmbeddingFunction:
             self.num_devices = torch.cuda.device_count()
         self.pqa = False
         self.batch_size = batch_size
+        self.emb_pool = None
         # if os.path.exists(name):
         #     raise NotImplemented
         #     # from transformers import DPRQuestionEncoder, DPRQuestionEncoderTokenizer, AutoConfig
