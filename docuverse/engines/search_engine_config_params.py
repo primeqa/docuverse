@@ -3,7 +3,8 @@ import os
 import sys
 from typing import Optional, List, Literal
 
-from optimum.utils.runs import RunConfig
+import yaml
+from optimum.utils.runs import RunConfig, Run
 
 from docuverse.utils import get_param
 from dataclasses import dataclass, field
@@ -47,13 +48,6 @@ class RetrievalArguments(GenericArguments):
         default=None,
         metadata={
             "help": "The test queries, if any (can be empty for ingestion only)."
-        }
-    )
-
-    config: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": "The config file to use."
         }
     )
 
@@ -117,6 +111,14 @@ class RetrievalArguments(GenericArguments):
         metadata={
             "help": "Argument that works in conjunction with --max_doc_length: it will define the "
                     "increment of the window start while tiling the documents."
+        }
+    )
+
+    aligned_on_sentences: Optional[bool] = field(
+        default=True,
+        metadata={
+            "help": "If present, the documents will be split into tiles such that they break only "
+                    "in-between sentences."
         }
     )
 
@@ -303,6 +305,15 @@ class EngineArguments(GenericArguments):
             "help": "The actions that can be done: i(ingest), r(retrieve), R(rerank), u(update), e(evaluate)"
         }
     )
+
+    config: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "The configuration file associated with the configuration; command line arguments will override"
+                    "values in this configuration."
+        }
+
+    )
     action_flags = {
         "i": "ingest",
         "u": "update",
@@ -310,6 +321,7 @@ class EngineArguments(GenericArguments):
         "e": "evaluate",
         "R": "rerank"
     }
+
     ingest: Optional[bool] = False
     update: Optional[bool] = False
     retrieve: Optional[bool] = False
@@ -478,7 +490,7 @@ class DocUVerseConfig(GenericArguments):
         Attributes:
             params (HfArgumentParser): The argument parser for parsing the configuration.
             eval_config (EvaluationConfig): The evaluation configuration.
-            search_config (SearchEngineConfig): The search engine configuration.
+            retriever_config (SearchEngineConfig): The search engine configuration.
             run_config (RunConfig): The run configuration.
 
         Methods:
@@ -492,16 +504,25 @@ class DocUVerseConfig(GenericArguments):
 
         """
 
-    def __init__(self, config: dict = None):
+    def __init__(self, config: dict|str = None):
+        self.evaluate = None
+        self.output_file = None
+        self.input_queries = None
+        self.retrieve = None
+        self.input_passages = None
+        self.update = None
+        self.ingest = None
         self.params = HfArgumentParser((RetrievalArguments, RerankerArguments, EvaluationArguments, EngineArguments))
-        self.config = config
-        self.reranker_config: RerankerConfig | None = None
-        self.eval_config: EvaluationConfig | None = None
-        self.search_config: SearchEngineConfig | None = None
-        self.run_config: RunConfig | None = None
+        if isinstance(config, str|dict):
+            self.read_configs(config)
+        else:
+            self.reranker_config: RerankerConfig | None = None
+            self.eval_config: EvaluationConfig | None = None
+            self.retriever_config: SearchEngineConfig | None = None
+            self.run_config: RunConfig | None = None
 
-    def read_dict(self, **kwargs):
-        self._process_params(self.params.parse_dict, **kwargs)
+    def read_dict(self, kwargs):
+        self._process_params(self.params.parse_dict, args=kwargs)
 
     def read_args(self):
         self._process_params(self.params.parse_args_into_dataclasses)
@@ -510,19 +531,80 @@ class DocUVerseConfig(GenericArguments):
         self._process_params(self.params.parse_json_file, json_file)
 
     def _process_params(self, parse_method, *args, **kwargs):
-        self.config = kwargs
-        (self.search_config, self.reranker_config, self.eval_config, self.run_config) = parse_method(*args, **kwargs)
+        # self.config = kwargs
+        (self.retriever_config, self.reranker_config, self.eval_config, self.run_config) = parse_method(*args, **kwargs)
         self.ingest_params()
 
     def ingest_params(self):
-        for _dict in [self.search_config, self.reranker_config, self.eval_config, self.run_config]:
+        for _dict in [self.retriever_config, self.reranker_config, self.eval_config, self.run_config]:
             for key, value in _dict.__dict__.items():
                 self.__setattr__(key, value)
+
+
+    def read_configs(self, config_or_path: str) -> GenericArguments:
+        if isinstance(config_or_path, str):
+            if os.path.exists(config_or_path):
+                with open(config_or_path) as stream:
+                    try:
+                        vals = yaml.safe_load(stream=stream)
+                        if get_param(vals, "retrieval|retriever"): # By default, all parameters are assumed to be retriever params
+                            vals1 = {}
+                            for k, v in vals.items():
+                                if v and v!="None":
+                                    vals1.update(v)
+                            vals = vals1
+                            # self.read_dict({**get_param(vals, "retrieval|retriever"),
+                            #                 **get_param(vals, 'reranker|reranking'),
+                            #                 **get_param(vals, 'evaluate|evaluation')
+                            #                 })
+                            # vals['retrieval'] = vals
+                            # vals['reranker'] = None
+
+                        self.read_dict(vals)
+                    except yaml.YAMLError as exc:
+                        raise exc
+            else:
+                print(f"The configuration file '{config_or_path}' does not exist.")
+                raise FileNotFoundError(f"The configuration file '{config_or_path}' does not exist.")
+        elif isinstance(config_or_path, GenericArguments):
+            return config_or_path
+        elif isinstance(config_or_path, dict):
+            self.read_dict(dict)
+
+    def update(self, other_config):
+        if isinstance(other_config, DocUVerseConfig):
+            DocUVerseConfig._update(self.retriever_config, other_config.retriever_config)
+            DocUVerseConfig._update(self.reranker_config, other_config.reranker_config)
+            DocUVerseConfig._update(self.eval_config, other_config.eval_config)
+            DocUVerseConfig._update(self.run_config, other_config.run_config)
+            self.ingest_params()
+
+    @staticmethod
+    def _update(output_class, input_class, default):
+        if input_class is not None:
+            for key, value in input_class.__dict__.items():
+                if value != default.__dict__[key]:
+                    output_class.__dict__[key] = value
+
+    default_retriever_config = RetrievalArguments()
+    default_reranker_config = RerankerArguments()
+    default_eval_config = EvaluationArguments()
+    default_run_config = EngineArguments()
+
 
     @staticmethod
     def get_stdargs_config():
         config = DocUVerseConfig()
         config.read_args()
-        if config.search_config.num_preprocessor_threads > 1:
+        if get_param(config.run_config, 'config'):
+            config1 = DocUVerseConfig(config.run_config.config)
+            # config1.update(config)
+            DocUVerseConfig._update(config1.retriever_config, config.retriever_config, DocUVerseConfig.default_retriever_config)
+            DocUVerseConfig._update(config1.reranker_config, config.reranker_config, DocUVerseConfig.default_reranker_config)
+            DocUVerseConfig._update(config1.eval_config, config.eval_config, DocUVerseConfig.default_eval_config)
+            DocUVerseConfig._update(config1.run_config, config.run_config, DocUVerseConfig.default_run_config)
+            config = config1
+            config.ingest_params()
+        if config.retriever_config.num_preprocessor_threads > 1:
             os.environ['TOKENIZERS_PARALLELISM'] = "true"
         return config

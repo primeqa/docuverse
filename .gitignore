@@ -141,3 +141,4 @@ examples/tmp.ipynb
 /models/
 /config
 /output
+/experiments/ibm-swsupport/gte-small-setup-256.yaml

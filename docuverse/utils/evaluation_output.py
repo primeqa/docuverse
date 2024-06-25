@@ -7,9 +7,11 @@ class EvaluationOutput:
     mappable_metrics = ['match', 'mrr', 'ndcg', 'map']
     def __init__(self, num_ranked_queries, num_judged_queries, doc_scores,
                  ranks,
+                 model_name="model",
                  rouge_scores=None,
                  compute_macro_scores=True,
                  metrics="match"):
+        self.model_name = model_name
         self.map = None
         self.mrr = None
         self.ndcg = None
@@ -88,25 +90,12 @@ class EvaluationOutput:
             self.rouge_match = {}
 
 
-    def __str__(self, name="model", display="match", ranks=None):
+    def __str__(self):
 
         def display_metric(_metric, display_string=False):
             mappable_metrics = ['match', 'ndcg', 'mrr']
             display_map = {m:("M" if m=='match' else m.upper())+"@" for m in mappable_metrics}
             metric_map = {m:getattr(self,m) for m in mappable_metrics}
-            # display_map = {
-            #     "match": "M@",
-            #     "ndcg": "NDCG@",
-            #     "mrr": "MRR@",
-            #     "map": "MAP@"
-            # }
-            #
-            # metric_map = {
-            #     "match": self.match,
-            #     "ndcg": self.ndcg,
-            #     "mrr": self.mrr,
-            #     'map': self.map
-            # }
 
             if display_string:
                 if _metric in mappable_metrics:
@@ -114,15 +103,15 @@ class EvaluationOutput:
             else:
                 if _metric in mappable_metrics:
                     return "".join([f"{metric_map[_metric][i]:<10.3}" for i in ranks])
+        name = self.model_name
+        ranks = self.ranks
+        model_name_length = len(self.model_name)+4
 
-        if ranks is None:
-            ranks = self.ranks
-
-        headline = f"{'Model':10s}" + "".join([
+        headline = f"{'Model':{model_name_length}s}" + "".join([
             display_metric(metric, True) for metric in self.display_metrics
         ])
 
-        res = f"{name:10}" + "".join([
+        res = f"{name:{model_name_length}s}" + "".join([
             display_metric(metric, False) for metric in self.display_metrics
         ])
 

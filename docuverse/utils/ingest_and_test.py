@@ -14,7 +14,7 @@ if __name__ == '__main__':
                      f"{' '.join([__file__] + sys.argv)}\n")
 
     config = DocUVerseConfig.get_stdargs_config()
-
+#    config = DocUVerseConfig("experiments/clapnq/setup.yaml")
     engine = SearchEngine(config)
 
     if config.ingest or config.update:
@@ -31,5 +31,5 @@ if __name__ == '__main__':
 
         if config.evaluate and config.eval_config is not None:
             scorer = EvaluationEngine(config.eval_config)
-            results = scorer.compute_score(queries, output)
+            results = scorer.compute_score(queries, output, config.model_name)
             print(f"Results:\n{results}")
