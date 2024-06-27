@@ -285,7 +285,8 @@ class SearchData:
         else:
             mode = "r"
             if not os.path.exists(file_name):
-                return None
+                raise RuntimeError(f"File {file_name} does not exist!")
+                # return None
         input_stream = None
         if file_name.endswith(".bz2"):
             import bz2
@@ -425,17 +426,17 @@ class SearchData:
                   tiler: TextTiler | str = None,
                   max_doc_length: int | None = None,
                   stride: int | None = None,
-                  use_cache: bool = True,
+                  no_cache: bool = False,
                   cache_dir: str = default_cache_dir,
                   title_handling: str = 'all',
                   data_template: DataTemplate = default_data_template,
                   verbose=False,
                   **kwargs):
 
+        use_cache = not no_cache
         doc_based = kwargs.get('doc_based', True)
         docid_map = kwargs.get('docid_map', {})
         num_threads = kwargs.get('num_preprocessor_threads', 1)
-        no_cache = kwargs.get('no_cache', False)
         max_num_documents = kwargs.get('max_num_documents')
         if max_num_documents is None:
             max_num_documents = 100000000
@@ -483,7 +484,7 @@ class SearchData:
                                         doc_based=doc_based,
                                         docid_filter=docid_filter)
 
-            if not no_cache:
+            if use_cache:
                 cache_filename = cls.get_cached_filename(input_file, max_doc_size=max_doc_length, stride=stride,
                                                          title_handling=title_handling, tiler=tiler)
                 cached_passages = cls.read_cache_file_if_needed(
@@ -565,15 +566,15 @@ class SearchData:
             if verbose:
                 read_time = tm.mark_and_return_time()
                 print(f"Processed in {read_time}")
-            if not no_cache:
+            if use_cache:
                 cls.write_cache_file(cache_filename, tpassages, use_cache)
             passages.extend(tpassages)
             max_num_documents -= docs_read
 
         if verbose:
             cls.compute_statistics(passages, tiler=tiler)
-            read_time = tm.mark_and_return_time()
-            print(f"Statistics computed in {read_time}")
+            # read_time = tm.mark_and_return_time()
+            # print(f"Statistics computed in {read_time}")
         if return_unmapped_ids:
             return passages, unmapped_ids
         else:
@@ -616,18 +617,23 @@ class SearchData:
     @classmethod
     def _read_data(self, filename, max_num_docs=-1) -> List[Dict[str, str]]:
         data = None
-        with SearchData._open_file(filename) as in_file:
-            if SearchData.is_of_type(filename, extensions=[".tsv"]):
-                csv_reader = csv.DictReader(in_file, delimiter="\t")
-                # next(csv_reader)
-                data = [doc for doc in csv_reader]
-            elif SearchData.is_of_type(filename, ['.json', '.jsonl']):
-                if filename.find('.jsonl') >= 0:
-                    data = [json.loads(line) for line in tqdm(in_file, desc=f"Reading {filename}:")]
+        try:
+            with SearchData._open_file(filename) as in_file:
+                if SearchData.is_of_type(filename, extensions=[".tsv"]):
+                    csv_reader = csv.DictReader(in_file, delimiter="\t")
+                    data = [doc for doc in csv_reader]
+                if SearchData.is_of_type(filename, extensions=[".csv"]):
+                    csv_reader = csv.DictReader(in_file, delimiter=",")
+                    data = [doc for doc in csv_reader]
+                elif SearchData.is_of_type(filename, ['.json', '.jsonl']):
+                    if filename.find('.jsonl') >= 0:
+                        data = [json.loads(line) for line in tqdm(in_file, desc=f"Reading {filename}:")]
+                    else:
+                        data = json.load(in_file)
                 else:
-                    data = json.load(in_file)
-            else:
-                raise RuntimeError(f"Unknown file extension: {os.path.splitext(filename)[1]}")
+                    raise RuntimeError(f"Unknown file extension: {os.path.splitext(filename)[1]}")
+        except Exception as e:
+            raise RuntimeError(f"Error reading {filename}: {e}")
         if max_num_docs > 0:
             data = data[:max_num_docs]
         return data
@@ -701,73 +707,8 @@ class SearchData:
         return any(input_file.endswith(f"{ext[0]}{ext[1]}")
                    for ext in itertools.product(extensions, ['', ".bz2", ".gz", ".xz"]))
 
-    @staticmethod
-    def compute_statistics_old(corpus, tiler):
-        min_idx, max_idx, avg_idx, total_idx = range(0, 4)
-        token_based = [1000, 0, 0, 0]
-        char_based = [1000, 0, 0, 0]
-        char_vals = []
-        token_vals = []
-        tiles = 0
-        doc_ids = {}
-
-        def update_stat(input, vector):
-            vector[min_idx] = min(vector[min_idx], input)
-            vector[max_idx] = max(vector[max_idx], input)
-            vector[avg_idx] += input
-            vector[total_idx] += 1
-
-        def compute_stats(vector):
-            return [
-                vector[min_idx],
-                vector[max_idx],
-                1.0 * vector[avg_idx] / char_based[total_idx]
-            ]
-
-        tq = tqdm(desc="Computing statistics", total=len(corpus))
-        for entry in corpus:
-            tq.update(1)
-            txt = get_param(entry, 'text')
-            char_len = len(txt)
-            char_vals.append(char_len)
-            update_stat(char_len, char_based)
-            token_length = tiler.get_tokenized_length(text=txt, forced_tok=True)
-            update_stat(token_length, token_based)
-            token_vals.append(token_length)
-            tiles += 1
-            doc_ids[SearchData.get_orig_docid(get_param(entry, 'id'))] = 1
-        tq.close()
-
-        stats = {
-            'num_docs': len(doc_ids),
-            'num_tiles': tiles,
-            'char': compute_stats(char_based),
-            'token': compute_stats(token_based)
-        }
-
-        second_len = 20
-        print("=" * 60)
-        print('Statistics:')
-        print("=" * 60)
-        print(f"{'Number of documents:':20s}{stats['num_docs']:<10d}")
-        print(f"{'Number of tiles:':20s}{stats['num_tiles']:<10d}")
-        print(f"{'#tiles per document:':20s}{stats['num_tiles'] / stats['num_docs']:<10.2f}")
-        print(f"{'':20s}{'Character-based:':<{second_len}s}{'Token-based:':<{second_len}s}")
-        print(
-            f"{'  Minimum length:':20s}{stats['char'][min_idx]:<{second_len}d}{stats['token'][min_idx]:<{second_len}d}")
-        print(
-            f"{'  Maximum length:':20s}{stats['char'][max_idx]:<{second_len}d}{stats['token'][max_idx]:<{second_len}d}")
-        print(
-            f"{'  Average length:':20s}{stats['char'][avg_idx]:<{second_len}.1f}{stats['token'][avg_idx]:<{second_len}.1f}")
-        print("=" * 60)
-        from docuverse.utils.text_histogram import histogram
-        print("Char histogram:\n")
-        histogram(char_vals)
-        print("Token histogram:\n")
-        histogram(token_vals)
-
-    @staticmethod
-    def compute_statistics(corpus, tiler=None):
+    @classmethod
+    def compute_statistics(cls, corpus, tiler=None):
         min_idx, max_idx, avg_idx, total_idx = range(0, 4)
         token_based = [1000, 0, 0, 0]
         char_based = [1000, 0, 0, 0]
@@ -799,7 +740,7 @@ class SearchData:
             if 'tlen' in entry:
                 token_length = entry['tlen']
             else:
-                tiler.get_tokenized_length(text=txt, forced_tok=True)
+                token_length = tiler.get_tokenized_length(text=txt, forced_tok=True)
             update_stat(token_length, token_based)
             token_vals.append(token_length)
             tiles += 1

@@ -22,6 +22,8 @@ from dotenv import load_dotenv
 
 class ElasticServers:
     def __init__(self, config="../../../../config/elastic_servers.json"):
+        if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
+            config = os.path.join(os.environ['DOCUVERSE_CONFIG_PATH'], "elastic_servers.json")
         self.servers = {}
         if os.path.exists(config):
             if config.endswith(".json"):
@@ -42,7 +44,7 @@ class ElasticEngine(RetrievalEngine):
 
     @staticmethod
     def read_config(config: str):
-        es_servers = ElasticServers(config)
+        ElasticEngine.es_servers = ElasticServers(config)
 
     def __init__(self, config_params, **kwargs):
         # super().__init__(**kwargs)
@@ -53,7 +55,11 @@ class ElasticEngine(RetrievalEngine):
         self.duplicate_removal = None
         self.coga_mappings = {}
         self.settings = {}
-        self._read_mappings("config/elastic_config.json")
+        if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
+            config = os.path.join(os.environ['DOCUVERSE_CONFIG_PATH'], "elastic_config.json")
+        else:
+            config = os.path.abspath(os.path.join(os.path.dirname(__file__),"../../../..", "config/elastic_config.json"))
+        self._read_mappings(config)
         self.config = None
         self._init_config(config_params)
         self.source_excludes = []
@@ -67,7 +73,7 @@ class ElasticEngine(RetrievalEngine):
 
     def _init_connection(self):
         self._init_connection_info(self.config.get('server'))
-        self._init_client()
+        self.init_client()
         self._set_pipelines()
 
     def _init_connection_info(self, server: str = None):
@@ -102,7 +108,7 @@ class ElasticEngine(RetrievalEngine):
 
         self.config = config_params
 
-    def _init_client(self):
+    def init_client(self):
         if self.api_key is not None:
             self.client = Elasticsearch(f"{self.host}",
                                         ssl_assert_fingerprint=self.ssl_fingerprint,
@@ -184,9 +190,12 @@ class ElasticEngine(RetrievalEngine):
             else:
                 print(f"Please type 'yes' or 'no', not {r}!")
 
+    def has_index(self, index_name):
+        return self.client.indices.exists(index=index_name)
+
     def create_update_index(self, do_update=True):
-        if self.client.indices.exists(index=self.config.index_name):
-            if not do_update:
+        if self.has_index(index_name=self.config.index_name):
+            if do_update:
                 self.check_index_rebuild()
                 self.client.options(ignore_status=[400, 404]).indices.delete(index=self.config.index_name)
             else:
@@ -203,7 +212,7 @@ class ElasticEngine(RetrievalEngine):
     def ingest(self, corpus: SearchData, **kwargs):
         from tqdm import tqdm
         from elasticsearch.helpers import bulk
-        self._init_client() # Redo the connection to the server
+        self.init_client() # Redo the connection to the server
         bulk_batch = self.config.get('bulk_batch', 40)
         num_passages = len(corpus)
         # print(input_passages[0].keys())

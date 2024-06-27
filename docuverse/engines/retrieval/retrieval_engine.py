@@ -45,6 +45,12 @@ class RetrievalEngine:
         pass
         # return self.engine.info()
 
+    def init_client(self):
+        pass
+
+    def has_index(self, index_name):
+        return False
+
     @staticmethod
     def create_query(text, **kwargs) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
         return None, None, None
