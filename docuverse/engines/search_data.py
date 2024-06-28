@@ -9,6 +9,7 @@ from multiprocessing import Manager, Queue, Process
 from typing import Dict, List
 from tqdm import tqdm
 import queue
+from docuverse.utils import at_most
 
 from docuverse.engines import data_template
 from docuverse.engines.data_template import (
@@ -617,17 +618,19 @@ class SearchData:
     @classmethod
     def _read_data(self, filename, max_num_docs=-1) -> List[Dict[str, str]]:
         data = None
+
         try:
             with SearchData._open_file(filename) as in_file:
                 if SearchData.is_of_type(filename, extensions=[".tsv"]):
                     csv_reader = csv.DictReader(in_file, delimiter="\t")
-                    data = [doc for doc in csv_reader]
+                    data = [doc for doc in at_most(csv_reader, max_num_docs)]
                 if SearchData.is_of_type(filename, extensions=[".csv"]):
                     csv_reader = csv.DictReader(in_file, delimiter=",")
-                    data = [doc for doc in csv_reader]
+                    data = [doc for doc in at_most(csv_reader, max_num_docs)]
                 elif SearchData.is_of_type(filename, ['.json', '.jsonl']):
                     if filename.find('.jsonl') >= 0:
-                        data = [json.loads(line) for line in tqdm(in_file, desc=f"Reading {filename}:")]
+                        data = [json.loads(line) for line in tqdm(at_most(in_file, max_num_docs),
+                                                                  desc=f"Reading {filename}:")]
                     else:
                         data = json.load(in_file)
                 else:

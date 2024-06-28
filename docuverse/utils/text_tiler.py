@@ -321,16 +321,17 @@ class TextTiler:
                             clen = max_length
                             if self._need_to_add_title(idx, title_handling):
                                 clen -= title_length+1
-                            end_ch = min(init_pos+clen, max_len)
-                            while text[end_ch-1].isspace():
-                                end_ch -= 1
-                            texts.append(get_expanded_text(text[init_pos:end_ch], title,
+                            end_pos = min(init_pos+clen, max_len)
+                            while not text[end_pos].isspace() and end_pos>=init_pos:
+                                end_pos -= 1
+                            texts.append(get_expanded_text(text[init_pos:end_pos], title,
                                                            pos, title_handling, title_in_text))
                             positions.append([init_pos, end_pos])
                             added_titles.append(self._need_to_add_title(idx, title_handling, title_in_text))
-                            init_pos = end_ch - stride
-                            while text[init_pos].isspace():
+                            init_pos = end_pos - stride
+                            while not text[init_pos].isspace():
                                 init_pos += 1
+                            init_pos += 1
 
                 return texts, positions, added_titles
 

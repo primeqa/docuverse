@@ -43,3 +43,26 @@ def read_config_file(config_file):
     else:
         raise RuntimeError(f"Config file type not supported: {config_file}")
     return config
+
+class limiter:
+    def __init__(self, _obj, max_num_docs):
+        self.iter = iter(_obj)
+        self.limit = max_num_docs
+
+    def __iter__(self):
+        self.read = 0
+        return self
+
+    def __next__(self):
+        if self.read < self.limit:
+            self.read += 1
+            r = next(self.iter)
+            return r
+        else:
+            raise StopIteration
+
+def at_most(_obj, limit):
+    if limit > 0:
+        return iter(limiter(_obj, limit))
+    else:
+        return iter(_obj)
