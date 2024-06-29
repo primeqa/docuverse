@@ -32,6 +32,7 @@ class TestSearchData(unittest.TestCase):
         filename = self.search.get_cached_filename('test_doc',
                                                    max_doc_size = 100,
                                                    stride = 2,
+                                                   aligned_on_sentences=True,
                                                    tiler = tiler_instance)
         self.assertTrue(os.path.isfile(filename))
 

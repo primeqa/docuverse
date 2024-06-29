@@ -262,7 +262,8 @@ class SearchData:
     def get_cached_filename(input_file: str,
                             max_doc_size: int,
                             stride: int,
-                            tiler: TextTiler,
+                            aligned: bool = True,
+                            tiler: TextTiler = None,
                             title_handling="all",
                             cache_dir: str = default_cache_dir):
         tok_dir_name = os.path.basename(tiler.tokenizer.name_or_path) if tiler is not None else "none"
@@ -271,6 +272,7 @@ class SearchData:
         cache_file_name = os.path.join(cache_dir, "_".join([f"{input_file.replace('/', '__')}",
                                                             f"{max_doc_size}",
                                                             f"{stride}",
+                                                            f"{aligned}" if aligned else "unaligned",
                                                             f"{title_handling}",
                                                             f"{tok_dir_name}"]) + ".jsonl.bz2")
         print(f"Cache filename is {cache_file_name}")
@@ -437,6 +439,7 @@ class SearchData:
         use_cache = not no_cache
         doc_based = kwargs.get('doc_based', True)
         docid_map = kwargs.get('docid_map', {})
+        aligned_on_sentences = get_param(kwargs, 'aligned_on_sentences', True)
         num_threads = kwargs.get('num_preprocessor_threads', 1)
         max_num_documents = kwargs.get('max_num_documents')
         if max_num_documents is None:
@@ -486,7 +489,9 @@ class SearchData:
                                         docid_filter=docid_filter)
 
             if use_cache:
-                cache_filename = cls.get_cached_filename(input_file, max_doc_size=max_doc_length, stride=stride,
+                cache_filename = cls.get_cached_filename(input_file,
+                                                         max_doc_size=max_doc_length, stride=stride,
+                                                         aligned=aligned_on_sentences,
                                                          title_handling=title_handling, tiler=tiler)
                 cached_passages = cls.read_cache_file_if_needed(
                     cache_filename,
