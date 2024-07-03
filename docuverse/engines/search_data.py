@@ -1,6 +1,6 @@
 import itertools
 import os
-import json
+import orjson
 import csv
 import re
 import time
@@ -10,6 +10,7 @@ from typing import Dict, List
 from tqdm import tqdm
 import queue
 from docuverse.utils import at_most
+import pickle
 
 from docuverse.engines import data_template
 from docuverse.engines.data_template import (
@@ -40,7 +41,7 @@ class DefaultProcessor:
         if DefaultProcessor.stopwords is None:
             stopword_file = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
                                          "resources", "stopwords.json")
-            stopwords_list = json.load(open(stopword_file))
+            stopwords_list = orjson.loads("".join(open(stopword_file).readlines()))
             stopwords = {}
             for lang, vals in stopwords_list.items():
                 stopwords[lang] = re.compile(f"\\b({'|'.join(vals)})\\b", re.IGNORECASE)
@@ -274,12 +275,15 @@ class SearchData:
                                                             f"{stride}",
                                                             f"{aligned}" if aligned else "unaligned",
                                                             f"{title_handling}",
-                                                            f"{tok_dir_name}"]) + ".jsonl.bz2")
+                                                            f"{tok_dir_name}"]),
+                                                            ".pickle.xz"
+                                                            #".jsonl.bz2"
+                                       )
         print(f"Cache filename is {cache_file_name}")
         return cache_file_name
 
     @staticmethod
-    def _open_file(file_name: str, write: bool = False):
+    def _open_file(file_name: str, write: bool = False, binary=False):
         if write:
             mode = "w"
             cache_dir = os.path.dirname(file_name)
@@ -289,7 +293,9 @@ class SearchData:
             mode = "r"
             if not os.path.exists(file_name):
                 raise RuntimeError(f"File {file_name} does not exist!")
-                # return None
+        if binary:
+            mode = f"{mode}b"
+
         input_stream = None
         if file_name.endswith(".bz2"):
             import bz2
@@ -297,6 +303,9 @@ class SearchData:
         elif file_name.endswith(".gz"):
             import gzip
             input_stream = gzip.open(file_name, mode)
+        elif file_name.endswith(".xz"):
+            import lzma
+            input_stream = lzma.open(file_name, mode)
         else:  # if file_name.endswith(".jsonl"):
             input_stream = open(file_name, mode)
         return input_stream
@@ -306,10 +315,10 @@ class SearchData:
         passages = []
 
         if os.path.exists(cache_file_name) and os.path.getmtime(cache_file_name) > os.path.getmtime(input_file):
-            input_stream = SearchData._open_file(cache_file_name, write=False)
-            for line in tqdm(input_stream, desc="Reading cache file:"):
-                passages.append(json.loads(line.decode('utf-8')))
-
+            input_stream = SearchData._open_file(cache_file_name, write=False, binary=True)
+            # for line in tqdm(input_stream, desc="Reading cache file:"):
+            #     passages.append(orjson.loads(line.decode('utf-8'))
+            passages = pickle.load(input_stream)
             input_stream.close()
 
         return passages
@@ -318,9 +327,10 @@ class SearchData:
     def write_cache_file(cache_filename, passages, use_cache=True):
         if not use_cache:
             return
-        output_stream = SearchData._open_file(cache_filename, write=True)
-        for p in passages:
-            output_stream.write(f"{json.dumps(p)}\n".encode("utf-8"))
+        output_stream = SearchData._open_file(cache_filename, write=True, binary=True)
+        pickle.dump(passages, output_stream)
+        # for p in passages:
+        #     output_stream.write(f"{orjson.dumps(p)}\n".encode("utf-8"))
         output_stream.close()
 
     @classmethod
@@ -395,17 +405,20 @@ class SearchData:
                 for pi, passage in enumerate(unit[data_template.passage_header]):
                     tpassages = []
                     passage_id = get_param(passage, data_template.passage_id_header, str(pi))
-                    tpassages.extend(
-                        tiler.create_tiles(
-                            id_=f"{id}-{passage_id}",
-                            text=passage,
-                            title=itm['title'],
-                            max_doc_size=max_doc_size,
-                            stride=stride,
-                            remove_url=remove_url,
-                            template=itm,
-                            title_handling=title_handling)
-                    )
+                    try:
+                        tpassages.extend(
+                            tiler.create_tiles(
+                                id_=f"{id}-{passage_id}",
+                                text=passage,
+                                title=itm['title'],
+                                max_doc_size=max_doc_size,
+                                stride=stride,
+                                remove_url=remove_url,
+                                template=itm,
+                                title_handling=title_handling)
+                        )
+                    except Exception as e:
+                        print(f"Error while processing passage {id}-{passage_id}: {e}")
                     return tpassages
 
     @staticmethod
@@ -634,10 +647,10 @@ class SearchData:
                     data = [doc for doc in at_most(csv_reader, max_num_docs)]
                 elif SearchData.is_of_type(filename, ['.json', '.jsonl']):
                     if filename.find('.jsonl') >= 0:
-                        data = [json.loads(line) for line in tqdm(at_most(in_file, max_num_docs),
+                        data = [orjson.loads(line) for line in tqdm(at_most(in_file, max_num_docs),
                                                                   desc=f"Reading {filename}:")]
                     else:
-                        data = json.load(in_file)
+                        data = orjson.loads("".join(in_file.readlines()))
                 else:
                     raise RuntimeError(f"Unknown file extension: {os.path.splitext(filename)[1]}")
         except Exception as e:
@@ -651,9 +664,9 @@ class SearchData:
                         docid_filter, doc_based, max_num_documents):
         tpassages = []
         if filename.find('.jsonl') >= 0:
-            data = [json.loads(line) for line in in_file]
+            data = [orjson.loads(line) for line in in_file]
         else:
-            data = json.load(in_file)
+            data = orjson.loads("".join(in_file.readlines()))
 
         read_docs = 0
         for di, doc in tqdm(enumerate(data),

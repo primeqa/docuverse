@@ -59,7 +59,8 @@ class SearchEngine:
         return self.retriever.info()
 
     def search(self, queries: SearchQueries) -> List[SearchResult]:
-        self.retriever.init_client()
+        # self.retriever.init_client()
+        self.retriever.reconnect_if_necessary()
         answers = [self.retriever.search(query) for query in tqdm(queries, desc="Processing queries: ")]
         if self.reranker is not None:
             answers = [self.reranker.rerank(answer) for answer in tqdm(answers, desc="Reranking queries: ")]

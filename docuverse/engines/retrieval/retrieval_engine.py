@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Tuple, Dict
 
 from docuverse.engines.search_corpus import SearchCorpus
@@ -30,6 +31,7 @@ class RetrievalEngine:
 
     """
     def __init__(self, config_params, **kwargs):
+        self.last_access = None
         self.args = kwargs
         # self.engine = self.create_engine(retriever_config=config_params)
 
@@ -54,3 +56,13 @@ class RetrievalEngine:
     @staticmethod
     def create_query(text, **kwargs) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
         return None, None, None
+
+    def reconnect_if_necessary(self):
+        tm = datetime.now()
+
+        if self.last_access is None or (tm-self.last_access).total_seconds() > 10*60: # more than 10 mins -> reconnect
+            self.init_client()
+        self.set_accessed()
+
+    def set_accessed(self):
+        self.last_access = datetime.now()

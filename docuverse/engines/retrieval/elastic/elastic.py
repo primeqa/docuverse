@@ -20,10 +20,19 @@ import os
 from dotenv import load_dotenv
 
 
+def get_config_dir(config_path: str|None = None) -> str:
+    if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
+        config_dir = os.environ['DOCUVERSE_CONFIG_PATH']
+    elif config_path is None or not os.path.exists(config_path):
+        config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../..", "config"))
+    else:
+        return config_path
+    return config_dir
+
+
 class ElasticServers:
     def __init__(self, config="../../../../config/elastic_servers.json"):
-        if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
-            config = os.path.join(os.environ['DOCUVERSE_CONFIG_PATH'], "elastic_servers.json")
+        config = os.path.join(get_config_dir(os.path.dirname(config)), "elastic_servers.json")
         self.servers = {}
         if os.path.exists(config):
             if config.endswith(".json"):
@@ -31,16 +40,16 @@ class ElasticServers:
             elif config.endswith(".yaml"):
                 self.servers = yaml.safe_load(open(config))
 
-    def get(self, name: str):
-        return self.servers.get(name, (None, None, None))
+    def get(self, name: str, default=None):
+        return self.servers.get(name, None)
 
 
 class ElasticEngine(RetrievalEngine):
     es_servers = ElasticServers("config/elastic_servers.json")
     languages = ['en', 'es', 'fr', 'pt', 'ja', 'de']
     default_all_keys_to_index = ['title', 'id', 'url', 'productId',  # 'versionId',
-                         'filePath', 'deliverableLoio', 'text',
-                         'app_name', 'courseGrainedProductId']
+                                 'filePath', 'deliverableLoio', 'text',
+                                 'app_name', 'courseGrainedProductId']
 
     @staticmethod
     def read_config(config: str):
@@ -55,10 +64,12 @@ class ElasticEngine(RetrievalEngine):
         self.duplicate_removal = None
         self.coga_mappings = {}
         self.settings = {}
-        if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
-            config = os.path.join(os.environ['DOCUVERSE_CONFIG_PATH'], "elastic_config.json")
-        else:
-            config = os.path.abspath(os.path.join(os.path.dirname(__file__),"../../../..", "config/elastic_config.json"))
+        config = os.path.join(get_config_dir(), "elastic_config.json")
+        # if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
+        #     config = os.path.join(os.environ['DOCUVERSE_CONFIG_PATH'], "elastic_config.json")
+        # else:
+        #     config = os.path.abspath(
+        #         os.path.join(os.path.dirname(__file__), "../../../..", "config/elastic_config.json"))
         self._read_mappings(config)
         self.config = None
         self._init_config(config_params)
@@ -69,7 +80,6 @@ class ElasticEngine(RetrievalEngine):
             self.all_keys_to_index = kwargs['all_keys_to_index']
         else:
             self.all_keys_to_index = self.default_all_keys_to_index
-
 
     def _init_connection(self):
         self._init_connection_info(self.config.get('server'))
@@ -85,7 +95,7 @@ class ElasticEngine(RetrievalEngine):
             self.api_key = os.getenv('ES_API_KEY')
             self.ssl_fingerprint = os.getenv('ES_SSL_FINGERPRINT')
         else:
-            server_info = self.es_servers.get(server.lower())
+            server_info = get_param(self.es_servers, server.lower(), None)
             if server_info is None:
                 raise RuntimeError(f"ElasticSearch server {server} not found.")
             for key, val in server_info.items():
@@ -126,6 +136,7 @@ class ElasticEngine(RetrievalEngine):
             print(f"Error: {e}")
             import sys
             sys.exit(101)
+        self.set_accessed()
 
     def info(self):
         return f"Elasticsearch client.info(): \n{self.client.info().body}"
@@ -159,7 +170,7 @@ class ElasticEngine(RetrievalEngine):
     def read_results(self, data):
         results = []
         for d in data['hits']['hits']:
-            r = SearchResult.SearchDatum(score=d['_score'],data=d['_source'])
+            r = SearchResult.SearchDatum(score=d['_score'], data=d['_source'])
             results.append(r)
         return results
 
@@ -212,13 +223,16 @@ class ElasticEngine(RetrievalEngine):
     def ingest(self, corpus: SearchData, **kwargs):
         from tqdm import tqdm
         from elasticsearch.helpers import bulk
-        self.init_client() # Redo the connection to the server
+        self.init_client()  # Redo the connection to the server
         bulk_batch = self.config.get('bulk_batch', 40)
         num_passages = len(corpus)
         # print(input_passages[0].keys())
         keys_to_index = self._get_keys_to_index(corpus)
+        keys_to_index.extend(self.config.data_template.extra_fields)
+        # for k in self.config.data_format.extra_fields:
+        #     keys_to_index.append(k)
         actions = []
-        update=kwargs.get('update', False)
+        update = kwargs.get('update', False)
         self.create_update_index(do_update=update)
         t = tqdm(total=num_passages, desc="Ingesting dense documents: ", smoothing=0.05)
         for k in range(0, num_passages, bulk_batch):
@@ -243,7 +257,7 @@ class ElasticEngine(RetrievalEngine):
             except Exception as e:
                 print(f"Got an error in indexing: {e}, {len(actions)}")
 
-    def add_fields(self, actions:List[dict], bulk_batch:int, corpus:SearchData, k:int, num_passages:int):
+    def add_fields(self, actions: List[dict], bulk_batch: int, corpus: SearchData, k: int, num_passages: int):
         """
         This function is used for adding fields to the indexed passage (e.g., the embedding vector
         for dense models where the model is not on the server.
