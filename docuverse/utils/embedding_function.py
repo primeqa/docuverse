@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from typing import Union, List
 
+
 class DenseEmbeddingFunction:
     def __init__(self, name, batch_size=128):
         import torch
@@ -38,6 +39,10 @@ class DenseEmbeddingFunction:
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
         return self.encode(texts)
 
+    def __del__(self):
+        if self.emb_pool is not None:
+            self.stop_pool()
+
     @property
     def tokenizer(self):
         return self.model.tokenizer
@@ -46,7 +51,7 @@ class DenseEmbeddingFunction:
         self.emb_pool = self.model.start_multi_process_pool()
 
     def stop_pool(self):
-        self.model.stop_multi_process_pool()
+        self.model.stop_multi_process_pool(self.emb_pool)
 
     def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
@@ -57,7 +62,7 @@ class DenseEmbeddingFunction:
             show_progress_bar = isinstance(texts, str) or max(len(texts), _batch_size) <= 1
 
         if not self.pqa:
-            if isinstance(texts, list) and len(texts) > 30 and self.num_devices>1:
+            if isinstance(texts, list) and len(texts) > 30 and self.num_devices > 1:
                 if self.emb_pool is None:
                     self.start_pool()
                 embs = self.model.encode_multi_process(pool=self.emb_pool,
@@ -89,5 +94,3 @@ class DenseEmbeddingFunction:
     @staticmethod
     def normalize(passage_vectors):
         return [v / np.linalg.norm(v) for v in passage_vectors if np.linalg.norm(v) > 0]
-
-

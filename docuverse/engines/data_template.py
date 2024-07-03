@@ -71,6 +71,20 @@ class DataTemplate:
         }
     )
 
+    truth_id: str|None = field(
+        default=None,
+        metadata={
+            "help": "The truth id for the document (when the association id->doc_id is done separately."
+        }
+    )
+
+    truth_label: str|None = field(
+        default=None,
+        metadata={
+            "help": "The label for document containing the answer to the given question."
+        }
+    )
+
     def __post_init__(self):
         if self.keep_fields is not None:
             self.extra_fields = self.keep_fields.split("|")
@@ -83,7 +97,7 @@ def read_doc_query_format(filename: str) -> Tuple[DataTemplate, DataTemplate]:
     return DataTemplate(**config['data_format']), DataTemplate(**config['query_format'])
 
 
-default_query_template = DataTemplate(id_header='id|qid',
+default_query_template = DataTemplate(id_header='id|qid|_id',
                                       relevant_header='relevant',
                                       answers_header='answers',
                                       text_header='text|query|question',

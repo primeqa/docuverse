@@ -18,7 +18,7 @@ class ElasticDenseEngine(ElasticEngine):
 
     def _init_connection(self):
         self._init_connection_info(self.config.get('server'))
-        self._init_client()
+        self.init_client()
 
         if self.config.model_on_server:
             if 'ml' in self.client.__dict__:

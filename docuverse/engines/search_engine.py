@@ -4,6 +4,7 @@ import yaml
 import os
 
 from tqdm import tqdm
+from copy import deepcopy
 
 import docuverse.utils
 from docuverse.engines import SearchData
@@ -25,29 +26,11 @@ class SearchEngine:
         self.retriever = None
         self.reranker = None
         self.scorer = None
-        self.create(config_or_path=config_or_path)
+        self.create(config_or_path=config_or_path, **kwargs)
         self.tiler = None
 
-    # @staticmethod
-    # def read_configs(config_or_path: str) -> GenericArguments:
-    #     if isinstance(config_or_path, str):
-    #         if os.path.exists(config_or_path):
-    #             with open(config_or_path) as stream:
-    #                 try:
-    #                     vals = yaml.safe_load(stream=stream)
-    #                     if 'retrieval' not in vals: # By default, all parameters are assumed to be retriever params
-    #                         vals['retrieval'] = vals
-    #                         vals['reranker'] = None
-    #                 except yaml.YAMLError as exc:
-    #                     raise exc
-    #         else:
-    #             print(f"The configuration file '{config_or_path}' does not exist.")
-    #             raise FileNotFoundError(f"The configuration file '{config_or_path}' does not exist.")
-    #     elif isinstance(config_or_path, GenericArguments):
-    #         return config_or_path
-
     def create(self, config_or_path, **kwargs):
-        if isinstance(config_or_path, str|dict):
+        if isinstance(config_or_path, str | dict):
             self.config = DocUVerseConfig(config_or_path)
         elif isinstance(config_or_path, DocUVerseConfig):
             self.config = config_or_path
@@ -69,10 +52,15 @@ class SearchEngine:
     def ingest(self, corpus: SearchCorpus, update: bool = False):
         self.retriever.ingest(corpus=corpus, update=update)
 
+    def has_index(self, index_name):
+        return self.retriever.has_index(index_name=index_name)
+
     def get_retriever_info(self):
         return self.retriever.info()
 
     def search(self, queries: SearchQueries) -> List[SearchResult]:
+        # self.retriever.init_client()
+        self.retriever.reconnect_if_necessary()
         answers = [self.retriever.search(query) for query in tqdm(queries, desc="Processing queries: ")]
         if self.reranker is not None:
             answers = [self.reranker.rerank(answer) for answer in tqdm(answers, desc="Reranking queries: ")]
@@ -84,8 +72,12 @@ class SearchEngine:
     def compute_score(self, queries: SearchQueries, results: List[SearchResult]) -> EvaluationOutput:
         pass
 
-    def read_data(self, file):
-        retriever_config = self.config.retriever_config
+    def read_data(self, file, no_cache: bool | None = None):
+        if no_cache is not None:
+            retriever_config = deepcopy(self.config.retriever_config)
+            retriever_config.no_cache = no_cache
+        else:
+            retriever_config = self.config.retriever_config
         if self.tiler is None:
             tokenizer = None
             if getattr(self.retriever, 'model', None) is not None:

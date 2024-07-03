@@ -1,6 +1,6 @@
 import itertools
 import os
-import json
+import orjson
 import csv
 import re
 import time
@@ -9,6 +9,8 @@ from multiprocessing import Manager, Queue, Process
 from typing import Dict, List
 from tqdm import tqdm
 import queue
+from docuverse.utils import at_most
+import pickle
 
 from docuverse.engines import data_template
 from docuverse.engines.data_template import (
@@ -39,7 +41,7 @@ class DefaultProcessor:
         if DefaultProcessor.stopwords is None:
             stopword_file = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
                                          "resources", "stopwords.json")
-            stopwords_list = json.load(open(stopword_file))
+            stopwords_list = orjson.loads("".join(open(stopword_file).readlines()))
             stopwords = {}
             for lang, vals in stopwords_list.items():
                 stopwords[lang] = re.compile(f"\\b({'|'.join(vals)})\\b", re.IGNORECASE)
@@ -261,7 +263,8 @@ class SearchData:
     def get_cached_filename(input_file: str,
                             max_doc_size: int,
                             stride: int,
-                            tiler: TextTiler,
+                            aligned: bool = True,
+                            tiler: TextTiler = None,
                             title_handling="all",
                             cache_dir: str = default_cache_dir):
         tok_dir_name = os.path.basename(tiler.tokenizer.name_or_path) if tiler is not None else "none"
@@ -270,13 +273,17 @@ class SearchData:
         cache_file_name = os.path.join(cache_dir, "_".join([f"{input_file.replace('/', '__')}",
                                                             f"{max_doc_size}",
                                                             f"{stride}",
+                                                            f"{aligned}" if aligned else "unaligned",
                                                             f"{title_handling}",
-                                                            f"{tok_dir_name}"]) + ".jsonl.bz2")
+                                                            f"{tok_dir_name}"]),
+                                                            ".pickle.xz"
+                                                            #".jsonl.bz2"
+                                       )
         print(f"Cache filename is {cache_file_name}")
         return cache_file_name
 
     @staticmethod
-    def _open_file(file_name: str, write: bool = False):
+    def _open_file(file_name: str, write: bool = False, binary=False):
         if write:
             mode = "w"
             cache_dir = os.path.dirname(file_name)
@@ -285,7 +292,10 @@ class SearchData:
         else:
             mode = "r"
             if not os.path.exists(file_name):
-                return None
+                raise RuntimeError(f"File {file_name} does not exist!")
+        if binary:
+            mode = f"{mode}b"
+
         input_stream = None
         if file_name.endswith(".bz2"):
             import bz2
@@ -293,6 +303,9 @@ class SearchData:
         elif file_name.endswith(".gz"):
             import gzip
             input_stream = gzip.open(file_name, mode)
+        elif file_name.endswith(".xz"):
+            import lzma
+            input_stream = lzma.open(file_name, mode)
         else:  # if file_name.endswith(".jsonl"):
             input_stream = open(file_name, mode)
         return input_stream
@@ -302,10 +315,10 @@ class SearchData:
         passages = []
 
         if os.path.exists(cache_file_name) and os.path.getmtime(cache_file_name) > os.path.getmtime(input_file):
-            input_stream = SearchData._open_file(cache_file_name, write=False)
-            for line in tqdm(input_stream, desc="Reading cache file:"):
-                passages.append(json.loads(line.decode('utf-8')))
-
+            input_stream = SearchData._open_file(cache_file_name, write=False, binary=True)
+            # for line in tqdm(input_stream, desc="Reading cache file:"):
+            #     passages.append(orjson.loads(line.decode('utf-8'))
+            passages = pickle.load(input_stream)
             input_stream.close()
 
         return passages
@@ -314,9 +327,10 @@ class SearchData:
     def write_cache_file(cache_filename, passages, use_cache=True):
         if not use_cache:
             return
-        output_stream = SearchData._open_file(cache_filename, write=True)
-        for p in passages:
-            output_stream.write(f"{json.dumps(p)}\n".encode("utf-8"))
+        output_stream = SearchData._open_file(cache_filename, write=True, binary=True)
+        pickle.dump(passages, output_stream)
+        # for p in passages:
+        #     output_stream.write(f"{orjson.dumps(p)}\n".encode("utf-8"))
         output_stream.close()
 
     @classmethod
@@ -391,17 +405,20 @@ class SearchData:
                 for pi, passage in enumerate(unit[data_template.passage_header]):
                     tpassages = []
                     passage_id = get_param(passage, data_template.passage_id_header, str(pi))
-                    tpassages.extend(
-                        tiler.create_tiles(
-                            id_=f"{id}-{passage_id}",
-                            text=passage,
-                            title=itm['title'],
-                            max_doc_size=max_doc_size,
-                            stride=stride,
-                            remove_url=remove_url,
-                            template=itm,
-                            title_handling=title_handling)
-                    )
+                    try:
+                        tpassages.extend(
+                            tiler.create_tiles(
+                                id_=f"{id}-{passage_id}",
+                                text=passage,
+                                title=itm['title'],
+                                max_doc_size=max_doc_size,
+                                stride=stride,
+                                remove_url=remove_url,
+                                template=itm,
+                                title_handling=title_handling)
+                        )
+                    except Exception as e:
+                        print(f"Error while processing passage {id}-{passage_id}: {e}")
                     return tpassages
 
     @staticmethod
@@ -425,17 +442,18 @@ class SearchData:
                   tiler: TextTiler | str = None,
                   max_doc_length: int | None = None,
                   stride: int | None = None,
-                  use_cache: bool = True,
+                  no_cache: bool = False,
                   cache_dir: str = default_cache_dir,
                   title_handling: str = 'all',
                   data_template: DataTemplate = default_data_template,
                   verbose=False,
                   **kwargs):
 
+        use_cache = not no_cache
         doc_based = kwargs.get('doc_based', True)
         docid_map = kwargs.get('docid_map', {})
+        aligned_on_sentences = get_param(kwargs, 'aligned_on_sentences', True)
         num_threads = kwargs.get('num_preprocessor_threads', 1)
-        no_cache = kwargs.get('no_cache', False)
         max_num_documents = kwargs.get('max_num_documents')
         if max_num_documents is None:
             max_num_documents = 100000000
@@ -483,8 +501,10 @@ class SearchData:
                                         doc_based=doc_based,
                                         docid_filter=docid_filter)
 
-            if not no_cache:
-                cache_filename = cls.get_cached_filename(input_file, max_doc_size=max_doc_length, stride=stride,
+            if use_cache:
+                cache_filename = cls.get_cached_filename(input_file,
+                                                         max_doc_size=max_doc_length, stride=stride,
+                                                         aligned=aligned_on_sentences,
                                                          title_handling=title_handling, tiler=tiler)
                 cached_passages = cls.read_cache_file_if_needed(
                     cache_filename,
@@ -565,15 +585,15 @@ class SearchData:
             if verbose:
                 read_time = tm.mark_and_return_time()
                 print(f"Processed in {read_time}")
-            if not no_cache:
+            if use_cache:
                 cls.write_cache_file(cache_filename, tpassages, use_cache)
             passages.extend(tpassages)
             max_num_documents -= docs_read
 
         if verbose:
             cls.compute_statistics(passages, tiler=tiler)
-            read_time = tm.mark_and_return_time()
-            print(f"Statistics computed in {read_time}")
+            # read_time = tm.mark_and_return_time()
+            # print(f"Statistics computed in {read_time}")
         if return_unmapped_ids:
             return passages, unmapped_ids
         else:
@@ -616,18 +636,25 @@ class SearchData:
     @classmethod
     def _read_data(self, filename, max_num_docs=-1) -> List[Dict[str, str]]:
         data = None
-        with SearchData._open_file(filename) as in_file:
-            if SearchData.is_of_type(filename, extensions=[".tsv"]):
-                csv_reader = csv.DictReader(in_file, delimiter="\t")
-                # next(csv_reader)
-                data = [doc for doc in csv_reader]
-            elif SearchData.is_of_type(filename, ['.json', '.jsonl']):
-                if filename.find('.jsonl') >= 0:
-                    data = [json.loads(line) for line in tqdm(in_file, desc=f"Reading {filename}:")]
+
+        try:
+            with SearchData._open_file(filename) as in_file:
+                if SearchData.is_of_type(filename, extensions=[".tsv"]):
+                    csv_reader = csv.DictReader(in_file, delimiter="\t")
+                    data = [doc for doc in at_most(csv_reader, max_num_docs)]
+                if SearchData.is_of_type(filename, extensions=[".csv"]):
+                    csv_reader = csv.DictReader(in_file, delimiter=",")
+                    data = [doc for doc in at_most(csv_reader, max_num_docs)]
+                elif SearchData.is_of_type(filename, ['.json', '.jsonl']):
+                    if filename.find('.jsonl') >= 0:
+                        data = [orjson.loads(line) for line in tqdm(at_most(in_file, max_num_docs),
+                                                                  desc=f"Reading {filename}:")]
+                    else:
+                        data = orjson.loads("".join(in_file.readlines()))
                 else:
-                    data = json.load(in_file)
-            else:
-                raise RuntimeError(f"Unknown file extension: {os.path.splitext(filename)[1]}")
+                    raise RuntimeError(f"Unknown file extension: {os.path.splitext(filename)[1]}")
+        except Exception as e:
+            raise RuntimeError(f"Error reading {filename}: {e}")
         if max_num_docs > 0:
             data = data[:max_num_docs]
         return data
@@ -637,9 +664,9 @@ class SearchData:
                         docid_filter, doc_based, max_num_documents):
         tpassages = []
         if filename.find('.jsonl') >= 0:
-            data = [json.loads(line) for line in in_file]
+            data = [orjson.loads(line) for line in in_file]
         else:
-            data = json.load(in_file)
+            data = orjson.loads("".join(in_file.readlines()))
 
         read_docs = 0
         for di, doc in tqdm(enumerate(data),
@@ -701,73 +728,8 @@ class SearchData:
         return any(input_file.endswith(f"{ext[0]}{ext[1]}")
                    for ext in itertools.product(extensions, ['', ".bz2", ".gz", ".xz"]))
 
-    @staticmethod
-    def compute_statistics_old(corpus, tiler):
-        min_idx, max_idx, avg_idx, total_idx = range(0, 4)
-        token_based = [1000, 0, 0, 0]
-        char_based = [1000, 0, 0, 0]
-        char_vals = []
-        token_vals = []
-        tiles = 0
-        doc_ids = {}
-
-        def update_stat(input, vector):
-            vector[min_idx] = min(vector[min_idx], input)
-            vector[max_idx] = max(vector[max_idx], input)
-            vector[avg_idx] += input
-            vector[total_idx] += 1
-
-        def compute_stats(vector):
-            return [
-                vector[min_idx],
-                vector[max_idx],
-                1.0 * vector[avg_idx] / char_based[total_idx]
-            ]
-
-        tq = tqdm(desc="Computing statistics", total=len(corpus))
-        for entry in corpus:
-            tq.update(1)
-            txt = get_param(entry, 'text')
-            char_len = len(txt)
-            char_vals.append(char_len)
-            update_stat(char_len, char_based)
-            token_length = tiler.get_tokenized_length(text=txt, forced_tok=True)
-            update_stat(token_length, token_based)
-            token_vals.append(token_length)
-            tiles += 1
-            doc_ids[SearchData.get_orig_docid(get_param(entry, 'id'))] = 1
-        tq.close()
-
-        stats = {
-            'num_docs': len(doc_ids),
-            'num_tiles': tiles,
-            'char': compute_stats(char_based),
-            'token': compute_stats(token_based)
-        }
-
-        second_len = 20
-        print("=" * 60)
-        print('Statistics:')
-        print("=" * 60)
-        print(f"{'Number of documents:':20s}{stats['num_docs']:<10d}")
-        print(f"{'Number of tiles:':20s}{stats['num_tiles']:<10d}")
-        print(f"{'#tiles per document:':20s}{stats['num_tiles'] / stats['num_docs']:<10.2f}")
-        print(f"{'':20s}{'Character-based:':<{second_len}s}{'Token-based:':<{second_len}s}")
-        print(
-            f"{'  Minimum length:':20s}{stats['char'][min_idx]:<{second_len}d}{stats['token'][min_idx]:<{second_len}d}")
-        print(
-            f"{'  Maximum length:':20s}{stats['char'][max_idx]:<{second_len}d}{stats['token'][max_idx]:<{second_len}d}")
-        print(
-            f"{'  Average length:':20s}{stats['char'][avg_idx]:<{second_len}.1f}{stats['token'][avg_idx]:<{second_len}.1f}")
-        print("=" * 60)
-        from docuverse.utils.text_histogram import histogram
-        print("Char histogram:\n")
-        histogram(char_vals)
-        print("Token histogram:\n")
-        histogram(token_vals)
-
-    @staticmethod
-    def compute_statistics(corpus, tiler=None):
+    @classmethod
+    def compute_statistics(cls, corpus, tiler=None):
         min_idx, max_idx, avg_idx, total_idx = range(0, 4)
         token_based = [1000, 0, 0, 0]
         char_based = [1000, 0, 0, 0]
@@ -799,7 +761,7 @@ class SearchData:
             if 'tlen' in entry:
                 token_length = entry['tlen']
             else:
-                tiler.get_tokenized_length(text=txt, forced_tok=True)
+                token_length = tiler.get_tokenized_length(text=txt, forced_tok=True)
             update_stat(token_length, token_based)
             token_vals.append(token_length)
             tiles += 1
