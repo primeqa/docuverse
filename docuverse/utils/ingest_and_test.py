@@ -21,15 +21,32 @@ if __name__ == '__main__':
         corpus = engine.read_data(config.input_passages)
         engine.ingest(corpus, update=config.update)
 
+    output = None
     if config.retrieve:
         queries = engine.read_questions(config.input_queries)
         output = engine.search(queries)
 
-        with open(config.output_file, "w") as outfile:
-            outp = [r.as_list() for r in output]
-            outfile.write(json.dumps(outp, indent=2))
+        engine.write_output(output)
+    else:
+        output = None
+        queries = None
 
-        if config.evaluate and config.eval_config is not None:
-            scorer = EvaluationEngine(config.eval_config)
-            results = scorer.compute_score(queries, output, model_name=config.index_name)
-            print(f"Results:\n{results}")
+        # with open(config.output_file, "w") as outfile:
+        #     outp = [r.as_list() for r in output]
+        #     outfile.write(json.dumps(outp, indent=2))
+
+        # if config.evaluate and config.eval_config is not None:
+        #     scorer = EvaluationEngine(config.eval_config)
+        #     results = scorer.compute_score(queries, output, model_name=config.index_name)
+        #     print(f"Results:\n{results}")
+    if config.evaluate and config.eval_config is not None:
+        scorer = EvaluationEngine(config.eval_config)
+        if queries is None:
+            queries = engine.read_questions(config.input_queries)
+
+        if output is None:
+            output = engine.read_output(config.output_file)
+            # with open(config.output_file, "r") as inp:
+            #     output = json.load(inp)
+        results = scorer.compute_score(queries, output, model_name=config.index_name)
+        print(f"Results:\n{results}")

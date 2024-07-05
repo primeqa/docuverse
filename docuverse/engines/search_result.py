@@ -1,6 +1,9 @@
 import json
 from typing import List, Dict, Union
 
+from docuverse.engines.search_queries import SearchQueries
+
+
 class SearchResult:
     """
     Represents the list of relevant text units (documents or paraphaphs) returned from a seqrch query.
@@ -107,6 +110,9 @@ class SearchResult:
         elif isinstance(data, list):
             if len(data) == 0:
                 return []
+            elif isinstance(data[0], dict):
+                for r in data:
+                    self.retrieved_passages.append(SearchResult.SearchDatum(r))
             elif data[0].__class__ == SearchResult.SearchDatum:
                 for item in data:
                     self.retrieved_passages.append(item)

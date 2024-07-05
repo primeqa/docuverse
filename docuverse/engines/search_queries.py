@@ -1,5 +1,6 @@
 import os
 import re
+import json
 
 from docuverse.engines import SearchData
 from docuverse.engines.data_template import default_query_template
@@ -24,6 +25,9 @@ class SearchQueries(SearchData):
         def __str__(self):
             return f"{type(self)}({str(self.as_list())})"
 
+        def get(self, key, default=None):
+            return self.__dict__.get(key, default)
+
     def __init__(self, preprocessor, filenames, **data):
         super().__init__(filenames, **data)
         self.queries = preprocessor.get_queries()
@@ -33,6 +37,8 @@ class SearchQueries(SearchData):
 
     def __getitem__(self, i: int):
         return self.queries[i]
+
+    _ms = re.compile("'\s+'")
 
     @staticmethod
     def read(query_file, template=default_query_template, **kwargs):
@@ -100,6 +106,21 @@ class SearchQueries(SearchData):
                                'id': get_param(row, query_template.id_header, str(it)),
                                'relevant': rels
                                }
+                        for extra in query_template.extra_fields:
+                            if extra in row:
+                                val = row[extra]
+                                if val.find('[') >= 0 > val.find("None"):
+                                    # Assume it's some sort of json field
+                                    if val.find("'") >= 0:
+                                        if val.find("' '") >= 0:
+                                            val = re.sub(cls._ms, "','", val)
+                                        val = val.replace("'", '"')
+                                    try:
+                                        print(f"Loading {it}: {val}")
+                                        val = json.loads(val)
+                                        itm[extra] = val
+                                    except Exception as e:
+                                        print(f"Cannot parse field {row[extra]}: {e}")
                         answers = get_param(row, query_template.answers_header, "")
                         if isinstance(answers, str):
                             if "::" in answers:

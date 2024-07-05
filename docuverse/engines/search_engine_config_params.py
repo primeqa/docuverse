@@ -6,6 +6,7 @@ from typing import Optional, List, Literal
 import yaml
 from optimum.utils.runs import RunConfig, Run
 
+from docuverse.engines.retrieval.search_filter import SearchFilter
 from docuverse.utils import get_param
 from dataclasses import dataclass, field
 from transformers import HfArgumentParser
@@ -175,6 +176,13 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    filter_on: Optional[List[SearchFilter]] | None = field(
+        default=None,
+        metadata={
+            "help": "Specifies a map from question attributes to document attributes for filtering."
+        }
+    )
+
     server: Optional[str] | None = field(
         default=None,
         metadata={
@@ -287,6 +295,16 @@ class RetrievalArguments(GenericArguments):
 
             if self.data_header_format is not None:
                 self.data_template = create_template(self.data_header_format)
+        if self.filter_on is not None:
+            res = []
+            for name, _filter in self.filter_on.items():
+                f = SearchFilter(name=name, **_filter)
+                if f.query_field not in self.query_template.extra_fields:
+                    self.query_template.extra_fields.append(f.query_field)
+                if f.document_field not in self.data_template.extra_fields:
+                    self.data_template.extra_fields.append(f.document_field)
+                res.append(f)
+            self.filter_on = res
 
 
 @dataclass

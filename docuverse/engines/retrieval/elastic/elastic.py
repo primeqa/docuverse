@@ -20,7 +20,7 @@ import os
 from dotenv import load_dotenv
 
 
-def get_config_dir(config_path: str|None = None) -> str:
+def get_config_dir(config_path: str | None = None) -> str:
     if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
         config_dir = os.environ['DOCUVERSE_CONFIG_PATH']
     elif config_path is None or not os.path.exists(config_path):
@@ -80,6 +80,7 @@ class ElasticEngine(RetrievalEngine):
             self.all_keys_to_index = kwargs['all_keys_to_index']
         else:
             self.all_keys_to_index = self.default_all_keys_to_index
+        self.filters = self.config.filter_on
 
     def _init_connection(self):
         self._init_connection_info(self.config.get('server'))
@@ -117,6 +118,10 @@ class ElasticEngine(RetrievalEngine):
             setattr(self, param_name, get_param(config_params, param_name))
 
         self.config = config_params
+        props = self.coga_mappings[self.config.lang]['properties']
+        for extra in self.config.data_template.extra_fields:
+            if extra not in props:
+                props[extra] = {'type': 'keyword'}
 
     def init_client(self):
         if self.api_key is not None:
@@ -145,10 +150,15 @@ class ElasticEngine(RetrievalEngine):
         query, knn, rank = self.create_query(question['text'], **kwargs)
         if self.filters:
             for filter in self.filters:
-                print(filter)
-                query = self.add_filter(query, type=self.filters[filter]['type'],
-                                        field=self.filters[filter]['field'],
-                                        terms=self.filters[filter]['terms'])
+                # print(filter)
+                if query is None:
+                    query = {'bool': {}}
+                vals = get_param(question, filter.query_field, None)
+                if vals is not None:
+                    query = self.add_filter(query,
+                                            type=filter.type,
+                                            field=filter.document_field,
+                                            terms=vals)
 
         res = self.client.search(
             index=self.index_name,
@@ -274,8 +284,8 @@ class ElasticEngine(RetrievalEngine):
         """
         pass
 
-    def add_filter(self, query, type: str = "filter", field: str = "productId", terms: list = None):
-        query["bool"][type] = {"terms": {field: [term for term in terms]}}
+    def add_filter(self, query, type: str = "filter", field: str = "productId", terms: str = None):
+        query["bool"][type] = {"terms": {field: terms}}
         return query
 
     def ingest_documents(self, documents, **kwargs):

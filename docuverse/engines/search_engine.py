@@ -83,6 +83,14 @@ class SearchEngine:
             outp = [r.as_list() for r in output]
             outfile.write(json.dumps(outp, indent=2))
 
+    def read_output(self, filename):
+        import json
+
+        with open(filename, "r") as inp:
+            output = json.load(inp)
+        res = [SearchResult(o['question'], o['retrieved_passages']) for o in output]
+        return res
+
     def set_index(self, index=None):
         pass
 
