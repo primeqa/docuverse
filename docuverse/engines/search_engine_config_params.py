@@ -174,6 +174,13 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    filter_on: dict = field(
+        default=None,
+        metadata={
+            "help": "An internal structure "
+        }
+    )
+
     server: Optional[str] | None = field(
         default=None,
         metadata={
@@ -521,8 +528,8 @@ class DocUVerseConfig(GenericArguments):
             self.retriever_config: SearchEngineConfig | None = None
             self.run_config: RunConfig | None = None
 
-    def read_dict(self, kwargs):
-        self._process_params(self.params.parse_dict, args=kwargs)
+    def read_dict(self, dict):
+        self._process_params(self.params.parse_dict, dict)
 
     def read_args(self):
         self._process_params(self.params.parse_args_into_dataclasses)
@@ -569,7 +576,7 @@ class DocUVerseConfig(GenericArguments):
         elif isinstance(config_or_path, GenericArguments):
             return config_or_path
         elif isinstance(config_or_path, dict):
-            self.read_dict(dict)
+            self.read_dict(**config_or_path)
 
     def update(self, other_config):
         if isinstance(other_config, DocUVerseConfig):

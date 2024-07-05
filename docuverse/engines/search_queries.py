@@ -63,6 +63,9 @@ class SearchQueries(SearchData):
                            'id': get_param(row, query_template.id_header, str(it)),
                            'relevant': get_param(row, query_template.relevant_header).split(",")
                            }
+                    for key in query_template.extra_fields:
+                        if key in row:
+                            itm[key] = get_param(row, key)
                     answers = get_param(row, query_template.answers_header, "")
                     if isinstance(answers, str):
                         if "::" in answers:
