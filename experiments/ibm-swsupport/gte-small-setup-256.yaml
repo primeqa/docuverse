@@ -7,15 +7,15 @@ retriever:
     actions: "ire"
     max_doc_length: 256
     stride: 100
-    index_name: "ibmsw-gte-small-512-100-06122024"
-    server: "resconvai"
+    index_name: "ibmsw-gte-small-256-100-06122024"
+    server: "local"
     doc_based: True
     verbose: True
     title_handling: "all"
-    output_file: "output/ibmsw-gte-small-512-100-k40.json"
+    output_file: "output/ibmsw-gte-small-256-100-k40.json"
     data_format: "config/ibm_search_data.yml"
     bulk_batch: 128
-    num_preprocessor_threads: 10
+    num_preprocessor_threads: 1
     # max_num_documents: 1000
 reranker: null
 evaluate:

@@ -2,7 +2,6 @@ import os.path
 import unicodedata
 import re
 from typing import List, Any, Dict, Union
-import pyizumo
 from collections import deque
 
 from transformers import (
@@ -222,6 +221,11 @@ class TextTiler:
                         text = text[ind + len(title):]
 
                 if self.aligned_on_sentences:
+                    try:
+                        import pyizumo
+                    except:
+                        raise ImportError(f"You need to install the pyzimo package before using this method.")
+
                     if not self.nlp:
                         self.nlp = pyizumo.load(language_code, parsers=['token', 'sentence'])
                     parsed_text = self.nlp(text)
@@ -321,16 +325,26 @@ class TextTiler:
                             clen = max_length
                             if self._need_to_add_title(idx, title_handling):
                                 clen -= title_length+1
-                            end_ch = min(init_pos+clen, max_len)
-                            while text[end_ch-1].isspace():
-                                end_ch -= 1
-                            texts.append(get_expanded_text(text[init_pos:end_ch], title,
+                            end_pos = min(init_pos+clen, max_len)
+                            while not text[end_pos].isspace() and end_pos>=init_pos:
+                                end_pos -= 1
+                            texts.append(get_expanded_text(text[init_pos:end_pos], title,
                                                            pos, title_handling, title_in_text))
                             positions.append([init_pos, end_pos])
                             added_titles.append(self._need_to_add_title(idx, title_handling, title_in_text))
-                            init_pos = end_ch - stride
-                            while text[init_pos].isspace():
+                            init_pos = end_pos - stride
+                            init_pos1 = init_pos
+                            while not text[init_pos].isspace() and init_pos<end_pos:
                                 init_pos += 1
+                            # If there are only non-space chars till the end of the current chunk, then break forcesully
+                            # in the middle of text.
+                            if init_pos<end_pos:
+                                init_pos += 1
+                            else:
+                                init_pos = init_pos1
+                            idx += 1
+                            if idx > 100:
+                                raise RuntimeError(f"Data too big: {idx} fragments.")
 
                 return texts, positions, added_titles
 

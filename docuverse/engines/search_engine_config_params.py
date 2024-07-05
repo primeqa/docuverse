@@ -16,6 +16,7 @@ from docuverse.engines.data_template import (
     read_doc_query_format
 )
 
+
 class GenericArguments:
     def get(self, key: str, default=None):
         return self.__dict__[key] if key in self.__dict__ else default
@@ -174,13 +175,6 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
-    filter_on: dict = field(
-        default=None,
-        metadata={
-            "help": "An internal structure "
-        }
-    )
-
     server: Optional[str] | None = field(
         default=None,
         metadata={
@@ -231,7 +225,7 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
-    data_format: Optional[str]|None = field(
+    data_format: Optional[str] | None = field(
         default=None,
         metadata={
             "help": "Defines the configuration file associated with the data and query format of the documents/queries "
@@ -293,7 +287,6 @@ class RetrievalArguments(GenericArguments):
 
             if self.data_header_format is not None:
                 self.data_template = create_template(self.data_header_format)
-
 
 
 @dataclass
@@ -511,7 +504,7 @@ class DocUVerseConfig(GenericArguments):
 
         """
 
-    def __init__(self, config: dict|str = None):
+    def __init__(self, config: dict | str = None):
         self.evaluate = None
         self.output_file = None
         self.input_queries = None
@@ -520,7 +513,7 @@ class DocUVerseConfig(GenericArguments):
         self.update = None
         self.ingest = None
         self.params = HfArgumentParser((RetrievalArguments, RerankerArguments, EvaluationArguments, EngineArguments))
-        if isinstance(config, str|dict):
+        if isinstance(config, str | dict):
             self.read_configs(config)
         else:
             self.reranker_config: RerankerConfig | None = None
@@ -528,8 +521,8 @@ class DocUVerseConfig(GenericArguments):
             self.retriever_config: SearchEngineConfig | None = None
             self.run_config: RunConfig | None = None
 
-    def read_dict(self, dict):
-        self._process_params(self.params.parse_dict, dict)
+    def read_dict(self, kwargs):
+        self._process_params(self.params.parse_dict, kwargs)
 
     def read_args(self):
         self._process_params(self.params.parse_args_into_dataclasses)
@@ -547,36 +540,31 @@ class DocUVerseConfig(GenericArguments):
             for key, value in _dict.__dict__.items():
                 self.__setattr__(key, value)
 
-
     def read_configs(self, config_or_path: str) -> GenericArguments:
         if isinstance(config_or_path, str):
             if os.path.exists(config_or_path):
                 with open(config_or_path) as stream:
                     try:
                         vals = yaml.safe_load(stream=stream)
-                        if get_param(vals, "retrieval|retriever"): # By default, all parameters are assumed to be retriever params
-                            vals1 = {}
-                            for k, v in vals.items():
-                                if v and v!="None":
-                                    vals1.update(v)
-                            vals = vals1
-                            # self.read_dict({**get_param(vals, "retrieval|retriever"),
-                            #                 **get_param(vals, 'reranker|reranking'),
-                            #                 **get_param(vals, 'evaluate|evaluation')
-                            #                 })
-                            # vals['retrieval'] = vals
-                            # vals['reranker'] = None
-
-                        self.read_dict(vals)
+                        self._flatten_and_read_dict(vals)
                     except yaml.YAMLError as exc:
                         raise exc
             else:
                 print(f"The configuration file '{config_or_path}' does not exist.")
                 raise FileNotFoundError(f"The configuration file '{config_or_path}' does not exist.")
+        elif isinstance(config_or_path, dict):
+            self._flatten_and_read_dict(config_or_path)
         elif isinstance(config_or_path, GenericArguments):
             return config_or_path
-        elif isinstance(config_or_path, dict):
-            self.read_dict(**config_or_path)
+
+    def _flatten_and_read_dict(self, vals):
+        if get_param(vals, "retrieval|retriever"):  # By default, all parameters are assumed to be retriever params
+            vals1 = {}
+            for k, v in vals.items():
+                if v and v != "None":
+                    vals1.update(v)
+            vals = vals1
+        self.read_dict(vals)
 
     def update(self, other_config):
         if isinstance(other_config, DocUVerseConfig):
@@ -598,7 +586,6 @@ class DocUVerseConfig(GenericArguments):
     default_eval_config = EvaluationArguments()
     default_run_config = EngineArguments()
 
-
     @staticmethod
     def get_stdargs_config():
         config = DocUVerseConfig()
@@ -606,8 +593,10 @@ class DocUVerseConfig(GenericArguments):
         if get_param(config.run_config, 'config'):
             config1 = DocUVerseConfig(config.run_config.config)
             # config1.update(config)
-            DocUVerseConfig._update(config1.retriever_config, config.retriever_config, DocUVerseConfig.default_retriever_config)
-            DocUVerseConfig._update(config1.reranker_config, config.reranker_config, DocUVerseConfig.default_reranker_config)
+            DocUVerseConfig._update(config1.retriever_config, config.retriever_config,
+                                    DocUVerseConfig.default_retriever_config)
+            DocUVerseConfig._update(config1.reranker_config, config.reranker_config,
+                                    DocUVerseConfig.default_reranker_config)
             DocUVerseConfig._update(config1.eval_config, config.eval_config, DocUVerseConfig.default_eval_config)
             DocUVerseConfig._update(config1.run_config, config.run_config, DocUVerseConfig.default_run_config)
             config = config1

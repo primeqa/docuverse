@@ -1,5 +1,4 @@
-import json
-import csv
+import os
 import re
 
 from docuverse.engines import SearchData
@@ -16,10 +15,14 @@ class SearchQueries(SearchData):
             return getattr(self, key, default)
 
         def __setattr__(self, key, value):
-            setattr(self, key, value)
+            # setattr(self, key, value)
+            self.__dict__[key] = value
 
         def as_list(self):
             return self.__dict__
+
+        def __str__(self):
+            return f"{type(self)}({str(self.as_list())})"
 
     def __init__(self, preprocessor, filenames, **data):
         super().__init__(filenames, **data)
@@ -41,7 +44,13 @@ class SearchQueries(SearchData):
                            url=None,
                            query_template=default_query_template,
                            **kwargs):
-        tpassages = []
+        def get_filename(in_file, local_file):
+            qfile = local_file
+            if not os.path.exists(qfile):
+                qfile = os.path.join(os.path.dirname(in_file), qfile)
+            return qfile
+
+        questions = []
         if isinstance(in_files, str):
             in_files = [in_files]
         elif not isinstance(in_files, list):
@@ -50,31 +59,56 @@ class SearchQueries(SearchData):
         for in_file in in_files:
             with open(in_file, "r", encoding="utf-8") as file_stream:
                 delim = "," if ".csv" in in_file else "\t"
-                csv_reader = \
-                    csv.DictReader(file_stream, fieldnames=fields, delimiter=delim) \
-                        if fields is not None \
-                        else csv.DictReader(file_stream, delimiter=delim)
+                # csv_reader = \
+                #     csv.DictReader(file_stream, fieldnames=fields, delimiter=delim) \
+                #         if fields is not None \
+                #         else csv.DictReader(file_stream, delimiter=delim)
                 # next(csv_reader)
-                for it, row in enumerate(csv_reader):
-                    question = get_param(row, query_template.text_header)
-                    if url is not None:
-                        question = (re.sub(url, lang, 'URL', question), remv_stopwords)
-                    itm = {'text': question,
-                           'id': get_param(row, query_template.id_header, str(it)),
-                           'relevant': get_param(row, query_template.relevant_header).split(",")
-                           }
-                    for key in query_template.extra_fields:
-                        if key in row:
-                            itm[key] = get_param(row, key)
-                    answers = get_param(row, query_template.answers_header, "")
-                    if isinstance(answers, str):
-                        if "::" in answers:
-                            itm['answers'] = answers.split("::")
+                question_data = cls._read_data(in_file)
+                if 'question_file' in question_data and 'goldstandard_file' in question_data:
+                    qfile = get_filename(in_file, question_data['question_file'])
+                    tquestions = cls.read_question_data(qfile, fields=fields,
+                                                        lang=lang,
+                                                        url=url,
+                                                        query_template=query_template,
+                                                        **kwargs)
+                    tfile = get_filename(in_file, question_data['goldstandard_file'])
+                    goldstandard = cls._read_data(tfile)
+                    gs_map = {}
+                    for gs in goldstandard:
+                        qid = get_param(gs, query_template.truth_id)
+                        doc_id = get_param(gs, query_template.truth_label)
+                        if qid in gs_map:
+                            gs_map[qid].append(doc_id)
                         else:
-                            itm['answers'] = [answers]
-                    elif isinstance(answers, list):
-                        itm['answers'] = answers
-                    itm['passages'] = answers
+                            gs_map[qid] = [doc_id]
+                    test_questions = []
+                    for q in tquestions:
+                        if q.id in gs_map:
+                            q.relevant = get_param(gs_map, q.id, '')
+                            test_questions.append(q)
+                    questions.extend(test_questions)
+                else:
+                    for it, row in enumerate(question_data):
+                        question = get_param(row, query_template.text_header)
+                        if url is not None:
+                            question = (re.sub(url, lang, 'URL', question), remv_stopwords)
+                        rels = get_param(row, query_template.relevant_header, "")
+                        if isinstance(rels, str):
+                            rels = rels.split(",")
+                        itm = {'text': question,
+                               'id': get_param(row, query_template.id_header, str(it)),
+                               'relevant': rels
+                               }
+                        answers = get_param(row, query_template.answers_header, "")
+                        if isinstance(answers, str):
+                            if "::" in answers:
+                                itm['answers'] = answers.split("::")
+                            else:
+                                itm['answers'] = [answers]
+                        elif isinstance(answers, list):
+                            itm['answers'] = answers
+                        itm['passages'] = answers
 
-                    tpassages.append(SearchQueries.Query(**itm))
-        return tpassages
+                        questions.append(SearchQueries.Query(**itm))
+        return questions
