@@ -71,6 +71,20 @@ class DataTemplate:
         }
     )
 
+    truth_id: str|None = field(
+        default="query-id",
+        metadata={
+            "help": "The truth ID within the pairs query-document structure"
+        }
+    )
+
+    truth_label: str|None = field(
+        default="corpus-id",
+        metadata={
+            "help": "The documentl label within the pairs query-document structure"
+        }
+    )
+
     def __post_init__(self):
         if self.keep_fields is not None:
             self.extra_fields = self.keep_fields.split("|")

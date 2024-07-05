@@ -47,7 +47,7 @@ class SearchEngine:
     #         return config_or_path
 
     def create(self, config_or_path, **kwargs):
-        if isinstance(config_or_path, str|dict):
+        if isinstance(config_or_path, str | dict):
             self.config = DocUVerseConfig(config_or_path)
         elif isinstance(config_or_path, DocUVerseConfig):
             self.config = config_or_path
@@ -77,6 +77,23 @@ class SearchEngine:
         if self.reranker is not None:
             answers = [self.reranker.rerank(answer) for answer in tqdm(answers, desc="Reranking queries: ")]
         return answers
+
+    def write_output(self, output, overwrite=False):
+        """
+        Writes the output of the system, saving copiees.
+        """
+        import json
+        if not overwrite and os.path.exists(self.config.output_file):
+            # Make a copy before writing over
+            import shutil
+            i = 1
+            template = self.config.output_file.replace(".json", "")
+            while os.path.exists(f"{template}.bak{i}.json"):
+                i += 1
+            shutil.copy2(self.config.output_file, f"{template}.bak{i}.json")
+        with open(self.config.output_file, "w") as outfile:
+            outp = [r.as_list() for r in output]
+            outfile.write(json.dumps(outp, indent=2))
 
     def set_index(self, index=None):
         pass
