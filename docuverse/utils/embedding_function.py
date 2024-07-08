@@ -52,6 +52,7 @@ class DenseEmbeddingFunction:
 
     def stop_pool(self):
         self.model.stop_multi_process_pool(self.emb_pool)
+        self.emb_pool = None
 
     def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:

@@ -116,7 +116,7 @@ class SearchQueries(SearchData):
                                             val = re.sub(cls._ms, "','", val)
                                         val = val.replace("'", '"')
                                     try:
-                                        print(f"Loading {it}: {val}")
+                                        # print(f"Loading {it}: {val}")
                                         val = json.loads(val)
                                         itm[extra] = val
                                     except Exception as e:

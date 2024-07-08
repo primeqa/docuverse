@@ -119,9 +119,10 @@ class ElasticEngine(RetrievalEngine):
 
         self.config = config_params
         props = self.coga_mappings[self.config.lang]['properties']
-        for extra in self.config.data_template.extra_fields:
-            if extra not in props:
-                props[extra] = {'type': 'keyword'}
+        if self.config.data_template.extra_fields is not None:
+            for extra in self.config.data_template.extra_fields:
+                if extra not in props:
+                    props[extra] = {'type': 'keyword'}
 
     def init_client(self):
         if self.api_key is not None:

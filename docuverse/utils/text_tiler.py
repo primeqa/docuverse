@@ -18,11 +18,11 @@ class TextTiler:
     or not.
     """
     url_re = r'https?://(?:www\.)?(?:[-a-zA-Z0-9@:%._\+~#=]{1,256})\.(:?[a-zA-Z0-9()]{1,6})(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)*\b'
-    COUNT_TYPE_TOKEN=0
-    COUNT_TYPE_CHAR=1
+    COUNT_TYPE_TOKEN = 0
+    COUNT_TYPE_CHAR = 1
 
     def __init__(self, max_doc_size: int, stride: int,
-                 tokenizer: Union[str,PreTrainedTokenizer],
+                 tokenizer: Union[str, PreTrainedTokenizer],
                  aligned_on_sentences: bool = True,
                  count_type='token'):
         """
@@ -50,12 +50,12 @@ class TextTiler:
         else:
             if isinstance(tokenizer, str):
                 self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
-            elif isinstance(tokenizer, PreTrainedTokenizer|PreTrainedTokenizerFast):
+            elif isinstance(tokenizer, PreTrainedTokenizer | PreTrainedTokenizerFast):
                 self.tokenizer = tokenizer
             else:
                 raise RuntimeError("The tokenizer argument must be either a string or a PreTrainedTokenizer class.")
             # Force the tokenizer to not complain.
-            self.tokenizer.deprecation_warnings['sequence-length-is-longer-than-the-specified-maximum']=True
+            self.tokenizer.deprecation_warnings['sequence-length-is-longer-than-the-specified-maximum'] = True
             self.tokenizer_num_special_tokens = self.tokenizer.num_special_tokens_to_add()
             self.max_doc_size -= self.tokenizer_num_special_tokens
         self.product_counts = {}
@@ -140,7 +140,7 @@ class TextTiler:
         return pieces
 
     @staticmethod
-    def cleanup_url(text:str, normalize_text=True):
+    def cleanup_url(text: str, normalize_text=True):
         # The normalization below deals with some issue in the re library - it would get stuck
         # if the URL has some strange chars, like `\xa0`.
         if normalize_text:
@@ -160,7 +160,7 @@ class TextTiler:
         else:
             if self.tokenizer is not None:
                 toks = self.tokenizer(text)
-                return len(toks['input_ids'])-(self.tokenizer_num_special_tokens if not exclude_special_tokens else 0)
+                return len(toks['input_ids']) - (self.tokenizer_num_special_tokens if not exclude_special_tokens else 0)
             else:
                 return -1
 
@@ -189,8 +189,9 @@ class TextTiler:
         """
         added_titles = []
         title_length = self.get_tokenized_length(title)
-        def get_expanded_text(text:str, title:str, pos:int=0,
-                              title_handling:str="all", title_in_text:bool=False):
+
+        def get_expanded_text(text: str, title: str, pos: int = 0,
+                              title_handling: str = "all", title_in_text: bool = False):
             if self._need_to_add_title(pos, title_handling, title_in_text):
                 return f"{title}\n{text}"
             else:
@@ -238,17 +239,17 @@ class TextTiler:
                     sents = list(parsed_text.sentences)
                     for i in range(len(sents)):
                         _begins.append(sents[i].begin)
-                        _ends.append(sents[i+1].begin if i<len(sents)-1 else len(text))
+                        _ends.append(sents[i + 1].begin if i < len(sents) - 1 else len(text))
 
                     num_sents = len(list(parsed_text.sentences))
                     for i, sent in enumerate(parsed_text.sentences):
                         stext = sent.text
                         begin = _begins[i]
-                        end = _begins[i+1] if i<num_sents-1 else len(text)
+                        end = _begins[i + 1] if i < num_sents - 1 else len(text)
                         slen = self.get_tokenized_length(text[begin:end])
                         if slen > max_length:
                             tokens = list(sent.tokens)
-                            too_long = [[tokens[k].begin, tokens[k+1].begin] for k in range(len(tokens)-1)]
+                            too_long = [[tokens[k].begin, tokens[k + 1].begin] for k in range(len(tokens) - 1)]
                             too_long.append([tokens[-1].begin, end])
                             q = deque()
                             q.append(too_long)
@@ -261,8 +262,8 @@ class TextTiler:
                                     ends.append(head[-1][1])
                                 else:
                                     if len(head) > 1:
-                                        mid = int(len(head)/2)
-                                        q.extend([head[mid:],head[:mid]])
+                                        mid = int(len(head) / 2)
+                                        q.extend([head[mid:], head[:mid]])
                                     else:
                                         pass
                         else:
@@ -271,7 +272,7 @@ class TextTiler:
                             ends.append(end)
                     first_length = 0
                     if title_handling in ['all', 'first']:
-                        first_length = max_length-title_length if not title_in_text else max_length
+                        first_length = max_length - title_length if not title_in_text else max_length
                     elif title_handling in ['none']:
                         first_length = max_length
 
@@ -283,8 +284,8 @@ class TextTiler:
                     positions = [[begins[p[0]], ends[p[1]]] for p in intervals]
                     texts = [text[p[0]:p[1]] for p in positions]
                     added_titles.extend([True if title_handling == 'all' else False for _ in positions])
-                    added_titles[0] = False if title_in_text or title_handling=='none' else True
-                else: # Not aligned on sentences
+                    added_titles[0] = False if title_in_text or title_handling == 'none' else True
+                else:  # Not aligned on sentences
                     if self.count_type == self.COUNT_TYPE_TOKEN:
                         if max_length is None:
                             max_length = self.max_doc_size
@@ -324,9 +325,9 @@ class TextTiler:
                         while init_pos < max_length:
                             clen = max_length
                             if self._need_to_add_title(idx, title_handling):
-                                clen -= title_length+1
-                            end_pos = min(init_pos+clen, max_len)
-                            while not text[end_pos].isspace() and end_pos>=init_pos:
+                                clen -= title_length + 1
+                            end_pos = min(init_pos + clen, max_len)
+                            while not text[end_pos].isspace() and end_pos >= init_pos:
                                 end_pos -= 1
                             texts.append(get_expanded_text(text[init_pos:end_pos], title,
                                                            pos, title_handling, title_in_text))
@@ -334,11 +335,11 @@ class TextTiler:
                             added_titles.append(self._need_to_add_title(idx, title_handling, title_in_text))
                             init_pos = end_pos - stride
                             init_pos1 = init_pos
-                            while not text[init_pos].isspace() and init_pos<end_pos:
+                            while not text[init_pos].isspace() and init_pos < end_pos:
                                 init_pos += 1
                             # If there are only non-space chars till the end of the current chunk, then break forcesully
                             # in the middle of text.
-                            if init_pos<end_pos:
+                            if init_pos < end_pos:
                                 init_pos += 1
                             else:
                                 init_pos = init_pos1
@@ -353,8 +354,8 @@ class TextTiler:
     @staticmethod
     def compute_intervals(segment_lengths: List[int],
                           max_length: int,
-                          first_length:int,
-                          stride:int) -> List[List[int | Any]]:
+                          first_length: int,
+                          stride: int) -> List[List[int | Any]]:
         """
         Compute Intervals Method
         This method computes intervals from a list of segment lengths based on a maximum length and a stride. It returns a list of interval ranges.
@@ -407,8 +408,8 @@ class TextTiler:
                     max_length_tmp = this_max_length - segment_lengths[current_index]
                     while overlap_index > 0:
                         overlap += segment_lengths[overlap_index]
-                        if overlap_index>prev_start_index+1 and \
-                                overlap < stride and\
+                        if overlap_index > prev_start_index + 1 and \
+                                overlap < stride and \
                                 overlap + segment_lengths[overlap_index - 1] <= max_length_tmp:
                             overlap_index -= 1
                         else:
@@ -420,7 +421,7 @@ class TextTiler:
             else:
                 current_total_length += segment_lengths[current_index]
                 current_index += 1
-                number_of_tries = 0 # reset the failure count
+                number_of_tries = 0  # reset the failure count
         segments.append([prev_start_index, len(segment_lengths) - 1])
 
         return segments
@@ -438,8 +439,8 @@ class TextTiler:
             print(f" {k}\t{self.product_counts[k]}")
 
     @staticmethod
-    def _need_to_add_title(idx:int, title_handling:str, title_in_text:bool=False):
-        if idx==0:
+    def _need_to_add_title(idx: int, title_handling: str, title_in_text: bool = False):
+        if idx == 0:
             return not title_in_text and title_handling in ['first', 'all']
         else:
             return title_handling == 'all'
