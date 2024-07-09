@@ -6,6 +6,7 @@ from typing import Optional, List, Literal
 import yaml
 from optimum.utils.runs import RunConfig, Run
 
+from docuverse.utils import read_config_file
 from docuverse.engines.retrieval.search_filter import SearchFilter
 from docuverse.utils import get_param
 from dataclasses import dataclass, field
@@ -332,6 +333,12 @@ class EngineArguments(GenericArguments):
         }
 
     )
+    date: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Not used."
+        }
+    )
     action_flags = {
         "i": "ingest",
         "u": "update",
@@ -550,7 +557,9 @@ class DocUVerseConfig(GenericArguments):
 
     def _process_params(self, parse_method, *args, **kwargs):
         # self.config = kwargs
-        (self.retriever_config, self.reranker_config, self.eval_config, self.run_config) = parse_method(*args, **kwargs)
+        self.retriever_config, self.reranker_config, self.eval_config, self.run_config = \
+            parse_method(*args, **kwargs)
+
         self.ingest_params()
 
     def ingest_params(self):
@@ -561,12 +570,11 @@ class DocUVerseConfig(GenericArguments):
     def read_configs(self, config_or_path: str) -> GenericArguments:
         if isinstance(config_or_path, str):
             if os.path.exists(config_or_path):
-                with open(config_or_path) as stream:
-                    try:
-                        vals = yaml.safe_load(stream=stream)
-                        self._flatten_and_read_dict(vals)
-                    except yaml.YAMLError as exc:
-                        raise exc
+                try:
+                    vals = read_config_file(config_or_path)
+                    self._flatten_and_read_dict(vals)
+                except yaml.YAMLError as exc:
+                    raise exc
             else:
                 print(f"The configuration file '{config_or_path}' does not exist.")
                 raise FileNotFoundError(f"The configuration file '{config_or_path}' does not exist.")

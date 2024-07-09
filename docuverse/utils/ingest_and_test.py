@@ -11,7 +11,7 @@ from docuverse.utils.evaluator import EvaluationEngine
 if __name__ == '__main__':
     with open("logfile", "a") as cmdlog:
         cmdlog.write(f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')} - {os.getenv('USER')} - "
-                     f"{' '.join([__file__] + sys.argv)}\n")
+                     f"{' '.join(sys.argv)}\n")
 
     config = DocUVerseConfig.get_stdargs_config()
 #    config = DocUVerseConfig("experiments/clapnq/setup.yaml")
