@@ -333,12 +333,6 @@ class EngineArguments(GenericArguments):
         }
 
     )
-    date: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": "Not used."
-        }
-    )
     action_flags = {
         "i": "ingest",
         "u": "update",
