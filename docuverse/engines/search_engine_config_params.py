@@ -1,9 +1,7 @@
 import json
 import os
-import sys
 from typing import Optional, List, Literal
 
-import yaml
 from optimum.utils.runs import RunConfig, Run
 
 from docuverse.utils import read_config_file
@@ -569,7 +567,7 @@ class DocUVerseConfig(GenericArguments):
                 try:
                     vals = read_config_file(config_or_path)
                     self._flatten_and_read_dict(vals)
-                except yaml.YAMLError as exc:
+                except Exception as exc:
                     raise exc
             else:
                 print(f"The configuration file '{config_or_path}' does not exist.")

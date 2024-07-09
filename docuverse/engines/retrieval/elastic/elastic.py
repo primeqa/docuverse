@@ -2,8 +2,7 @@ import copy
 import json
 from typing import Union, Tuple, List
 
-import yaml
-
+from docuverse.utils import read_config_file
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines import SearchData, RetrievalEngine
 
@@ -35,10 +34,7 @@ class ElasticServers:
         config = os.path.join(get_config_dir(os.path.dirname(config)), "elastic_servers.json")
         self.servers = {}
         if os.path.exists(config):
-            if config.endswith(".json"):
-                self.servers = json.load(open(config))
-            elif config.endswith(".yaml"):
-                self.servers = yaml.safe_load(open(config))
+            self.servers = read_config_file(config)
 
     def get(self, name: str, default=None):
         return self.servers.get(name, None)

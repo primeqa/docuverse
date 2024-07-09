@@ -1,12 +1,10 @@
-from typing import List, Tuple
+from typing import List
 
-import yaml
 import os
 
 from tqdm import tqdm
 from copy import deepcopy
 
-import docuverse.utils
 from docuverse.engines import SearchData
 from docuverse.engines.search_engine_config_params import DocUVerseConfig
 from docuverse.engines.search_result import SearchResult
