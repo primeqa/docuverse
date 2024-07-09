@@ -547,18 +547,20 @@ class DocUVerseConfig(GenericArguments):
             self.run_config: RunConfig | None = None
 
     def read_dict(self, kwargs):
-        self._process_params(self.params.parse_dict, kwargs)
+        self._process_params(self.params.parse_dict, kwargs, allow_extra_keys=True)
 
     def read_args(self):
-        self._process_params(self.params.parse_args_into_dataclasses)
+        self._process_params(self.params.parse_args_into_dataclasses, return_remaining_strings=True)
 
     def read_json(self, json_file):
         self._process_params(self.params.parse_json_file, json_file)
 
     def _process_params(self, parse_method, *args, **kwargs):
         # self.config = kwargs
-        self.retriever_config, self.reranker_config, self.eval_config, self.run_config = \
-            parse_method(*args, **kwargs)
+        result = parse_method(*args, **kwargs)
+        (self.retriever_config, self.reranker_config, self.eval_config, self.run_config) = (
+            result[0], result[1], result[2], result[3]
+        )
 
         self.ingest_params()
 
