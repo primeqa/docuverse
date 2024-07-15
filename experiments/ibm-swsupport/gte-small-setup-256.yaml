@@ -8,7 +8,7 @@ retriever:
     max_doc_length: 256
     stride: 100
     index_name: "ibmsw-gte-small-256-100-06122024"
-    server: "local"
+    server: "resconvai"
     doc_based: True
     verbose: True
     title_handling: "all"

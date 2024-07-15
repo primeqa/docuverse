@@ -72,14 +72,14 @@ class DataTemplate:
     )
 
     truth_id: str|None = field(
-        default=None,
+        default="query-id",
         metadata={
             "help": "The truth id for the document (when the association id->doc_id is done separately."
         }
     )
 
     truth_label: str|None = field(
-        default=None,
+        default="corpus-id",
         metadata={
             "help": "The label for document containing the answer to the given question."
         }

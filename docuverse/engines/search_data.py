@@ -270,14 +270,14 @@ class SearchData:
         tok_dir_name = os.path.basename(tiler.tokenizer.name_or_path) if tiler is not None else "none"
         if tok_dir_name == "":
             tok_dir_name = os.path.basename(os.path.dirname(tiler.tokenizer.name_or_path))
-        cache_file_name = os.path.join(cache_dir, "_".join([f"{input_file.replace('/', '__')}",
-                                                            f"{max_doc_size}",
-                                                            f"{stride}",
-                                                            f"{aligned}" if aligned else "unaligned",
-                                                            f"{title_handling}",
-                                                            f"{tok_dir_name}"]),
-                                                            ".pickle.xz"
-                                                            #".jsonl.bz2"
+        extension = "pickle.xz"
+        cache_file_name = os.path.join(cache_dir,
+                                       "_".join([f"{input_file.replace('/', '__')}",
+                                                 f"{max_doc_size}",
+                                                 f"{stride}",
+                                                 f"{aligned}" if aligned else "unaligned",
+                                                 f"{title_handling}",
+                                                 f"{tok_dir_name}.{extension}"])
                                        )
         print(f"Cache filename is {cache_file_name}")
         return cache_file_name

@@ -797,7 +797,7 @@ def create_update_index(client, index_name, settings, mappings, do_update=False)
     else:
         if do_update:
             print("You are trying to update an index that does not exist "
-                  "- will ignore your command and create the index.")
+                  "- will ignore your command and _qu the index.")
     if not client.indices.exists(index=index_name):
         client.indices.create(index=index_name, mappings=mappings, settings=settings)
 

@@ -1,11 +1,11 @@
 import json
 import os
-import sys
 from typing import Optional, List, Literal
 
-import yaml
 from optimum.utils.runs import RunConfig, Run
 
+from docuverse.utils import read_config_file
+from docuverse.engines.retrieval.search_filter import SearchFilter
 from docuverse.utils import get_param
 from dataclasses import dataclass, field
 from transformers import HfArgumentParser
@@ -175,6 +175,13 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    filter_on: Optional[List[SearchFilter]] | None = field(
+        default=None,
+        metadata={
+            "help": "Specifies a map from question attributes to document attributes for filtering."
+        }
+    )
+
     server: Optional[str] | None = field(
         default=None,
         metadata={
@@ -287,6 +294,16 @@ class RetrievalArguments(GenericArguments):
 
             if self.data_header_format is not None:
                 self.data_template = create_template(self.data_header_format)
+        if self.filter_on is not None:
+            res = []
+            for name, _filter in self.filter_on.items():
+                f = SearchFilter(name=name, **_filter)
+                if f.query_field not in self.query_template.extra_fields:
+                    self.query_template.extra_fields.append(f.query_field)
+                if f.document_field not in self.data_template.extra_fields:
+                    self.data_template.extra_fields.append(f.document_field)
+                res.append(f)
+            self.filter_on = res
 
 
 @dataclass
@@ -522,17 +539,21 @@ class DocUVerseConfig(GenericArguments):
             self.run_config: RunConfig | None = None
 
     def read_dict(self, kwargs):
-        self._process_params(self.params.parse_dict, kwargs)
+        self._process_params(self.params.parse_dict, kwargs, allow_extra_keys=True)
 
     def read_args(self):
-        self._process_params(self.params.parse_args_into_dataclasses)
+        self._process_params(self.params.parse_args_into_dataclasses, return_remaining_strings=True)
 
     def read_json(self, json_file):
         self._process_params(self.params.parse_json_file, json_file)
 
     def _process_params(self, parse_method, *args, **kwargs):
         # self.config = kwargs
-        (self.retriever_config, self.reranker_config, self.eval_config, self.run_config) = parse_method(*args, **kwargs)
+        result = parse_method(*args, **kwargs)
+        (self.retriever_config, self.reranker_config, self.eval_config, self.run_config) = (
+            result[0], result[1], result[2], result[3]
+        )
+
         self.ingest_params()
 
     def ingest_params(self):
@@ -543,12 +564,11 @@ class DocUVerseConfig(GenericArguments):
     def read_configs(self, config_or_path: str) -> GenericArguments:
         if isinstance(config_or_path, str):
             if os.path.exists(config_or_path):
-                with open(config_or_path) as stream:
-                    try:
-                        vals = yaml.safe_load(stream=stream)
-                        self._flatten_and_read_dict(vals)
-                    except yaml.YAMLError as exc:
-                        raise exc
+                try:
+                    vals = read_config_file(config_or_path)
+                    self._flatten_and_read_dict(vals)
+                except Exception as exc:
+                    raise exc
             else:
                 print(f"The configuration file '{config_or_path}' does not exist.")
                 raise FileNotFoundError(f"The configuration file '{config_or_path}' does not exist.")

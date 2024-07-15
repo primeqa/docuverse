@@ -1,12 +1,10 @@
-from typing import List, Tuple
+from typing import List
 
-import yaml
 import os
 
 from tqdm import tqdm
 from copy import deepcopy
 
-import docuverse.utils
 from docuverse.engines import SearchData
 from docuverse.engines.search_engine_config_params import DocUVerseConfig
 from docuverse.engines.search_result import SearchResult
@@ -65,6 +63,31 @@ class SearchEngine:
         if self.reranker is not None:
             answers = [self.reranker.rerank(answer) for answer in tqdm(answers, desc="Reranking queries: ")]
         return answers
+
+    def write_output(self, output, overwrite=False):
+        """
+        Writes the output of the system, saving copiees.
+        """
+        import json
+        if not overwrite and os.path.exists(self.config.output_file):
+            # Make a copy before writing over
+            import shutil
+            i = 1
+            template = self.config.output_file.replace(".json", "")
+            while os.path.exists(f"{template}.bak{i}.json"):
+                i += 1
+            shutil.copy2(self.config.output_file, f"{template}.bak{i}.json")
+        with open(self.config.output_file, "w") as outfile:
+            outp = [r.as_list() for r in output]
+            outfile.write(json.dumps(outp, indent=2))
+
+    def read_output(self, filename):
+        import json
+
+        with open(filename, "r") as inp:
+            output = json.load(inp)
+        res = [SearchResult(o['question'], o['retrieved_passages']) for o in output]
+        return res
 
     def set_index(self, index=None):
         pass

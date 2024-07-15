@@ -2,8 +2,7 @@ import copy
 import json
 from typing import Union, Tuple, List
 
-import yaml
-
+from docuverse.utils import read_config_file
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines import SearchData, RetrievalEngine
 
@@ -20,7 +19,7 @@ import os
 from dotenv import load_dotenv
 
 
-def get_config_dir(config_path: str|None = None) -> str:
+def get_config_dir(config_path: str | None = None) -> str:
     if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
         config_dir = os.environ['DOCUVERSE_CONFIG_PATH']
     elif config_path is None or not os.path.exists(config_path):
@@ -35,10 +34,7 @@ class ElasticServers:
         config = os.path.join(get_config_dir(os.path.dirname(config)), "elastic_servers.json")
         self.servers = {}
         if os.path.exists(config):
-            if config.endswith(".json"):
-                self.servers = json.load(open(config))
-            elif config.endswith(".yaml"):
-                self.servers = yaml.safe_load(open(config))
+            self.servers = read_config_file(config)
 
     def get(self, name: str, default=None):
         return self.servers.get(name, None)
@@ -80,6 +76,7 @@ class ElasticEngine(RetrievalEngine):
             self.all_keys_to_index = kwargs['all_keys_to_index']
         else:
             self.all_keys_to_index = self.default_all_keys_to_index
+        self.filters = self.config.filter_on
 
     def _init_connection(self):
         self._init_connection_info(self.config.get('server'))
@@ -117,6 +114,11 @@ class ElasticEngine(RetrievalEngine):
             setattr(self, param_name, get_param(config_params, param_name))
 
         self.config = config_params
+        props = self.coga_mappings[self.config.lang]['properties']
+        if self.config.data_template.extra_fields is not None:
+            for extra in self.config.data_template.extra_fields:
+                if extra not in props:
+                    props[extra] = {'type': 'keyword'}
 
     def init_client(self):
         if self.api_key is not None:
@@ -145,10 +147,15 @@ class ElasticEngine(RetrievalEngine):
         query, knn, rank = self.create_query(question['text'], **kwargs)
         if self.filters:
             for filter in self.filters:
-                print(filter)
-                query = self.add_filter(query, type=self.filters[filter]['type'],
-                                        field=self.filters[filter]['field'],
-                                        terms=self.filters[filter]['terms'])
+                # print(filter)
+                if query is None:
+                    query = {'bool': {}}
+                vals = get_param(question, filter.query_field, None)
+                if vals is not None:
+                    query = self.add_filter(query,
+                                            type=filter.type,
+                                            field=filter.document_field,
+                                            terms=vals)
 
         res = self.client.search(
             index=self.index_name,
@@ -192,25 +199,44 @@ class ElasticEngine(RetrievalEngine):
         import sys
         while True:
             r = input(
-                f"Are you sure you want to recreate the index {index_name}? It might take a long time!! Say 'yes' or 'no':").strip()
+                f"Are you sure you want to recreate the index {index_name}? It might take a long time!!"
+                f" Say 'yes', 'no', or 'skip':").strip()
             if r == 'no':
                 print("OK - exiting. Run with '--actions r'")
                 sys.exit(0)
             elif r == 'yes':
-                break
+                return True
+            elif r == 'skip':
+                print("Skipping ingestion.")
+                return False
             else:
                 print(f"Please type 'yes' or 'no', not {r}!")
+        return True
 
     def has_index(self, index_name):
         return self.client.indices.exists(index=index_name)
 
-    def create_update_index(self, do_update=True):
+    def create_update_index(self, do_update:bool=True) -> bool:
+        """
+        Create or update the Elasticsearch index.
+
+        Parameters:
+        - do_update (bool): Specifies whether to perform an update operation (default=True).
+
+        Returns:
+        - bool: True if the operation is successful, False otherwise.
+
+        """
         if self.has_index(index_name=self.config.index_name):
             if do_update:
-                self.check_index_rebuild()
+                do_index = self.check_index_rebuild()
+                if not do_index:
+                    return False
                 self.client.options(ignore_status=[400, 404]).indices.delete(index=self.config.index_name)
+                return True
             else:
-                print(f"Using existent index {self.config.index_name}.")
+                print(f"This will overwrite your existent index {self.config.index_name} - use --actions 'u' instead.")
+                return self.check_index_rebuild()
         else:
             if do_update:
                 print("You are trying to update an index that does not exist "
@@ -219,6 +245,7 @@ class ElasticEngine(RetrievalEngine):
             self.client.indices.create(index=self.config.index_name,
                                        mappings=self.coga_mappings[self.config.lang],
                                        settings=self.settings[self.config.lang])
+        return True
 
     def ingest(self, corpus: SearchData, **kwargs):
         from tqdm import tqdm
@@ -233,7 +260,9 @@ class ElasticEngine(RetrievalEngine):
         #     keys_to_index.append(k)
         actions = []
         update = kwargs.get('update', False)
-        self.create_update_index(do_update=update)
+        still_create_index = self.create_update_index(do_update=update)
+        if not still_create_index:
+            return
         t = tqdm(total=num_passages, desc="Ingesting dense documents: ", smoothing=0.05)
         for k in range(0, num_passages, bulk_batch):
             actions = [
@@ -274,8 +303,8 @@ class ElasticEngine(RetrievalEngine):
         """
         pass
 
-    def add_filter(self, query, type: str = "filter", field: str = "productId", terms: list = None):
-        query["bool"][type] = {"terms": {field: [term for term in terms]}}
+    def add_filter(self, query, type: str = "filter", field: str = "productId", terms: str = None):
+        query["bool"][type] = {"terms": {field: terms}}
         return query
 
     def ingest_documents(self, documents, **kwargs):
