@@ -8,9 +8,9 @@ from tqdm import tqdm
 from copy import deepcopy
 
 import docuverse.utils
-from docuverse.utils import get_param
+from docuverse.utils import get_param, get_config_dir
 from docuverse.engines import SearchData
-from docuverse.engines.retrieval.elastic.elastic import get_config_dir
+
 from docuverse.engines.search_engine_config_params import DocUVerseConfig, SearchEngineConfig
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_corpus import SearchCorpus

@@ -4,9 +4,11 @@ from typing import List
 
 from tqdm import tqdm
 
+
 from docuverse import SearchResult, SearchQueries
-from docuverse.engines import SearchData, get_param
+from docuverse.engines import SearchData
 from docuverse.engines.search_engine_config_params import EvaluationArguments
+from . import get_param
 from .evaluation_output import EvaluationOutput
 from rouge_score.rouge_scorer import RougeScorer
 
