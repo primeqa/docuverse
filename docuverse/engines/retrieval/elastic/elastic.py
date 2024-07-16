@@ -41,7 +41,7 @@ class ElasticServers:
 
 
 class ElasticEngine(RetrievalEngine):
-    es_servers = ElasticServers("config/elastic_servers.json")
+    es_servers = RetrievalServers(config="config/elastic_servers.json")
     languages = ['en', 'es', 'fr', 'pt', 'ja', 'de']
     default_all_keys_to_index = ['title', 'id', 'url', 'productId',  # 'versionId',
                                  'filePath', 'deliverableLoio', 'text',
@@ -68,7 +68,7 @@ class ElasticEngine(RetrievalEngine):
         #         os.path.join(os.path.dirname(__file__), "../../../..", "config/elastic_config.json"))
         self._read_mappings(config)
         self.config = None
-        self._init_config(config_params)
+        self.load_model_config(config_params)
         self.source_excludes = []
         self.pipeline = None
         self.client = None
