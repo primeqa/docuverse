@@ -4,6 +4,7 @@ from typing import Union, Tuple, List
 
 import yaml
 
+from docuverse.engines.retrieval.retrieval_servers import RetrievalServers
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines import SearchData, RetrievalEngine
 
@@ -20,32 +21,9 @@ import os
 from dotenv import load_dotenv
 
 
-def get_config_dir(config_path: str|None = None) -> str:
-    if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
-        config_dir = os.environ['DOCUVERSE_CONFIG_PATH']
-    elif config_path is None or not os.path.exists(config_path):
-        config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../..", "config"))
-    else:
-        return config_path
-    return config_dir
-
-
-class ElasticServers:
-    def __init__(self, config="../../../../config/elastic_servers.json"):
-        config = os.path.join(get_config_dir(os.path.dirname(config)), "elastic_servers.json")
-        self.servers = {}
-        if os.path.exists(config):
-            if config.endswith(".json"):
-                self.servers = json.load(open(config))
-            elif config.endswith(".yaml"):
-                self.servers = yaml.safe_load(open(config))
-
-    def get(self, name: str, default=None):
-        return self.servers.get(name, None)
-
 
 class ElasticEngine(RetrievalEngine):
-    es_servers = ElasticServers("config/elastic_servers.json")
+    es_servers = RetrievalServers(config="config/elastic_servers.json")
     languages = ['en', 'es', 'fr', 'pt', 'ja', 'de']
     default_all_keys_to_index = ['title', 'id', 'url', 'productId',  # 'versionId',
                                  'filePath', 'deliverableLoio', 'text',
@@ -72,7 +50,7 @@ class ElasticEngine(RetrievalEngine):
         #         os.path.join(os.path.dirname(__file__), "../../../..", "config/elastic_config.json"))
         self._read_mappings(config)
         self.config = None
-        self._init_config(config_params)
+        self.load_model_config(config_params)
         self.source_excludes = []
         self.pipeline = None
         self.client = None
@@ -100,23 +78,6 @@ class ElasticEngine(RetrievalEngine):
                 raise RuntimeError(f"ElasticSearch server {server} not found.")
             for key, val in server_info.items():
                 setattr(self, key, val)
-            # self.host, self.api_key, self.ssl_fingerprint = \
-            #     [server_info.get(key) for key in ['host', 'api_key', 'ssl_fingerprint']]
-
-    def _init_config(self, config_params: Union[dict, SearchEngineConfig]):
-        if isinstance(config_params, dict):
-            config_params = SearchEngineConfig(config=config_params)
-
-        # Elastic doesn't accept _ -> convert them to dashes.
-        if config_params.index_name:
-            config_params.index_name = config_params.index_name.replace("_", "-")
-        PARAM_NAMES = ["index_name", "title_field", "text_field", "n_docs", "filters", "duplicate_removal",
-                       "rouge_duplicate_threshold"]
-
-        for param_name in PARAM_NAMES:
-            setattr(self, param_name, get_param(config_params, param_name))
-
-        self.config = config_params
 
     def init_client(self):
         if self.api_key is not None:

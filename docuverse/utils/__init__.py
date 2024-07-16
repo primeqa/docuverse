@@ -1,3 +1,5 @@
+import os
+
 from .embedding_function import DenseEmbeddingFunction
 import yaml
 import json
@@ -30,6 +32,15 @@ def get_param(dictionary, key: str, default: str | None = None):
         return default
     else:
         return dictionary.get(key, default)
+
+def get_config_dir(config_path: str | None = None) -> str:
+    if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
+        config_dir = os.environ['DOCUVERSE_CONFIG_PATH']
+    elif config_path is None or not os.path.exists(config_path):
+        config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../..", "config"))
+    else:
+        return config_path
+    return config_dir
 
 
 def read_config_file(config_file):
