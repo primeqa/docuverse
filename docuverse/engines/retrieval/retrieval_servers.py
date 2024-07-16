@@ -5,7 +5,7 @@ from typing import Optional
 
 from jupyter_lsp.specs import yaml
 
-from docuverse.engines.retrieval.elastic.elastic import get_config_dir
+from docuverse.utils import get_config_dir
 from docuverse.utils import read_config_file
 
 @dataclass

@@ -6,9 +6,11 @@ import os
 from tqdm import tqdm
 from copy import deepcopy
 
-from docuverse.utils import get_param
+import docuverse.utils
+from docuverse.utils import get_param, get_config_dir
 from docuverse.engines import SearchData
-from docuverse.engines.search_engine_config_params import DocUVerseConfig
+
+from docuverse.engines.search_engine_config_params import DocUVerseConfig, SearchEngineConfig
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
