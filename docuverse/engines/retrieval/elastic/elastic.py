@@ -2,7 +2,8 @@ import copy
 import json
 from typing import Union, Tuple, List
 
-from docuverse.utils import read_config_file
+from docuverse.engines.retrieval.retrieval_servers import RetrievalServers
+from docuverse.utils import read_config_file, get_config_dir
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines import SearchData, RetrievalEngine
 
@@ -19,25 +20,6 @@ import os
 from dotenv import load_dotenv
 
 
-def get_config_dir(config_path: str | None = None) -> str:
-    if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
-        config_dir = os.environ['DOCUVERSE_CONFIG_PATH']
-    elif config_path is None or not os.path.exists(config_path):
-        config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../..", "config"))
-    else:
-        return config_path
-    return config_dir
-
-
-class ElasticServers:
-    def __init__(self, config="../../../../config/elastic_servers.json"):
-        config = os.path.join(get_config_dir(os.path.dirname(config)), "elastic_servers.json")
-        self.servers = {}
-        if os.path.exists(config):
-            self.servers = read_config_file(config)
-
-    def get(self, name: str, default=None):
-        return self.servers.get(name, None)
 
 
 class ElasticEngine(RetrievalEngine):
@@ -49,7 +31,7 @@ class ElasticEngine(RetrievalEngine):
 
     @staticmethod
     def read_config(config: str):
-        ElasticEngine.es_servers = ElasticServers(config)
+        ElasticEngine.es_servers = RetrievalServers(config)
 
     def __init__(self, config_params, **kwargs):
         # super().__init__(**kwargs)
@@ -100,20 +82,21 @@ class ElasticEngine(RetrievalEngine):
             # self.host, self.api_key, self.ssl_fingerprint = \
             #     [server_info.get(key) for key in ['host', 'api_key', 'ssl_fingerprint']]
 
-    def _init_config(self, config_params: Union[dict, SearchEngineConfig]):
-        if isinstance(config_params, dict):
-            config_params = SearchEngineConfig(config=config_params)
-
-        # Elastic doesn't accept _ -> convert them to dashes.
-        if config_params.index_name:
-            config_params.index_name = config_params.index_name.replace("_", "-")
-        PARAM_NAMES = ["index_name", "title_field", "text_field", "n_docs", "filters", "duplicate_removal",
-                       "rouge_duplicate_threshold"]
-
-        for param_name in PARAM_NAMES:
-            setattr(self, param_name, get_param(config_params, param_name))
-
-        self.config = config_params
+    def load_model_config(self, config_params: Union[dict, SearchEngineConfig]):
+        super().load_model_config(self, config_params)
+        # if isinstance(config_params, dict):
+        #     config_params = SearchEngineConfig(config=config_params)
+        #
+        # # Elastic doesn't accept _ -> convert them to dashes.
+        # if config_params.index_name:
+        #     config_params.index_name = config_params.index_name.replace("_", "-")
+        # PARAM_NAMES = ["index_name", "title_field", "text_field", "n_docs", "filters", "duplicate_removal",
+        #                "rouge_duplicate_threshold"]
+        #
+        # for param_name in PARAM_NAMES:
+        #     setattr(self, param_name, get_param(config_params, param_name))
+        #
+        # self.config = config_params
         props = self.coga_mappings[self.config.lang]['properties']
         if self.config.data_template.extra_fields is not None:
             for extra in self.config.data_template.extra_fields:
