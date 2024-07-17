@@ -6,7 +6,7 @@ import yaml
 from tqdm import tqdm
 
 from docuverse import SearchEngine, SearchCorpus
-from docuverse.engines.search_engine import RetrievalServers
+from docuverse.engines.retrieval.retrieval_servers import RetrievalServers
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines import SearchData, RetrievalEngine
 
@@ -30,14 +30,14 @@ from dotenv import load_dotenv
 class MilvusEngine(SearchEngine):
     ms_servers = RetrievalServers(config="config/milvus_servers.json")
 
-    def __init__(self, config: SearchEngineConfig, **kwargs):
+    def __init__(self, config: SearchEngineConfig|dict, **kwargs):
         self.index = None
-        self.milvus_defaults = read_config_file("../../../../config/milvus_defaults.yml")
-        self.config = self.load_model_config(config)
-        if 'server' in self.config:
-            server = MilvusEngine.ms_servers[self.config['server']]
-            self.host = server['host']
-            self.port = server['port']
+        self.milvus_defaults = read_config_file("config/milvus_default_config.yaml")
+        self.load_model_config(config)
+        if get_param(self.config, 'server', None):
+            server = MilvusEngine.ms_servers[self.config.server]
+            self.host = server.host
+            self.port = server.port
         self.model = DenseEmbeddingFunction(self.config.model_name)
         self.hidden_dim = len(self.model.encode('text', show_progress_bar=False))
         self.normalize_embs = get_param(kwargs, 'normalize_embs', False)

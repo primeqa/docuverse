@@ -36,10 +36,10 @@ def create_retrieval_engine(retriever_config: dict):
             raise e
     elif name == 'milvus':
         try:
-            from docuverse.engines.retrieval.milvus import MilvusEngine
+            from docuverse.engines.retrieval.milvus.milvus import MilvusEngine
             engine = MilvusEngine(retriever_config)
         except ImportError as e:
-            print("You need to install docuverse_chomadb package.")
+            print("You need to install pymilvus package.")
             raise e
 
     return engine

@@ -61,6 +61,6 @@ class RetrievalServers:
         for server_id, server_config in servers_configs.items():
             self.servers[server_id] = Server(**server_config)
 
-    def get(self, name: str, default=None):
+    def __get__(self, name: str, default=None):
         return self.servers.get(name, None)
 
