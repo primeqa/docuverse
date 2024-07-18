@@ -64,3 +64,6 @@ class RetrievalServers:
     def __get__(self, name: str, default=None):
         return self.servers.get(name, None)
 
+    def __getitem__(self, item):
+        return self.servers.get(item)
+

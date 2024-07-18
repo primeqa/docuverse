@@ -51,21 +51,6 @@ class SearchEngine:
         from docuverse.utils.retrievers import create_reranker_engine
         return create_reranker_engine(self.config.reranker_config)
 
-    def load_model_config(self, config_params: Union[dict, SearchEngineConfig]):
-        if isinstance(config_params, dict):
-            config_params = SearchEngineConfig(config=config_params)
-
-        # Elastic doesn't accept _ -> convert them to dashes.
-        if config_params.index_name:
-            config_params.index_name = config_params.index_name.replace("_", "-")
-        PARAM_NAMES = ["index_name", "title_field", "text_field", "n_docs", "filters", "duplicate_removal",
-                       "rouge_duplicate_threshold"]
-
-        for param_name in PARAM_NAMES:
-            setattr(self, param_name, get_param(config_params, param_name))
-
-        self.config = config_params
-
     def ingest(self, corpus: SearchCorpus, update: bool = False):
         self.retriever.ingest(corpus=corpus, update=update)
 
