@@ -232,6 +232,21 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    duplicate_removal: Optional[bool]|None = field(
+        default=None,
+        metadata={
+            "help": "Defines the strategy for removing duplicates (default: don't remove). It can be 'rouge' (based on "
+                    "rouge similarity) or 'exact' (exact match)"
+        }
+    )
+
+    rouge_duplicate_threshold: Optional[float] = field(
+        default=0.9,
+        metadata={
+            "help": "Defines the threshold for the rouge score when removing duplicates."
+        }
+    )
+
     data_format: Optional[str] | None = field(
         default=None,
         metadata={
@@ -396,14 +411,6 @@ class EvaluationArguments(GenericArguments):
         metadata={
             "help": "If provided, will compute the ROUGE score between the answers and the gold passage "
                     "(note: it will be pretty slow for long documents)."
-        }
-    )
-
-    duplicate_removal: Optional[bool] = field(
-        default=False,
-        metadata={
-            "help": "Defines the strategy for removing duplicates (default: don't remove). It can be 'rouge' (based on "
-                    "rouge similarity) or 'exact' (exact match)"
         }
     )
 

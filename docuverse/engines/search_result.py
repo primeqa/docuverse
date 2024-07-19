@@ -58,7 +58,10 @@ class SearchResult:
 
     def remove_duplicates(self, duplicate_removal: str = "none",
                           rouge_duplicate_threshold: float = -1.0):
-        if duplicate_removal is None or duplicate_removal == "none" or self.retrieved_passages == []:
+        if (duplicate_removal is None or
+                duplicate_removal == "none" or
+                self.retrieved_passages == []
+        ):
             return
         ret = SearchResult([])
         if duplicate_removal == "exact":
@@ -111,8 +114,12 @@ class SearchResult:
             if len(data) == 0:
                 return []
             elif isinstance(data[0], dict):
-                for r in data:
-                    self.retrieved_passages.append(SearchResult.SearchDatum(r))
+                if 'entity' in data[0]:
+                    for r in data:
+                        self.retrieved_passages.append(SearchResult.SearchDatum(r['entity']))
+                else:
+                    for r in data:
+                        self.retrieved_passages.append(SearchResult.SearchDatum(r))
             elif data[0].__class__ == SearchResult.SearchDatum:
                 for item in data:
                     self.retrieved_passages.append(item)

@@ -64,8 +64,11 @@ class MilvusEngine(RetrievalEngine):
             FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID", auto_id=True),
             FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=False, max_length=1000, auto_id=False),
             FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=10000),
+            FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=10000),
             FieldSchema(name="embeddings", dtype=DataType.FLOAT_VECTOR, dim=self.hidden_dim)
         ]
+        for f in self.config.data_template.extra_fields:
+            fields.append(FieldSchema(name=f, dtype=DataType.VARCHAR, max_length=10000))
         # collection_loaded = utility.has_collection(self.config.index_name)
         collection_loaded = self.client.has_collection(self.config.index_name)
         if collection_loaded:
@@ -101,7 +104,11 @@ class MilvusEngine(RetrievalEngine):
         batch_size = 1000
         data = []
         for i, item in enumerate(corpus):
-            data.append({"id": item["id"], "embeddings": passage_vectors[i], "text": item['text']})
+            dt = {"id": item["id"], "embeddings": passage_vectors[i], "text": item['text'], 'title': item['title']}
+            for f in self.config.data_template.extra_fields:
+                dt[f] = str(item[f])
+            data.append(dt)
+            # data.append({"id": item["id"], "embeddings": passage_vectors[i], "text": item['text']})
         # for i in tqdm(range(0, len(text_vectors)), desc="Milvus index docs:"):
         #     # self.client.insert(collection=self.config.index_name, data={})
         #     data.append({"id": ids[i], "embeddings": passage_vectors[i], "text": text_vectors[i]})
@@ -123,7 +130,7 @@ class MilvusEngine(RetrievalEngine):
         search_params = get_param(self.config, 'search_params', self.milvus_defaults['search_params']["HNSW"])
 
         # for query_number in range(len(query_vectors)):
-        query_vector = self.model.encode(question.text)
+        query_vector = self.model.encode(question.text, show_progress_bar=False)
 
         res = self.client.search(
             collection_name=self.config.index_name,
@@ -131,9 +138,9 @@ class MilvusEngine(RetrievalEngine):
             # "embeddings",
             search_params=search_params,
             limit=self.config.top_k,
-            output_fields=["id", "text"]
+            output_fields=["id", "text", 'title'] + self.config.data_template.extra_fields
         )
-        result = SearchResult(question=question, result=res)
+        result = SearchResult(question=question, data=res[0])
         result.remove_duplicates(self.config.duplicate_removal,
                                  self.config.rouge_duplicate_threshold)
         return result
