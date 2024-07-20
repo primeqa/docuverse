@@ -59,7 +59,7 @@ class MilvusEngine(RetrievalEngine):
         self.client = MilvusClient(uri=f"http://{self.host}:{self.port}")
 
     def ingest(self, corpus: SearchCorpus, update: bool = False):
-        fmt = "\n=== {:30} ===\n"
+        fmt = "\n=== {:30} ==="
         fields = [
             FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID", auto_id=True),
             FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=False, max_length=1000, auto_id=False),
@@ -76,7 +76,7 @@ class MilvusEngine(RetrievalEngine):
             self.client.drop_collection(self.config.index_name)
             # utility.drop_collection(self.config.index_name)
         schema = CollectionSchema(fields, self.config.index_name)
-        print(fmt.format(f"Create collection `f{self.config.index_name}`"))
+        print(fmt.format(f"Create collection `{self.config.index_name}`"))
 
         index_params = self.client.prepare_index_params()
 
@@ -108,28 +108,16 @@ class MilvusEngine(RetrievalEngine):
             for f in self.config.data_template.extra_fields:
                 dt[f] = str(item[f])
             data.append(dt)
-            # data.append({"id": item["id"], "embeddings": passage_vectors[i], "text": item['text']})
-        # for i in tqdm(range(0, len(text_vectors)), desc="Milvus index docs:"):
-        #     # self.client.insert(collection=self.config.index_name, data={})
-        #     data.append({"id": ids[i], "embeddings": passage_vectors[i], "text": text_vectors[i]})
-        # self.index.insert([ids[i:i + batch_size],
-        #                   text_vectors[i:i + batch_size],
-        #                   passage_vectors[i:i + batch_size]]
-        #                 )
+
         for i in tqdm(range(0, len(data), batch_size), desc="Ingesting documents"):
             self.client.insert(collection_name=self.config.index_name, data=data[i:i + batch_size])
-        # index = {"index_type": "IVF_FLAT",
-        #          "metric_type": "IP",
-        #          "params": {"nlist": 128}}
-
-        # index_params = get_param(self.config, 'index_params', self.milvus_defaults['default_index_params'])
         self.client.create_index(collection_name=self.config.index_name, index_params=index_params)
-        # self.index.load()
 
     def search(self, question: SearchQueries.Query, **kwargs) -> SearchResult:
-        search_params = get_param(self.config, 'search_params', self.milvus_defaults['search_params']["HNSW"])
+        search_params = get_param(self.config, 'search_params',
+                                  self.milvus_defaults['search_params']["HNSW"])
+       # search_params['params']['group_by_field']='url'
 
-        # for query_number in range(len(query_vectors)):
         query_vector = self.model.encode(question.text, show_progress_bar=False)
 
         res = self.client.search(
@@ -138,6 +126,8 @@ class MilvusEngine(RetrievalEngine):
             # "embeddings",
             search_params=search_params,
             limit=self.config.top_k,
+            # limit=1000,
+            # group_by_field="url",
             output_fields=["id", "text", 'title'] + self.config.data_template.extra_fields
         )
         result = SearchResult(question=question, data=res[0])

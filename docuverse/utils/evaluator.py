@@ -39,14 +39,16 @@ class EvaluationEngine:
             print("The input question file does not contain answers. Please fix that and restart.")
             return EvaluationOutput()
         ranks = self.config.iranks
-        docm_scores = {r: 0 for r in ranks}
         rouge_scores = {r: 0 for r in ranks}  # passage scores
         gt = {-1: -1}
+        num_positive = {}
         for q in input_queries:
             if isinstance(q['relevant'], list):
                 gt[q['id']] = {id: 1 for id in q['relevant']}
+                num_positive[q['id']] = len(q['relevant'])
             else:
                 gt[q['id']] = {q['relevant']: 1}
+                num_positive[q['id']] = 1
 
         def skip(out_ranks, record, rid):
             qid = record[0]
@@ -80,11 +82,13 @@ class EvaluationEngine:
 
         num_eval_questions = 0
         self.relevant = []
+        num_gold = []
         for rid, record in tqdm(enumerate(system),
                                 total=len(system),
                                 desc='Evaluating questions: '):
             qid = get_param(record.question, 'id', rid)
             query = input_queries[rqmap[qid]]
+            num_gold.append(num_positive[qid])
             if '-1' in gt[qid]:
                 continue
             num_eval_questions += 1
@@ -94,7 +98,6 @@ class EvaluationEngine:
             for aid, answer in enumerate(record.retrieved_passages):
                 if aid >= ranks[-1]:
                     break
-                # docid = get_doc_id(answer['id'])
                 docid = SearchData.get_orig_docid(answer['id'])
 
                 # if str(docid) in gt[qid]:  # Great, we found a match.
@@ -115,16 +118,11 @@ class EvaluationEngine:
                             query['passages']
                         ]
                     )
-                # update_scores(ranks, aid, scr, max, tmp_pscores)
-
-            # for r in ranks:
-            #     docm_scores[r] += int(tmp_scores[r] >= 1)
-            #     if self.compute_rouge:
-            #         rouge_scores[r] += tmp_pscores[r]
 
         _result = EvaluationOutput(num_ranked_queries=num_eval_questions,
                                    num_judged_queries=num_eval_questions,
                                    doc_scores=self.relevant,
+                                   num_gold=num_gold,
                                    ranks=self.iranks,
                                    rouge_scores=rouge_scores,
                                    compute_macro_scores=True,

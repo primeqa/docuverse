@@ -31,14 +31,6 @@ if __name__ == '__main__':
         output = None
         queries = None
 
-        # with open(config.output_file, "w") as outfile:
-        #     outp = [r.as_list() for r in output]
-        #     outfile.write(json.dumps(outp, indent=2))
-
-        # if config.evaluate and config.eval_config is not None:
-        #     scorer = EvaluationEngine(config.eval_config)
-        #     results = scorer.compute_score(queries, output, model_name=config.index_name)
-        #     print(f"Results:\n{results}")
     if config.evaluate and config.eval_config is not None:
         scorer = EvaluationEngine(config.eval_config)
         if queries is None:
@@ -46,7 +38,8 @@ if __name__ == '__main__':
 
         if output is None:
             output = engine.read_output(config.output_file)
-            # with open(config.output_file, "r") as inp:
-            #     output = json.load(inp)
         results = scorer.compute_score(queries, output, model_name=config.index_name)
+        metrics_file = config.output_file.replace(".json", ".metrics")
         print(f"Results:\n{results}")
+        with open(metrics_file, "w") as out:
+            out.write(str(results))
