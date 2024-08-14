@@ -1,7 +1,8 @@
 from typing import Union
 
 from .elastic import ElasticEngine
-from docuverse.utils import get_param, DenseEmbeddingFunction
+from docuverse.utils import get_param
+from docuverse.utils.embedding_function import DenseEmbeddingFunction
 from ...search_engine_config_params import SearchEngineConfig
 
 

@@ -38,6 +38,9 @@ class SearchResult:
         def as_dict(self):
             return self.__dict__
 
+        def get(self, item, default=None):
+            return getattr(self, item, default)
+
     def __init__(self, question, data, **kwargs):
         self.retrieved_passages = []
         self.rouge_scorer = None

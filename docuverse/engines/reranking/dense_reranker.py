@@ -2,7 +2,7 @@ from typing import Union
 from copy import deepcopy
 
 from docuverse import SearchResult
-from docuverse.utils import DenseEmbeddingFunction
+from docuverse.utils.embedding_function import DenseEmbeddingFunction
 from .reranker import Reranker
 from sentence_transformers import util as st_util
 from docuverse.engines.search_engine_config_params import RerankerConfig as RerankerConfig

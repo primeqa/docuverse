@@ -90,7 +90,8 @@ class SearchEngine:
 
         with open(filename, "r") as inp:
             output = json.load(inp)
-        res = [SearchResult(o['question'], o['retrieved_passages']) for o in output]
+        res = [SearchResult(SearchQueries.Query(**o['question']),
+                            o['retrieved_passages']) for o in output]
         return res
 
     def set_index(self, index=None):

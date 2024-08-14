@@ -38,7 +38,8 @@ if __name__ == '__main__':
 
         if output is None:
             output = engine.read_output(config.output_file)
-        results = scorer.compute_score(queries, output, model_name=config.index_name)
+        results = scorer.compute_score(queries, output, model_name=config.index_name,
+                                       data_template=config.data_template, query_template=config.query_template)
         metrics_file = config.output_file.replace(".json", ".metrics")
         print(f"Results:\n{results}")
         with open(metrics_file, "w") as out:

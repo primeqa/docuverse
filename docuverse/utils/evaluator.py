@@ -31,11 +31,18 @@ class EvaluationEngine:
         if self.config.compute_rouge:
             self.rouge_scorer = RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
 
-    def compute_score(self, input_queries: SearchQueries, system: List[SearchResult], model_name="model") -> EvaluationOutput:
+    def compute_score(self, input_queries: SearchQueries, system: List[SearchResult], model_name="model", **kwargs) -> EvaluationOutput:
         if self.compute_rouge_score:
             from rouge_score.rouge_scorer import RougeScorer
             scorer = RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
-        if get_param(input_queries[0], 'relevant', None) is None:
+        data_id_header = 'id'
+        # if 'data_template'in kwargs:
+        data_text_header = get_param(kwargs.get('data_template'), 'text_header', 'text')
+        data_id_header = get_param(kwargs['data_template'], 'id_header', 'id')
+        # if 'query_template'in kwargs:
+        query_id_header = get_param(kwargs.get('query_template'), 'id_header', 'id')
+        relevant_header = get_param(kwargs.get('query_template'), 'relevant_header', "relevant")
+        if get_param(input_queries[0], relevant_header, None) is None:
             print("The input question file does not contain answers. Please fix that and restart.")
             return EvaluationOutput()
         ranks = self.config.iranks
@@ -43,12 +50,14 @@ class EvaluationEngine:
         gt = {-1: -1}
         num_positive = {}
         for q in input_queries:
-            if isinstance(q['relevant'], list):
-                gt[q['id']] = {id: 1 for id in q['relevant']}
-                num_positive[q['id']] = len(q['relevant'])
+            rels = get_param(q, relevant_header)
+            id = get_param(q, query_id_header)
+            if isinstance(rels, list):
+                gt[id] = {id: 1 for id in rels}
+                num_positive[id] = len(rels)
             else:
-                gt[q['id']] = {q['relevant']: 1}
-                num_positive[q['id']] = 1
+                gt[id] = {rels: 1}
+                num_positive[id] = 1
 
         def skip(out_ranks, record, rid):
             qid = record[0]
@@ -86,7 +95,7 @@ class EvaluationEngine:
         for rid, record in tqdm(enumerate(system),
                                 total=len(system),
                                 desc='Evaluating questions: '):
-            qid = get_param(record.question, 'id', rid)
+            qid = get_param(record.question, query_id_header)
             query = input_queries[rqmap[qid]]
             num_gold.append(num_positive[qid])
             if '-1' in gt[qid]:
@@ -98,7 +107,7 @@ class EvaluationEngine:
             for aid, answer in enumerate(record.retrieved_passages):
                 if aid >= ranks[-1]:
                     break
-                docid = SearchData.get_orig_docid(answer['id'])
+                docid = SearchData.get_orig_docid(get_param(answer, f"id|{data_id_header}"))
 
                 # if str(docid) in gt[qid]:  # Great, we found a match.
                 #     update_scores(ranks, aid, 1, sum, tmp_scores)
@@ -112,12 +121,13 @@ class EvaluationEngine:
                 if len(query['passages']) == 0:
                     scr = 0.
                 else:
-                    scr = max(
-                        [
-                            self.rouge_scorer.score(passage, answer['text'])['rouge1'].recall for passage in
-                            query['passages']
-                        ]
-                    )
+                    pass
+                    # scr = max(
+                    #     [
+                    #         self.rouge_scorer.score(passage, answer[data_text_header])['rouge1'].recall for passage in
+                    #         query['passages']
+                    #     ]
+                    # )
 
         _result = EvaluationOutput(num_ranked_queries=num_eval_questions,
                                    num_judged_queries=num_eval_questions,

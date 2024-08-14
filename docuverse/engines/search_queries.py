@@ -9,7 +9,8 @@ from docuverse.utils import get_param
 
 class SearchQueries(SearchData):
     class Query:
-        def __init__(self, **kwargs):
+        def __init__(self, id_header: str = "id", **kwargs):
+            self.id_header = id_header
             self.__dict__.update(kwargs)
 
         def __getitem__(self, key: str, default=None):
@@ -22,11 +23,17 @@ class SearchQueries(SearchData):
         def as_list(self):
             return self.__dict__
 
+        def as_json(self, **kwargs):
+            return json.dumps(self.as_list(), **kwargs)
+
         def __str__(self):
             return f"{type(self)}({str(self.as_list())})"
 
         def get(self, key, default=None):
             return self.__dict__.get(key, default)
+
+        def id(self):
+            return self.get(self.id_header)
 
     def __init__(self, preprocessor, filenames, **data):
         super().__init__(filenames, **data)
@@ -39,6 +46,12 @@ class SearchQueries(SearchData):
         return self.queries[i]
 
     _ms = re.compile("'\s+'")
+
+    def __iadd__(self, q: Query):
+        self.queries.append(q)
+
+    def append(self, q: Query):
+        self.queries.append(q)
 
     @staticmethod
     def read(query_file, template=default_query_template, **kwargs):
@@ -109,18 +122,24 @@ class SearchQueries(SearchData):
                         for extra in query_template.extra_fields:
                             if extra in row:
                                 val = row[extra]
-                                if val.find('[') >= 0 > val.find("None"):
-                                    # Assume it's some sort of json field
-                                    if val.find("'") >= 0:
-                                        if val.find("' '") >= 0:
-                                            val = re.sub(cls._ms, "','", val)
-                                        val = val.replace("'", '"')
-                                    try:
-                                        # print(f"Loading {it}: {val}")
-                                        val = json.loads(val)
+                                if isinstance(val, str):
+                                    if val.find('[') >= 0 > val.find("None"):
+                                        # Assume it's some sort of json field
+                                        if val.find("'") >= 0:
+                                            if val.find("' '") >= 0:
+                                                val = re.sub(cls._ms, "','", val)
+                                            val = val.replace("'", '"')
+                                        try:
+                                            # print(f"Loading {it}: {val}")
+                                            val = json.loads(val)
+                                            itm[extra] = val
+                                        except Exception as e:
+                                            print(f"Cannot parse field {row[extra]}: {e}")
+                                    else:
                                         itm[extra] = val
-                                    except Exception as e:
-                                        print(f"Cannot parse field {row[extra]}: {e}")
+                                elif isinstance(val, list|dict):
+                                    itm[extra] = val
+
                         answers = get_param(row, query_template.answers_header, "")
                         if isinstance(answers, str):
                             if "::" in answers:
@@ -131,5 +150,5 @@ class SearchQueries(SearchData):
                             itm['answers'] = answers
                         itm['passages'] = answers
 
-                        questions.append(SearchQueries.Query(**itm))
+                        questions.append(SearchQueries.Query(id_header=query_template.id_header, **itm))
         return questions

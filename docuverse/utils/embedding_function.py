@@ -1,11 +1,15 @@
+import os
+
 from transformers import AutoTokenizer
 import torch
 import numpy as np
 from typing import Union, List
 
+from docuverse.utils import get_param, get_config_dir
+
 
 class DenseEmbeddingFunction:
-    def __init__(self, name, batch_size=128):
+    def __init__(self, name, batch_size=128, **kwargs):
         import torch
         device = 'cuda' if torch.cuda.is_available() else 'cpu'  # "mps" if torch.backends.mps.is_available() else 'cpu'
         if device == 'cpu':
@@ -31,9 +35,38 @@ class DenseEmbeddingFunction:
         #     # self.model.to(device)
         #     # self.pqa = True
         # else:
+        dmf_loaded = False
+        if get_param(kwargs, 'from_dmf', None) is not None:
+            name = self.load_from_dmf(name)
+            dmf_loaded = True
+
         from sentence_transformers import SentenceTransformer
-        self.model = SentenceTransformer(name, device=device)
+        try:
+            self.model = SentenceTransformer(name, device=device)
+        except Exception as e:
+            # Try once more, from dmf
+            if not dmf_loaded:
+                name = self.load_from_dmf(name)
+                self.model = SentenceTransformer(name, device=device)
+            else:
+                print(f"Model not found: {name}")
+                raise RuntimeError(f"Model not found: {name}")
         print('=== done initializing model')
+
+    def load_from_dmf(self, name):
+        try:
+            from lakehouse.wrappers import LakehouseIceberg
+            from lakehouse.assets import Model
+        except ImportError as e:
+            print(f"You need to install the DMF library:\n"
+                  f"\tpip install git+ssh://git@github.ibm.com/arc/dmf-library.git")
+            raise e
+        lh = LakehouseIceberg(config="yaml", conf_location=get_config_dir("config/lh-conf.yaml"))
+        model = Model(lh=lh)
+        if get_param(os.environ, 'DMF_MODEL_CACHE', None) is None:
+            os.environ['DMF_MODEL_CACHE'] = os.path.join(os.environ['HOME'], ".local/share/dmf")
+        name = model.pull(model=name, namespace="retrieval_slate", table="model_shared")
+        return name
 
     def __call__(self, texts: Union[List[str], str]) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:

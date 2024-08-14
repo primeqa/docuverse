@@ -1,6 +1,6 @@
 import re
 import os
-from .embedding_function import DenseEmbeddingFunction
+# from .embedding_function import DenseEmbeddingFunction
 import yaml
 import json
 import copy
@@ -8,10 +8,15 @@ import copy
 
 def get_param(dictionary, key: str, default: str | None = None):
     def recursive_get(_dictionary, key, default):
+        if _dictionary is None:
+            return default
         if key.find(".") >= 0:
             keys = key.split(".")
             res = default
-            dd = _dictionary
+            if isinstance(dictionary, dict):
+                dd = _dictionary
+            else:
+                dd = _dictionary.__dict__
             for k in keys:
                 if k in dd:
                     dd = dd[k]
@@ -38,7 +43,12 @@ def get_config_dir(config_path: str | None = None) -> str:
     if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
         config_dir = os.environ['DOCUVERSE_CONFIG_PATH']
     elif config_path is None or not os.path.exists(config_path):
-        config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../..", "config"))
+        possible_paths = ['.', os.path.join(os.path.dirname(__file__), "../../../..")]
+        for path in possible_paths:
+            config_dir = os.path.abspath(os.path.join(path, "config"))
+            if os.path.exists(config_dir):
+                return config_dir
+        raise RuntimeError(f"Could not find config file in {possible_paths}")
     else:
         return config_path
     return config_dir
@@ -46,6 +56,8 @@ def get_config_dir(config_path: str | None = None) -> str:
 
 def read_config_file(config_file):
     patt = re.compile(r"{{(.*?)}}")
+    if not os.path.exists(config_file):
+        config_file = os.path.join(get_config_dir(os.path.dirname(config_file)), os.path.basename(config_file))
     def replace(local_dict:dict, global_dict:dict, parent_key: str=""):
         not_done = False
         for key, val in local_dict.items():

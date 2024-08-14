@@ -55,15 +55,18 @@ class Server:
 
 class RetrievalServers:
     def __init__(self, config: str):
-        config = os.path.join(get_config_dir(os.path.dirname(config)), os.path.basename(config))
+        # config = os.path.join(get_config_dir(os.path.dirname(config)), os.path.basename(config))
         servers_configs = read_config_file(config)
         self.servers = {}
         for server_id, server_config in servers_configs.items():
             self.servers[server_id] = Server(**server_config)
 
-    def __get__(self, name: str, default=None):
+    def get(self, name: str, default=None):
         return self.servers.get(name, None)
 
     def __getitem__(self, item):
         return self.servers.get(item)
+
+    def items(self):
+        return self.servers.__dict__.items()
 

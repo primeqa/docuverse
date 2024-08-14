@@ -20,43 +20,94 @@ except:
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_engine_config_params import SearchEngineConfig
-from docuverse.utils import get_param, DenseEmbeddingFunction, read_config_file
+from docuverse.utils import get_param, read_config_file
+from docuverse.utils.embedding_function import DenseEmbeddingFunction
 
 import os
 from dotenv import load_dotenv
 
 
 class MilvusEngine(RetrievalEngine):
-    ms_servers = RetrievalServers(config="config/milvus_servers.json")
+    """MilvusEngine class
 
+    Inherits from RetrievalEngine
+
+    MilvusEngine class provides functionality to interact with the Milvus database for indexing and searching.
+    It supports ingestion of text data, creation of collection and index, and searching based on query vectors.
+
+    Methods:
+        read_servers: Read and return retrieval servers configuration from a JSON file.
+        __init__: Initialize a MilvusEngine object.
+        load_model_config: Load model configuration.
+        init_client: Initialize a connection to Milvus server.
+        ingest: Ingest text data into Milvus collection.
+        search: Search Milvus collection based on query vectors.
+
+    """
     @staticmethod
     def read_servers(config: str = "config/milvus_servers.json"):
         return RetrievalServers(config="config/milvus_servers.json")
 
+
     def __init__(self, config_params: SearchEngineConfig | dict, **kwargs):
+        """
+        Initializes the MilvusEngine class.
+
+        Parameters:
+        - config_params: A dictionary containing configuration parameters for the search engine.
+                         Alternatively, an instance of SearchEngineConfig class can be provided.
+        - **kwargs: Additional keyword arguments that can be passed to the parent class constructor.
+
+        Returns:
+        None
+        """
         super().__init__(config_params=config_params, **kwargs)
         self.client = None
         self.index = None
         self.milvus_defaults = read_config_file("config/milvus_default_config.yaml")
         self.load_model_config(config_params=config_params)
         self.servers = self.read_servers()
+        self.server = None
         if get_param(self.config, 'server', None):
-            server = self.servers[self.config.server]
-            self.host = server.host
-            self.port = server.port
+            self.server = self.servers[self.config.server]
+            # self.host = server.host
+            # self.port = server.port
         self.model = DenseEmbeddingFunction(self.config.model_name)
         self.hidden_dim = len(self.model.encode('text', show_progress_bar=False))
         self.normalize_embs = get_param(kwargs, 'normalize_embs', False)
+
         # Milvus does not accept '-', only letters, numbers, and "_"
         self.init_client()
+        self.output_fields = ["id", "text", 'title']
+        extra = get_param(self.config.data_template, 'extra_fields', None)
+
+        if extra is not None and len(extra) > 0:
+            self.output_fields += extra
 
     def load_model_config(self, config_params: Union[dict, SearchEngineConfig]):
+        """
+        Loads the  model configuration parameters.
+
+        Parameters:
+            config_params (Union[dict, SearchEngineConfig]): The configuration parameters for the model.
+                This can be either a dictionary or an instance of the SearchEngineConfig class.
+
+        Returns:
+            None
+
+        """
         super().load_model_config(config_params)
         self.config.index_name = self.config.index_name.replace("-", "_")
 
     def init_client(self):
         #connections.connect("default", host=self.host, port=self.port)
-        self.client = MilvusClient(uri=f"http://{self.host}:{self.port}")
+        if self.client is None:
+            print("MilvusEngine client is not initialized!")
+            raise RuntimeError("MilvusEngine client is not initialized!")
+        self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
+                                   user=get_param(self.server, "user", ""),
+                                   password=get_param(self.server, "password", "")
+                                   )
 
     def ingest(self, corpus: SearchCorpus, update: bool = False):
         fmt = "\n=== {:30} ==="
@@ -128,7 +179,7 @@ class MilvusEngine(RetrievalEngine):
             limit=self.config.top_k,
             # limit=1000,
             # group_by_field="url",
-            output_fields=["id", "text", 'title'] + self.config.data_template.extra_fields
+            output_fields=self.output_fields
         )
         result = SearchResult(question=question, data=res[0])
         result.remove_duplicates(self.config.duplicate_removal,
