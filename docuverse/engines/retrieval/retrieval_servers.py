@@ -52,6 +52,30 @@ class Server:
         }
     )
 
+    server_pem_path: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "The SSL certificate of the server."
+        }
+    )
+
+    secure: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether the server is secure."
+        }
+    )
+
+    server_name: Optional[str] = field(
+        default="localhost",
+        metadata={
+            "help": "The name of the server (used for Milvus)."
+        }
+    )
+
+    def get(self, key:str, default:str|None=None):
+        return getattr(self, key, default)
+
 
 class RetrievalServers:
     def __init__(self, config: str):

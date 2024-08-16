@@ -6,7 +6,7 @@ import json
 import copy
 
 
-def get_param(dictionary, key: str, default: str | None = None):
+def get_param(dictionary, key: str, default: str | None | bool = None):
     def recursive_get(_dictionary, key, default):
         if _dictionary is None:
             return default
@@ -40,10 +40,22 @@ def get_param(dictionary, key: str, default: str | None = None):
         return recursive_get(dictionary, key, default)
 
 def get_config_dir(config_path: str | None = None) -> str:
+    def find_docuverse_base(path: str, basename="docuverse"):
+        dir = path
+        head = os.path.basename(dir)
+        found = False
+        while dir:
+            if head == basename:
+                return dir
+            dir = os.path.dirname(dir)
+            head = os.path.basename(dir)
+        return None
+
     if get_param(os.environ, 'DOCUVERSE_CONFIG_PATH') is not None:
         config_dir = os.environ['DOCUVERSE_CONFIG_PATH']
     elif config_path is None or not os.path.exists(config_path):
-        possible_paths = ['.', os.path.join(os.path.dirname(__file__), "../../../..")]
+        possible_paths = [find_docuverse_base(os.path.abspath(path=config_path)),
+                          '.', os.path.join(os.path.dirname(__file__), "../../../..")]
         for path in possible_paths:
             config_dir = os.path.abspath(os.path.join(path, "config"))
             if os.path.exists(config_dir):
@@ -52,6 +64,8 @@ def get_config_dir(config_path: str | None = None) -> str:
     else:
         return config_path
     return config_dir
+
+
 
 
 def read_config_file(config_file):

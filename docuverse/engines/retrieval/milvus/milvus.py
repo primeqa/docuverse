@@ -78,7 +78,8 @@ class MilvusEngine(RetrievalEngine):
 
         # Milvus does not accept '-', only letters, numbers, and "_"
         self.init_client()
-        self.output_fields = ["id", "text", 'title']
+        # self.output_fields = ["id", "text", 'title']
+        self.output_fields = [self.config.data_template.get(f"{t}_header", t) for t in ["id", "text", 'title']]
         extra = get_param(self.config.data_template, 'extra_fields', None)
 
         if extra is not None and len(extra) > 0:
@@ -101,12 +102,15 @@ class MilvusEngine(RetrievalEngine):
 
     def init_client(self):
         #connections.connect("default", host=self.host, port=self.port)
-        if self.client is None:
+        if self.server is None:
             print("MilvusEngine client is not initialized!")
             raise RuntimeError("MilvusEngine client is not initialized!")
         self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
                                    user=get_param(self.server, "user", ""),
-                                   password=get_param(self.server, "password", "")
+                                   password=get_param(self.server, "password", ""),
+                                   server_name=get_param(self.server, "server_name", ""),
+                                   secure=get_param(self.server, "secure", False),
+                                   server_pem_path = get_param(self.server, "server_pem_path", None)
                                    )
 
     def ingest(self, corpus: SearchCorpus, update: bool = False):

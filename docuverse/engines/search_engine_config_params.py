@@ -30,8 +30,14 @@ class RetrievalArguments(GenericArguments):
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
-
+    project_dir: str = field(
+        default=None,
+        metadata={
+            "help": "The root dir for the configuration files."
+        }
+    )
     _argument_group_name = "Search Arguments"
+
     model_name: str = field(
         default="",
         metadata={"help": "Pre-trained model name or path if not the same as model_name"}
