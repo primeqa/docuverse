@@ -60,7 +60,7 @@ class SearchEngine:
     def get_retriever_info(self):
         return self.retriever.info()
 
-    def search(self, queries: SearchQueries) -> List[SearchResult]:
+    def search(self, queries: Union[SearchQueries, list[SearchQueries.Query]]) -> List[SearchResult]:
         # self.retriever.init_client()
         self.retriever.reconnect_if_necessary()
         answers = [self.retriever.search(query) for query in tqdm(queries, desc="Processing queries: ")]
@@ -90,7 +90,7 @@ class SearchEngine:
 
         with open(filename, "r") as inp:
             output = json.load(inp)
-        res = [SearchResult(SearchQueries.Query(**o['question']),
+        res = [SearchResult(SearchQueries.Query(template=self.config.query_template, **o['question']),
                             o['retrieved_passages']) for o in output]
         return res
 

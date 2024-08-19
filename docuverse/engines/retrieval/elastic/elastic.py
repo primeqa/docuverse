@@ -63,7 +63,7 @@ class ElasticEngine(RetrievalEngine):
         self.duplicate_removal = None
         self.coga_mappings = {}
         self.settings = {}
-        config = os.path.join(get_config_dir(), "elastic_config.json")
+        config = os.path.join(get_config_dir("elastic_config.json"), "elastic_config.json")
         self._read_mappings(config)
         self.config = None
         self.load_model_config(config_params)
@@ -343,7 +343,8 @@ class ElasticEngine(RetrievalEngine):
         num_passages = len(corpus)
         # print(input_passages[0].keys())
         keys_to_index = self._get_keys_to_index(corpus)
-        keys_to_index.extend(self.config.data_template.extra_fields)
+        if self.config.data_template.extra_fields is not None:
+            keys_to_index.extend(self.config.data_template.extra_fields)
         # for k in self.config.data_format.extra_fields:
         #     keys_to_index.append(k)
         actions = []

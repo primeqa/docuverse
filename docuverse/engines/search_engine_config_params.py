@@ -225,7 +225,7 @@ class RetrievalArguments(GenericArguments):
     )
 
     num_preprocessor_threads: Optional[int] = field(
-        default=1,
+        default=-1,
         metadata={
             "help": "If provided, it specifies the number of threads to use for preprocessing data"
         }
@@ -480,6 +480,8 @@ class SearchEngineConfig:
         self.doc_based = config.get("doc-based", False)
         self.db_engine = config.get("db-engine", "es-dense")
         self.server = config.get("server", None)
+        self.data_template = config.get("data_template", None)
+        self.query_template = config.get("query_template", None)
 
 
 class RunConfig(GenericArguments):

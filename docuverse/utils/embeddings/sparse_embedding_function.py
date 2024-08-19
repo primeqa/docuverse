@@ -4,7 +4,7 @@ from torch.nn import Embedding
 from transformers import AutoTokenizer
 import torch
 import numpy as np
-from typing import Union, List
+from typing import Union, List, Dict
 
 from docuverse.utils import get_param, get_config_dir
 from docuverse.utils.embeddings.embedding_function import EmbeddingFunction
@@ -98,7 +98,7 @@ class SparseEmbeddingFunction(EmbeddingFunction):
         return self.encode(texts)
 
     def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None, **kwargs) -> \
-            Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
+            Union[Union[Dict[str:float], Dict[str:int]], List[Union[Dict[str:float], Dict[str:int]]]]:
         embs = []
         if _batch_size == -1:
             _batch_size = self.batch_size

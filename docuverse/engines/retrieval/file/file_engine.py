@@ -13,7 +13,7 @@ class FileEngine(RetrievalEngine):
         import json
         with open(filename, "r") as inp:
             output = json.load(inp)
-        self.results = [SearchResult(SearchQueries.Query(**o['question']),
+        self.results = [SearchResult(SearchQueries.Query(config.query_template, **o['question']),
                             o['retrieved_passages']) for o in output]
         self.index = 0
 

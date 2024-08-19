@@ -31,7 +31,8 @@ class EvaluationEngine:
         if self.config.compute_rouge:
             self.rouge_scorer = RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
 
-    def compute_score(self, input_queries: SearchQueries, system: List[SearchResult], model_name="model", **kwargs) -> EvaluationOutput:
+    def compute_score(self, input_queries: SearchQueries, system: List[SearchResult],
+                      model_name="model", **kwargs) -> EvaluationOutput:
         if self.compute_rouge_score:
             from rouge_score.rouge_scorer import RougeScorer
             scorer = RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
@@ -68,7 +69,7 @@ class EvaluationEngine:
         def reverse_map(input_queries):
             rq_map = {}
             for i, q in enumerate(input_queries):
-                rq_map[q['id']] = i
+                rq_map[q.id] = i
             return rq_map
 
         def update_scores(ranks, rnk, val, op, scores):

@@ -3,25 +3,26 @@ import re
 import json
 
 from docuverse.engines import SearchData
-from docuverse.engines.data_template import default_query_template
+from docuverse.engines.data_template import default_query_template, DataTemplate
 from docuverse.utils import get_param
 
 
 class SearchQueries(SearchData):
     class Query:
-        def __init__(self, id_header: str = "id", **kwargs):
-            self.id_header = id_header
-            self.__dict__.update(kwargs)
+        def __init__(self, template: DataTemplate, **kwargs):
+            self.template = template
+            self.args = kwargs
+            # self.__dict__.update(kwargs)
 
         def __getitem__(self, key: str, default=None):
-            return getattr(self, key, default)
+            return self.get(key, default)
 
-        def __setattr__(self, key, value):
-            # setattr(self, key, value)
-            self.__dict__[key] = value
+        # def __setattr__(self, key, value):
+        #     # setattr(self, key, value)
+        #     self.args[key] = value
 
         def as_list(self):
-            return self.__dict__
+            return self.args
 
         def as_json(self, **kwargs):
             return json.dumps(self.as_list(), **kwargs)
@@ -30,10 +31,15 @@ class SearchQueries(SearchData):
             return f"{type(self)}({str(self.as_list())})"
 
         def get(self, key, default=None):
-            return self.__dict__.get(key, default)
+            return self.args.get(key, default)
 
+        @property
         def id(self):
-            return self.get(self.id_header)
+            return self.get(self.template.id_header)
+
+        @property
+        def text(self):
+            return self.get(self.template.text_header)
 
     def __init__(self, preprocessor, filenames, **data):
         super().__init__(filenames, **data)
@@ -62,6 +68,7 @@ class SearchQueries(SearchData):
                            remv_stopwords=False,
                            url=None,
                            query_template=default_query_template,
+                           relevant_map=None,
                            **kwargs):
         def get_filename(in_file, local_file):
             qfile = local_file
@@ -85,12 +92,6 @@ class SearchQueries(SearchData):
                 # next(csv_reader)
                 question_data = cls._read_data(in_file)
                 if 'question_file' in question_data and 'goldstandard_file' in question_data:
-                    qfile = get_filename(in_file, question_data['question_file'])
-                    tquestions = cls.read_question_data(qfile, fields=fields,
-                                                        lang=lang,
-                                                        url=url,
-                                                        query_template=query_template,
-                                                        **kwargs)
                     tfile = get_filename(in_file, question_data['goldstandard_file'])
                     goldstandard = cls._read_data(tfile)
                     gs_map = {}
@@ -101,44 +102,56 @@ class SearchQueries(SearchData):
                             gs_map[qid].append(doc_id)
                         else:
                             gs_map[qid] = [doc_id]
-                    test_questions = []
-                    for q in tquestions:
-                        if q.id in gs_map:
-                            q.relevant = get_param(gs_map, q.id, '')
-                            test_questions.append(q)
-                    questions.extend(test_questions)
+                    qfile = get_filename(in_file, question_data['question_file'])
+                    tquestions = cls.read_question_data(qfile, fields=fields,
+                                                        lang=lang,
+                                                        url=url,
+                                                        query_template=query_template,
+                                                        relevant_map=gs_map,
+                                                        **kwargs)
+                    # test_questions = []
+                    # for q in tquestions:
+                    #     if q.id in gs_map:
+                    #         q.relevant = get_param(gs_map, q.id, '')
+                    #         test_questions.append(q)
+                    questions.extend(tquestions)
                 else:
                     for it, row in enumerate(question_data):
                         question = get_param(row, query_template.text_header)
                         if url is not None:
                             question = (re.sub(url, lang, 'URL', question), remv_stopwords)
-                        rels = get_param(row, query_template.relevant_header, "")
+                        rels = None
+                        if relevant_map is not None:
+                            rels = get_param(relevant_map, get_param(row, query_template.id_header, None), None)
+                        if rels is None:
+                            rels = get_param(row, query_template.relevant_header, "")
                         if isinstance(rels, str):
                             rels = rels.split(",")
-                        itm = {'text': question,
-                               'id': get_param(row, query_template.id_header, str(it)),
-                               'relevant': rels
+                        itm = {query_template.text_header: question,
+                               query_template.id_header: get_param(row, query_template.id_header, str(it)),
+                               query_template.relevant_header: rels
                                }
-                        for extra in query_template.extra_fields:
-                            if extra in row:
-                                val = row[extra]
-                                if isinstance(val, str):
-                                    if val.find('[') >= 0 > val.find("None"):
-                                        # Assume it's some sort of json field
-                                        if val.find("'") >= 0:
-                                            if val.find("' '") >= 0:
-                                                val = re.sub(cls._ms, "','", val)
-                                            val = val.replace("'", '"')
-                                        try:
-                                            # print(f"Loading {it}: {val}")
-                                            val = json.loads(val)
+                        if query_template.extra_fields is not None:
+                            for extra in query_template.extra_fields:
+                                if extra in row:
+                                    val = row[extra]
+                                    if isinstance(val, str):
+                                        if val.find('[') >= 0 > val.find("None"):
+                                            # Assume it's some sort of json field
+                                            if val.find("'") >= 0:
+                                                if val.find("' '") >= 0:
+                                                    val = re.sub(cls._ms, "','", val)
+                                                val = val.replace("'", '"')
+                                            try:
+                                                # print(f"Loading {it}: {val}")
+                                                val = json.loads(val)
+                                                itm[extra] = val
+                                            except Exception as e:
+                                                print(f"Cannot parse field {row[extra]}: {e}")
+                                        else:
                                             itm[extra] = val
-                                        except Exception as e:
-                                            print(f"Cannot parse field {row[extra]}: {e}")
-                                    else:
+                                    elif isinstance(val, list|dict):
                                         itm[extra] = val
-                                elif isinstance(val, list|dict):
-                                    itm[extra] = val
 
                         answers = get_param(row, query_template.answers_header, "")
                         if isinstance(answers, str):
@@ -150,5 +163,5 @@ class SearchQueries(SearchData):
                             itm['answers'] = answers
                         itm['passages'] = answers
 
-                        questions.append(SearchQueries.Query(id_header=query_template.id_header, **itm))
+                        questions.append(SearchQueries.Query(template=query_template, **itm))
         return questions

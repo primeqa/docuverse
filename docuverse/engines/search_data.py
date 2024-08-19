@@ -523,7 +523,7 @@ class SearchData:
                 read_time = tm.mark_and_return_time()
                 print(f" done: {read_time}")
 
-            if num_threads == 1:
+            if num_threads <= 1:
                 for doc in tqdm(data, desc="Reading docs:"):
                     try:
                         items = process_text_func(unit=doc)
@@ -642,7 +642,7 @@ class SearchData:
                 if SearchData.is_of_type(filename, extensions=[".tsv"]):
                     csv_reader = csv.DictReader(in_file, delimiter="\t")
                     data = [doc for doc in at_most(csv_reader, max_num_docs)]
-                if SearchData.is_of_type(filename, extensions=[".csv"]):
+                elif SearchData.is_of_type(filename, extensions=[".csv"]):
                     csv_reader = csv.DictReader(in_file, delimiter=",")
                     data = [doc for doc in at_most(csv_reader, max_num_docs)]
                 elif SearchData.is_of_type(filename, ['.json', '.jsonl']):

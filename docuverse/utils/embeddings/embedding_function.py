@@ -43,6 +43,5 @@ class EmbeddingFunction:
     def stop_pool(self):
         pass
 
-    def encode(self, texts:Union[List[str], str], _batch_size:int=-1, show_progress_bar=False, **kwargs) -> \
-        Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
+    def encode(self, texts:Union[List[str], str], _batch_size:int=-1, show_progress_bar=False, **kwargs):
         return []
