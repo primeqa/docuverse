@@ -21,7 +21,6 @@ except:
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_engine_config_params import SearchEngineConfig
 from docuverse.utils import get_param, read_config_file
-from docuverse.utils.embedding_function import DenseEmbeddingFunction
 
 import os
 from dotenv import load_dotenv
@@ -69,13 +68,11 @@ class MilvusEngine(RetrievalEngine):
         self.servers = self.read_servers()
         self.server = None
         if get_param(self.config, 'server', None):
-            self.server = self.servers[self.config.server]
-            # self.host = server.host
-            # self.port = server.port
-        self.model = DenseEmbeddingFunction(self.config.model_name)
-        self.hidden_dim = len(self.model.encode('text', show_progress_bar=False))
-        self.normalize_embs = get_param(kwargs, 'normalize_embs', False)
-
+            server = self.servers[self.config.server]
+            self.host = server.host
+            self.port = server.port
+        self.model = None
+        self.init_model(kwargs)
         # Milvus does not accept '-', only letters, numbers, and "_"
         self.init_client()
         # self.output_fields = ["id", "text", 'title']
@@ -84,6 +81,9 @@ class MilvusEngine(RetrievalEngine):
 
         if extra is not None and len(extra) > 0:
             self.output_fields += extra
+
+    def init_model(self, kwargs):
+        pass
 
     def load_model_config(self, config_params: Union[dict, SearchEngineConfig]):
         """
@@ -115,16 +115,7 @@ class MilvusEngine(RetrievalEngine):
 
     def ingest(self, corpus: SearchCorpus, update: bool = False):
         fmt = "\n=== {:30} ==="
-        fields = [
-            FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID", auto_id=True),
-            FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=False, max_length=1000, auto_id=False),
-            FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=10000),
-            FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=10000),
-            FieldSchema(name="embeddings", dtype=DataType.FLOAT_VECTOR, dim=self.hidden_dim)
-        ]
-        for f in self.config.data_template.extra_fields:
-            fields.append(FieldSchema(name=f, dtype=DataType.VARCHAR, max_length=10000))
-        # collection_loaded = utility.has_collection(self.config.index_name)
+        fields = self.create_fields()
         collection_loaded = self.client.has_collection(self.config.index_name)
         if collection_loaded:
             print(fmt.format(f"Collection {self.config.index_name} exists, dropping"))
@@ -133,28 +124,14 @@ class MilvusEngine(RetrievalEngine):
         schema = CollectionSchema(fields, self.config.index_name)
         print(fmt.format(f"Create collection `{self.config.index_name}`"))
 
-        index_params = self.client.prepare_index_params()
-
-        index_params.add_index(
-            field_name="_id",
-            index_type="STL_SORT"
-        )
-
-        index_params.add_index(
-            field_name="embeddings",
-            index_type="IVF_FLAT",
-            metric_type="IP",
-            params={"nlist": 128}
-        )
+        index_params = self.prepare_index_params()
 
         # self.index = Collection(self.config.index_name, schema, consistency_level="Strong", index_file_size=128)
         self.client.create_collection(self.config.index_name, schema=schema, index_params=index_params)
 
         text_vectors = [row['text'] for row in corpus]
         batch_size = get_param(self.config, 'bulk_batch', 40)
-        passage_vectors = self.model.encode(text_vectors,
-                                            _batch_size=batch_size,
-                                            show_progress_bar=True)
+        passage_vectors = self.model.encode(text_vectors, _batch_size=batch_size, show_progress_bar=True)
         # create embeddings
         batch_size = 1000
         data = []
@@ -168,9 +145,23 @@ class MilvusEngine(RetrievalEngine):
             self.client.insert(collection_name=self.config.index_name, data=data[i:i + batch_size])
         self.client.create_index(collection_name=self.config.index_name, index_params=index_params)
 
+    def create_fields(self):
+        fields = [
+            FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID", auto_id=True),
+            FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=False, max_length=1000, auto_id=False),
+            FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=10000),
+            FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=10000),
+        ]
+        for f in self.config.data_template.extra_fields:
+            fields.append(FieldSchema(name=f, dtype=DataType.VARCHAR, max_length=10000))
+
+        return fields
+
+    def prepare_index_params(self):
+        pass
+
     def search(self, question: SearchQueries.Query, **kwargs) -> SearchResult:
-        search_params = get_param(self.config, 'search_params',
-                                  self.milvus_defaults['search_params']["HNSW"])
+        search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'
 
         query_vector = self.model.encode(question.text, show_progress_bar=False)
@@ -189,3 +180,6 @@ class MilvusEngine(RetrievalEngine):
         result.remove_duplicates(self.config.duplicate_removal,
                                  self.config.rouge_duplicate_threshold)
         return result
+
+    def get_search_params(self):
+        pass

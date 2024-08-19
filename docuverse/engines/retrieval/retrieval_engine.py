@@ -37,6 +37,7 @@ class RetrievalEngine:
     def __init__(self, config_params, **kwargs):
         self.last_access = None
         self.args = kwargs
+        self.config = None
         # self.engine = self.create_engine(retriever_config=config_params)
 
     def search(self, query, **kwargs):
@@ -76,10 +77,10 @@ class RetrievalEngine:
         if isinstance(config_params, dict):
             config_params = SearchEngineConfig(config=config_params)
 
-        PARAM_NAMES = ["index_name", "title_field", "text_field", "n_docs", "filters", "duplicate_removal",
+        _param_names = ["index_name", "title_field", "text_field", "n_docs", "filters", "duplicate_removal",
                        "rouge_duplicate_threshold"]
 
-        for param_name in PARAM_NAMES:
+        for param_name in _param_names:
             setattr(self, param_name, get_param(config_params, param_name))
 
         self.config = config_params

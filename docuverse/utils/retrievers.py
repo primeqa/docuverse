@@ -34,16 +34,23 @@ def create_retrieval_engine(retriever_config: dict):
         except ImportError as e:
             print("You need to install docuverse_chomadb package.")
             raise e
-    elif name == 'milvus':
+    elif name.startswith('milvus'):
         try:
-            from docuverse.engines.retrieval.milvus.milvus import MilvusEngine
-            engine = MilvusEngine(retriever_config)
+            if name == 'milvus_dense':
+                from docuverse.engines.retrieval.milvus.milvus_dense import MilvusDenseEngine
+                engine = MilvusDenseEngine(retriever_config)
+            elif name == 'milvus_sparse':
+                from docuverse.engines.retrieval.milvus.milvus_sparse import MilvusSparseEngine
+                engine = MilvusSparseEngine(retriever_config)
+
         except ImportError as e:
             print("You need to install pymilvus package.")
             raise e
+    elif name.startswith("file:"):
+        from docuverse.engines.retrieval.file.file_engine import FileReaderEngine
+        engine = FileReaderEngine(retriever_config)
 
     return engine
-
 
 def create_reranker_engine(reranker_config: dict|RerankerArguments):
     name = reranker_config.get('reranker_engine', 'dense')

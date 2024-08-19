@@ -6,10 +6,12 @@ import numpy as np
 from typing import Union, List
 
 from docuverse.utils import get_param, get_config_dir
+from docuverse.utils.embeddings.embedding_function import EmbeddingFunction
 
 
-class DenseEmbeddingFunction:
-    def __init__(self, name, batch_size=128, **kwargs):
+class DenseEmbeddingFunction(EmbeddingFunction):
+    def __init__(self, model_or_directory_name, batch_size=128, **kwargs):
+        super().__init__(model_or_directory_name=model_or_directory_name, batch_size=batch_size, **kwargs)
         import torch
         device = 'cuda' if torch.cuda.is_available() else 'cpu'  # "mps" if torch.backends.mps.is_available() else 'cpu'
         if device == 'cpu':
@@ -20,7 +22,6 @@ class DenseEmbeddingFunction:
         else:
             self.num_devices = torch.cuda.device_count()
         self.pqa = False
-        self.batch_size = batch_size
         self.emb_pool = None
         # if os.path.exists(name):
         #     raise NotImplemented
@@ -37,44 +38,32 @@ class DenseEmbeddingFunction:
         # else:
         dmf_loaded = False
         if get_param(kwargs, 'from_dmf', None) is not None:
-            name = self.load_from_dmf(name)
+            model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
             dmf_loaded = True
 
-        from sentence_transformers import SentenceTransformer
         try:
-            self.model = SentenceTransformer(name, device=device)
+            self.create_model(model_or_directory_name, device)
         except Exception as e:
             # Try once more, from dmf
             if not dmf_loaded:
-                name = self.load_from_dmf(name)
-                self.model = SentenceTransformer(name, device=device)
+                model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
+                self.create_model(model_or_directory_name, device)
             else:
-                print(f"Model not found: {name}")
-                raise RuntimeError(f"Model not found: {name}")
+                print(f"Model not found: {model_or_directory_name}")
+                raise RuntimeError(f"Model not found: {model_or_directory_name}")
         print('=== done initializing model')
 
-    def load_from_dmf(self, name):
-        try:
-            from lakehouse.wrappers import LakehouseIceberg
-            from lakehouse.assets import Model
-        except ImportError as e:
-            print(f"You need to install the DMF library:\n"
-                  f"\tpip install git+ssh://git@github.ibm.com/arc/dmf-library.git")
-            raise e
-        lh = LakehouseIceberg(config="yaml", conf_location=get_config_dir("config/lh-conf.yaml"))
-        model = Model(lh=lh)
-        if get_param(os.environ, 'DMF_MODEL_CACHE', None) is None:
-            os.environ['DMF_MODEL_CACHE'] = os.path.join(os.environ['HOME'], ".local/share/dmf")
-        name = model.pull(model=name, namespace="retrieval_slate", table="model_shared")
-        return name
-
-    def __call__(self, texts: Union[List[str], str]) -> \
+    def __call__(self, texts: Union[List[str], str], **kwargs) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
         return self.encode(texts)
 
     def __del__(self):
         if self.emb_pool is not None:
             self.stop_pool()
+
+    def create_model(self, model_or_directory_name: str=None, device: str='cpu'):
+        from sentence_transformers import SentenceTransformer
+        self.model = SentenceTransformer(model_or_directory_name, device=device)
 
     @property
     def tokenizer(self):
