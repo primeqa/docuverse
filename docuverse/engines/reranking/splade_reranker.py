@@ -2,6 +2,7 @@ import math
 from copy import deepcopy
 
 import numpy as np
+from torch.nn.functional import embedding
 
 from docuverse import SearchResult
 from docuverse.utils.embeddings.dense_embedding_function import DenseEmbeddingFunction
@@ -17,11 +18,15 @@ class SpladeReranker(Reranker):
         self.model = SparseEmbeddingFunction(reranking_config.reranker_model)
 
     def similarity(self, embedding1, embedding2):
-        norm1 = np.linalg.norm(embedding1.values(), ord=2)
-        norm2 = np.linalg.norm(embedding2.values(), ord=2)
+        emb1, emb2 = (embedding1, embedding2) if len(embedding1) > len(embedding2) else (embedding2, embedding1)
+        keys = {k:v for (k,v) in emb1}
 
-        val = sum(embedding1[key]*embedding2[key] for key in embedding1.keys() if key in embedding2.keys())
-        return val / norm1*norm2 if norm1+norm2>1e-7 else 0
+
+        norm1 = np.linalg.norm([e[1] for e in emb1], ord=2)
+        norm2 = np.linalg.norm([e[1] for e in emb2], ord=2)
+
+        val = sum(keys[key]*value for (key, value) in emb2 if key in keys)
+        return val / (norm1*norm2) if norm1+norm2>1e-7 else 0
 
 
     # def rerank(self, documents: SearchResult | list[SearchResult]) \

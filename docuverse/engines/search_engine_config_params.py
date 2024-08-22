@@ -231,6 +231,13 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    num_search_threads: Optional[int] = field(
+        default=1,
+        metadata={
+            "help": "If provided, it will search with multiple threads."
+        }
+    )
+
     no_cache: Optional[bool] = field(
         default=False,
         metadata={
@@ -352,6 +359,14 @@ class EngineArguments(GenericArguments):
         }
 
     )
+
+    cache_dir: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "The cache directory to use for storing intermediate results."
+        }
+    )
+
     action_flags = {
         "i": "ingest",
         "u": "update",
@@ -392,6 +407,13 @@ class RerankerArguments(GenericArguments):
         }
     )
 
+    reranker_gpu_batch_size: Optional[int] = field(
+        default=128,
+        metadata={
+            "help": "The gpu batch size to use."
+        }
+    )
+
     reranker_combine_weight: Optional[float] = field(
         default=1.0,
         metadata={
@@ -404,6 +426,13 @@ class RerankerArguments(GenericArguments):
         default="rrf",
         metadata={
             "help": "The combination type to use for reranking."
+        }
+    )
+
+    reranker_engine: Literal["dense", "splade"] = field(
+        default="dense",
+        metadata={
+            "help": "The model type to use for reranking."
         }
     )
 

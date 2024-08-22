@@ -141,8 +141,8 @@ class SearchResult:
             raise Exception("TODO: Pending implementation")
             return
 
-    def as_list(self):
-        return {"question": self.question.as_list(), "retrieved_passages": [r.as_dict() for r in self.retrieved_passages]}
+    def as_dict(self):
+        return {"question": self.question.as_dict(), "retrieved_passages": [r.as_dict() for r in self.retrieved_passages]}
 
     def as_json(self, **kwargs):
-        return json.dumps(self.as_list(), **kwargs)
+        return json.dumps(self.as_dict(), **kwargs)

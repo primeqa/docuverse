@@ -21,14 +21,14 @@ class SearchQueries(SearchData):
         #     # setattr(self, key, value)
         #     self.args[key] = value
 
-        def as_list(self):
+        def as_dict(self):
             return self.args
 
         def as_json(self, **kwargs):
-            return json.dumps(self.as_list(), **kwargs)
+            return json.dumps(self.as_dict(), **kwargs)
 
         def __str__(self):
-            return f"{type(self)}({str(self.as_list())})"
+            return f"{type(self)}({str(self.as_dict())})"
 
         def get(self, key, default=None):
             return self.args.get(key, default)

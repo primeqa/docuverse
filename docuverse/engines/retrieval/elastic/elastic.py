@@ -171,7 +171,7 @@ class ElasticEngine(RetrievalEngine):
         """
         return f"Elasticsearch client.info(): \n{self.client.info().body}"
 
-    def search(self, question: SearchQueries.Query, **kwargs) -> SearchResult:
+    def search(self, question: Union[dict, SearchQueries.Query], **kwargs) -> SearchResult:
         """
 
         Searches for relevant results based on the provided question, including duplicate removal.
