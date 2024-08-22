@@ -1,0 +1,33 @@
+retriever:
+    input_passages: "benchmark/beir/nq/corpus.jsonl"
+    input_queries: "benchmark/beir/nq/queries_conf.json"
+    cache_dir: "experiments/beir_splade_rerank/cache"
+    db_engine: "es-bm25"
+    model_name: ""
+    top_k: 100
+    actions: "ire"
+    max_doc_length: 512
+    stride: 100
+    date: 07152024
+    index_name: "beir-nq-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
+    server: "ailang"
+    doc_based: True
+    verbose: True
+    title_handling: "all"
+    output_file: "output/beir-nq-{{db_engine}}-bm25-{{max_doc_length}}-{{stride}}.json"
+    data_format: "config/beir_data_format.yml"
+    bulk_batch: 128
+    num_preprocessor_threads: 10
+    num_search_threads: 1
+    # max_num_documents: 1000
+reranker:
+    reranker_model: "models/splade-a-hfhn_s0_20240807_LR_2e-5_l_1e-2_S_150000_D_False_P_1_BS_16"
+    reranker_combination_type: "rrf"
+    reranker_batch_size: 10
+    reranker_gpu_batch_size: 128
+    reranker_engine: splade
+evaluate:
+    eval_measure: "match,mrr,ndcg"
+    ranks: "1,3,5,10,40"
+
+#--input_queries benchmark/ibm_search/questions_combined_labels_with_dccs.csv --input_passages benchmark/ibm_search/passages_combined_data_filtered.jsonl.gz --db_engine es-elser --model_name .elser_model_2_linux-x86_64 --top_k 40 --actions ire --max_doc_length 512 --stride 100 --count_type token --index_name ibm_sw-elser-512-100-06192024 --server RESCONVAI --doc_based --title_handling all --output_file output/ibmsw-elserv2-512-100.json --eval_measure match,mrr,ndcg --ranks 1,3,5,10,40 --data_format config/ibm_search_data.yml --bulk_batch 50 --num_preprocessor_threads 16 --verbose
