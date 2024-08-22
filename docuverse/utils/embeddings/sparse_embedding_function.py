@@ -42,7 +42,8 @@ class SpladeSentenceTransformer:
 
         tk = tqdm(desc="Processed sents", disable=not show_progress_bar, total=num_sents)
         for b in range(0, num_sents, _batch_size):
-            input_dict = self.tokenizer(sorted_sents[b:min(b+_batch_size, num_sents)],
+            this_batch_size = min(b+_batch_size, num_sents)-b
+            input_dict = self.tokenizer(sorted_sents[b:b+this_batch_size],
                                         max_length=512, padding=True, return_tensors='pt', truncation=True)
             tm.add_timing("tokenizer")
             num_toks += (input_dict['input_ids'] != 1).sum().item()
@@ -67,15 +68,21 @@ class SpladeSentenceTransformer:
             maxdim1 = torch.max(maxarg * input_mask_expanded, dim=1).values  # bs * voc
             tm.add_timing("attention_mask_filter")
             s1 = torch.sort(maxdim1, descending=True, dim=1)  # values = bs * voc,  indices = bs * voc
-            tm.add_timing("sort")
             lengths = attention_mask.sum(dim=1)
+            tm.add_timing("sort")
+            sizes = torch.sum(s1.values>0, dim=1)
+            tm.add_timing("compute_expansion_sizes")
 
-            for idoc, length in enumerate(lengths):
-                expanded_toks = self.tokenizer.convert_ids_to_tokens(s1.indices[idoc, 0:self.max_terms])
-                expanded_weights = s1.values[idoc, 0:self.max_terms]
-                expansion = [(t, float(w)) for n, (t, w) in enumerate(zip(expanded_toks, expanded_weights)) if w > 0]
+            for idoc in range(this_batch_size):
+                expanded_toks = self.tokenizer.convert_ids_to_tokens(s1.indices[idoc, 0:sizes[idoc]])
+                tm.add_timing("expansion::convert_ids_to_tokens")
+                expanded_weights = s1.values[idoc, 0:sizes[idoc]]
+                tm.add_timing("expansion::get_weights")
+                expansion = [(t, float(w)) for t, w in zip(expanded_toks, expanded_weights)]
+                tm.add_timing("expansion::create_expansion")
                 expansions.append(expansion)
-            tm.add_timing("expansion")
+                tm.add_timing("expansion::add_expansion")
+            # tm.add_timing("expansion")
             tk.update(min(_batch_size, num_sents-b))
         tk.close()
 
