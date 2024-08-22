@@ -9,7 +9,7 @@ from multiprocessing import Manager, Queue, Process
 from typing import Dict, List
 from tqdm import tqdm
 import queue
-from docuverse.utils import at_most
+from docuverse.utils import at_most, open_stream, file_is_of_type, parallel_process
 import pickle
 
 from docuverse.engines import data_template
@@ -283,39 +283,13 @@ class SearchData:
         return cache_file_name
 
     @staticmethod
-    def _open_file(file_name: str, write: bool = False, binary=False):
-        if write:
-            mode = "w"
-            cache_dir = os.path.dirname(file_name)
-            if not os.path.exists(cache_dir):
-                os.makedirs(cache_dir)
-        else:
-            mode = "r"
-            if not os.path.exists(file_name):
-                raise RuntimeError(f"File {file_name} does not exist!")
-        if binary:
-            mode = f"{mode}b"
-
-        input_stream = None
-        if file_name.endswith(".bz2"):
-            import bz2
-            input_stream = bz2.open(file_name, mode)
-        elif file_name.endswith(".gz"):
-            import gzip
-            input_stream = gzip.open(file_name, mode)
-        elif file_name.endswith(".xz"):
-            import lzma
-            input_stream = lzma.open(file_name, mode)
-        else:  # if file_name.endswith(".jsonl"):
-            input_stream = open(file_name, mode)
-        return input_stream
 
     @staticmethod
     def read_cache_file_if_needed(cache_file_name, input_file):
         passages = []
 
         if os.path.exists(cache_file_name) and os.path.getmtime(cache_file_name) > os.path.getmtime(input_file):
-            input_stream = SearchData._open_file(cache_file_name, write=False, binary=True)
+            input_stream = open_stream(cache_file_name, write=False, binary=True)
             # for line in tqdm(input_stream, desc="Reading cache file:"):
             #     passages.append(orjson.loads(line.decode('utf-8'))
             passages = pickle.load(input_stream)
@@ -327,7 +301,7 @@ class SearchData:
     def write_cache_file(cache_filename, passages, use_cache=True):
         if not use_cache:
             return
-        output_stream = SearchData._open_file(cache_filename, write=True, binary=True)
+        output_stream = open_stream(cache_filename, write=True, binary=True)
         pickle.dump(passages, output_stream)
         # for p in passages:
         #     output_stream.write(f"{orjson.dumps(p)}\n".encode("utf-8"))
@@ -523,7 +497,7 @@ class SearchData:
                 read_time = tm.mark_and_return_time()
                 print(f" done: {read_time}")
 
-            if num_threads == 1:
+            if num_threads <= 1:
                 for doc in tqdm(data, desc="Reading docs:"):
                     try:
                         items = process_text_func(unit=doc)
@@ -537,50 +511,12 @@ class SearchData:
                         else:
                             tpassages.extend(items)
             else:
-                doc_queue = Queue()
-                manager = Manager()
-                d = manager.dict()
-                import multiprocessing as mp
-
-                def processor(inqueue, d, tiler):
-                    pid = mp.current_process().pid
-                    while True:
-                        try:
-                            id, text = inqueue.get(block=True, timeout=1)
-                        except queue.Empty:
-                            break
-                        except Exception as e:
-                            break
-
-                        try:
-                            items = process_text_func(unit=text)
-                            d[id] = [{**item,
-                                      'tlen': tiler.get_tokenized_length(item['text'], forced_tok=True)}
-                                     for item in items]
-                        except Exception as e:
-                            d[id] = []
-
-                for i, doc in enumerate(data):
-                    doc_queue.put([i, doc])
-                processes = []
-                for i in range(num_threads):
-                    p = Process(target=processor, args=(doc_queue, d, tiler))
-                    processes.append(p)
-                    p.start()
-                tk = tqdm(desc="Reading docs:", total=doc_queue.qsize())
-                c = doc_queue.qsize()
-                while c>0:
-                    c1 = doc_queue.qsize()
-                    if c != c1:
-                        tk.update(c - c1)
-                        c = c1
-                    time.sleep(0.1)
-                print(f"Dropped out of the while loop: {doc_queue.qsize()}")
-                tk.clear()
-                for i, p in enumerate(processes):
-                    p.join()
-                for i in range(len(data)):
-                    tpassages.extend(d[i])
+                post_func = lambda itm: tiler.get_tokenized_length(itm['text'], forced_tok=True)
+                tpassages = parallel_process(process_func=process_text_func,
+                                             post_func=post_func,
+                                             post_label="tlen",
+                                             data=data, num_threads=num_threads,
+                                             tiler=tiler)
 
             if verbose:
                 read_time = tm.mark_and_return_time()
@@ -598,6 +534,58 @@ class SearchData:
             return passages, unmapped_ids
         else:
             return passages
+
+    @classmethod
+    def parallel_process(cls, process_func, data, num_threads, post_func=None, post_label=None):
+        doc_queue = Queue()
+        manager = Manager()
+        d = manager.dict()
+        import multiprocessing as mp
+        def processor(inqueue, d):
+            pid = mp.current_process().pid
+            while True:
+                try:
+                    id, text = inqueue.get(block=True, timeout=1)
+                except queue.Empty:
+                    break
+                except Exception as e:
+                    break
+
+                try:
+                    items = process_func(unit=text)
+                    if post_func is not None:
+                        d[id] = [{**item,
+                                  post_label: post_func(item)}
+                                  for item in items]
+                    else:
+                        d[id] = items
+
+                except Exception as e:
+                    d[id] = []
+
+        for i, doc in enumerate(data):
+            doc_queue.put([i, doc])
+        processes = []
+        for i in range(num_threads):
+            p = Process(target=processor, args=(doc_queue, d))
+            processes.append(p)
+            p.start()
+        tk = tqdm(desc="Reading docs:", total=doc_queue.qsize())
+        c = doc_queue.qsize()
+        while c > 0:
+            c1 = doc_queue.qsize()
+            if c != c1:
+                tk.update(c - c1)
+                c = c1
+            time.sleep(0.1)
+        print(f"Dropped out of the while loop: {doc_queue.qsize()}")
+        tk.clear()
+        for i, p in enumerate(processes):
+            p.join()
+        tpassages = []
+        for i in range(len(data)):
+            tpassages.extend(d[i])
+        return tpassages
 
     @classmethod
     def _read_csv_query_file(cls, data_template, data_type, in_file):
@@ -638,14 +626,14 @@ class SearchData:
         data = None
 
         try:
-            with SearchData._open_file(filename) as in_file:
-                if SearchData.is_of_type(filename, extensions=[".tsv"]):
+            with open_stream(filename) as in_file:
+                if file_is_of_type(filename, extensions=".tsv"):
                     csv_reader = csv.DictReader(in_file, delimiter="\t")
                     data = [doc for doc in at_most(csv_reader, max_num_docs)]
-                if SearchData.is_of_type(filename, extensions=[".csv"]):
+                elif file_is_of_type(filename, extensions=".csv"):
                     csv_reader = csv.DictReader(in_file, delimiter=",")
                     data = [doc for doc in at_most(csv_reader, max_num_docs)]
-                elif SearchData.is_of_type(filename, ['.json', '.jsonl']):
+                elif file_is_of_type(filename, ['.json', '.jsonl']):
                     if filename.find('.jsonl') >= 0:
                         data = [orjson.loads(line) for line in tqdm(at_most(in_file, max_num_docs),
                                                                   desc=f"Reading {filename}:")]
@@ -712,21 +700,6 @@ class SearchData:
                 process_text(unit=row))
             docs_read += 1
         return tpassages, docs_read
-
-    @classmethod
-    def is_of_type(cls, input_file, extensions):
-        """
-        Check if the given file is of any of the specified file types, cross-product with compressed extensions.
-
-        Parameters:
-            input_file (str): The file path or name to be checked.
-            extensions (list): A list of file extensions to check against.
-
-        Returns:
-            bool: True if the file is of any of the specified types, False otherwise.
-        """
-        return any(input_file.endswith(f"{ext[0]}{ext[1]}")
-                   for ext in itertools.product(extensions, ['', ".bz2", ".gz", ".xz"]))
 
     @classmethod
     def compute_statistics(cls, corpus, tiler=None):

@@ -89,6 +89,9 @@ class DataTemplate:
         if self.keep_fields is not None:
             self.extra_fields = self.keep_fields.split("|")
 
+    def get(self, item, default=None):
+        return getattr(self, item, default)
+
 
 def read_doc_query_format(filename: str) -> Tuple[DataTemplate, DataTemplate]:
     config = read_config_file(filename)

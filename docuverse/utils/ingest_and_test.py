@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 import os
 import sys
+from docuverse.utils.timer import timer
 
 from docuverse import SearchEngine
 from docuverse.engines.search_engine_config_params import DocUVerseConfig
@@ -12,33 +13,27 @@ if __name__ == '__main__':
     with open("logfile", "a") as cmdlog:
         cmdlog.write(f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')} - {os.getenv('USER')} - "
                      f"{' '.join(sys.argv)}\n")
-
+    tm = timer("ingest_and_test")
     config = DocUVerseConfig.get_stdargs_config()
 #    config = DocUVerseConfig("experiments/clapnq/setup.yaml")
     engine = SearchEngine(config)
-
+    tm.add_timing("initialize")
     if config.ingest or config.update:
         corpus = engine.read_data(config.input_passages)
         engine.ingest(corpus, update=config.update)
+        tm.add_timing("ingest")
 
     output = None
     if config.retrieve:
         queries = engine.read_questions(config.input_queries)
         output = engine.search(queries)
-
+        tm.add_timing("search")
         engine.write_output(output)
+        tm.add_timing("write_output")
     else:
         output = None
         queries = None
 
-        # with open(config.output_file, "w") as outfile:
-        #     outp = [r.as_list() for r in output]
-        #     outfile.write(json.dumps(outp, indent=2))
-
-        # if config.evaluate and config.eval_config is not None:
-        #     scorer = EvaluationEngine(config.eval_config)
-        #     results = scorer.compute_score(queries, output, model_name=config.index_name)
-        #     print(f"Results:\n{results}")
     if config.evaluate and config.eval_config is not None:
         scorer = EvaluationEngine(config.eval_config)
         if queries is None:
@@ -46,7 +41,12 @@ if __name__ == '__main__':
 
         if output is None:
             output = engine.read_output(config.output_file)
-            # with open(config.output_file, "r") as inp:
-            #     output = json.load(inp)
-        results = scorer.compute_score(queries, output, model_name=config.index_name)
+        results = scorer.compute_score(queries, output, model_name=config.index_name,
+                                       data_template=config.data_template, query_template=config.query_template)
+        metrics_file = config.output_file.replace(".json", ".metrics")
         print(f"Results:\n{results}")
+        with open(metrics_file, "w") as out:
+            out.write(str(results))
+        tm.add_timing("evaluate")
+
+    timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0)

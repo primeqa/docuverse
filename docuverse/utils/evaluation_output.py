@@ -9,8 +9,26 @@ class EvaluationOutput:
                  ranks,
                  model_name="model",
                  rouge_scores=None,
+                 num_gold=None,
                  compute_macro_scores=True,
                  metrics="match"):
+        """
+
+        Initializes an EvaluationOutput object.
+
+        :param num_ranked_queries: The total number of queries for which ranking was done.
+        :param num_judged_queries: The total number of queries that were judged.
+        :param doc_scores: A dictionary mapping document IDs to their corresponding scores.
+        :param ranks: A dictionary mapping query IDs to a list of document IDs in ranked order.
+        :param model_name: The name of the model used for ranking (default is "model").
+        :param rouge_scores: A dictionary mapping query IDs to their corresponding Rouge scores (default is None).
+        :param num_gold: The number of gold standard documents per query (default is None).
+        :param compute_macro_scores: A boolean indicating whether to compute macro scores (default is True).
+        :param metrics: The metrics to be computed, separated by commas (default is "match").
+
+        :returns: None
+
+        """
         self.model_name = model_name
         self.map = None
         self.mrr = None
@@ -25,6 +43,7 @@ class EvaluationOutput:
         self.ranks = ranks
         self.rouge_scores = rouge_scores
         self.display_metrics = metrics.split(",")
+        self.num_gold = num_gold
         self.compute_metrics()
 
     def compute_metrics(self):
@@ -69,12 +88,21 @@ class EvaluationOutput:
             doc_map = list(itertools.accumulate(doc_match, operator.add))
             doc_match = list(itertools.accumulate(doc_match, max))
             doc_dcg = list(itertools.accumulate(doc_dcg, operator.add))
+            last_rank = self.ranks[0]
+            j = 0
+            while j < len(self.ranks) and self.ranks[j] <= len(relevant):
+                last_rank = self.ranks[j]
+                j+=1
 
             for i in self.ranks:
-                self.ndcg[i] += doc_dcg[i]/self.idcg[i]
-                self.match[i] += doc_match[i]
-                self.mrr[i] += doc_mrr[i]
-                self.map[i] = doc_map[i]*1.0/i
+                update = i
+                if i>last_rank:
+                    update = last_rank
+                self.ndcg[i] += doc_dcg[update]/self.idcg[min(update, self.num_gold[qid])]
+                self.match[i] += doc_match[update]
+                self.mrr[i] += doc_mrr[update]
+                self.map[i] = doc_map[update]*1.0/update
+
             # print(self.match)
 
 

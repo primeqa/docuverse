@@ -56,6 +56,9 @@ class SearchCorpus(object):
                 passages.append(itm)
         return passages
 
+    def __iter__(self):
+        return iter(self.documents)
+
     def prepare_for_ingestion(self, max_doc_length: int = 512, stride: int = 256, title_handling: str = "all"):
         # TODO - Add code using TextTiler
         return self.documents

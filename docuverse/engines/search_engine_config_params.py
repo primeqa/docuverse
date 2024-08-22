@@ -30,8 +30,14 @@ class RetrievalArguments(GenericArguments):
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
-
+    project_dir: str = field(
+        default=None,
+        metadata={
+            "help": "The root dir for the configuration files."
+        }
+    )
     _argument_group_name = "Search Arguments"
+
     model_name: str = field(
         default="",
         metadata={"help": "Pre-trained model name or path if not the same as model_name"}
@@ -219,9 +225,16 @@ class RetrievalArguments(GenericArguments):
     )
 
     num_preprocessor_threads: Optional[int] = field(
-        default=1,
+        default=-1,
         metadata={
             "help": "If provided, it specifies the number of threads to use for preprocessing data"
+        }
+    )
+
+    num_search_threads: Optional[int] = field(
+        default=1,
+        metadata={
+            "help": "If provided, it will search with multiple threads."
         }
     )
 
@@ -229,6 +242,21 @@ class RetrievalArguments(GenericArguments):
         default=False,
         metadata={
             "help": "If provided, the cache will be ignored when reading the documents."
+        }
+    )
+
+    duplicate_removal: Optional[bool]|None = field(
+        default=None,
+        metadata={
+            "help": "Defines the strategy for removing duplicates (default: don't remove). It can be 'rouge' (based on "
+                    "rouge similarity) or 'exact' (exact match)"
+        }
+    )
+
+    rouge_duplicate_threshold: Optional[float] = field(
+        default=0.9,
+        metadata={
+            "help": "Defines the threshold for the rouge score when removing duplicates."
         }
     )
 
@@ -331,6 +359,14 @@ class EngineArguments(GenericArguments):
         }
 
     )
+
+    cache_dir: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "The cache directory to use for storing intermediate results."
+        }
+    )
+
     action_flags = {
         "i": "ingest",
         "u": "update",
@@ -371,6 +407,13 @@ class RerankerArguments(GenericArguments):
         }
     )
 
+    reranker_gpu_batch_size: Optional[int] = field(
+        default=128,
+        metadata={
+            "help": "The gpu batch size to use."
+        }
+    )
+
     reranker_combine_weight: Optional[float] = field(
         default=1.0,
         metadata={
@@ -386,6 +429,13 @@ class RerankerArguments(GenericArguments):
         }
     )
 
+    reranker_engine: Literal["dense", "splade"] = field(
+        default="dense",
+        metadata={
+            "help": "The model type to use for reranking."
+        }
+    )
+
 
 @dataclass
 class EvaluationArguments(GenericArguments):
@@ -396,14 +446,6 @@ class EvaluationArguments(GenericArguments):
         metadata={
             "help": "If provided, will compute the ROUGE score between the answers and the gold passage "
                     "(note: it will be pretty slow for long documents)."
-        }
-    )
-
-    duplicate_removal: Optional[bool] = field(
-        default=False,
-        metadata={
-            "help": "Defines the strategy for removing duplicates (default: don't remove). It can be 'rouge' (based on "
-                    "rouge similarity) or 'exact' (exact match)"
         }
     )
 
@@ -467,6 +509,8 @@ class SearchEngineConfig:
         self.doc_based = config.get("doc-based", False)
         self.db_engine = config.get("db-engine", "es-dense")
         self.server = config.get("server", None)
+        self.data_template = config.get("data_template", None)
+        self.query_template = config.get("query_template", None)
 
 
 class RunConfig(GenericArguments):

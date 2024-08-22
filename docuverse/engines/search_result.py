@@ -38,6 +38,9 @@ class SearchResult:
         def as_dict(self):
             return self.__dict__
 
+        def get(self, item, default=None):
+            return getattr(self, item, default)
+
     def __init__(self, question, data, **kwargs):
         self.retrieved_passages = []
         self.rouge_scorer = None
@@ -58,9 +61,13 @@ class SearchResult:
 
     def remove_duplicates(self, duplicate_removal: str = "none",
                           rouge_duplicate_threshold: float = -1.0):
-        if duplicate_removal is None or duplicate_removal == "none" or self.retrieved_passages == []:
+        if (duplicate_removal is None or
+                duplicate_removal == "none" or
+                self.retrieved_passages == []
+        ):
             return
-        ret = SearchResult([])
+        # ret = SearchResult(question=self.question, data=[])
+        keep_passages = []
         if duplicate_removal == "exact":
             seen = {self.retrieved_passages[0].get_text(): 1}
             ret = [self.retrieved_passages[0]]
@@ -68,7 +75,7 @@ class SearchResult:
                 text_ = r.get_text()
                 if text_ not in seen:
                     seen[text_] = 1
-                    ret.append(r)
+                    keep_passages.append(r)
         elif duplicate_removal == "rouge":
             from rouge_score.rouge_scorer import RougeScorer
             if self.rouge_scorer is None:
@@ -78,14 +85,22 @@ class SearchResult:
             for r in self.retrieved_passages[1:]:
                 found = False
                 text_ = r.get_text()
-                for c in ret:
+                for c in keep_passages:
                     scr = self.rouge_scorer.score(c.get_text(), text_)
                     if scr['rougeL'].fmeasure >= rouge_duplicate_threshold:
                         found = True
                         break
                 if not found:
-                    ret.append(r)
-        return ret
+                    keep_passages.append(r)
+                    # ret.append(r)
+        elif duplicate_removal.startswith("key:"):
+            key = duplicate_removal.replace("key:","")
+            seen = set()
+            for r in self.retrieved_passages:
+                if r[key] not in seen:
+                    seen.add(r[key])
+                    keep_passages.append(r)
+        self.retrieved_passages = keep_passages
 
     def __getitem__(self, i: int) -> SearchDatum:
         return self.retrieved_passages[i]
@@ -111,8 +126,12 @@ class SearchResult:
             if len(data) == 0:
                 return []
             elif isinstance(data[0], dict):
-                for r in data:
-                    self.retrieved_passages.append(SearchResult.SearchDatum(r))
+                if 'entity' in data[0]:
+                    for r in data:
+                        self.retrieved_passages.append(SearchResult.SearchDatum(r['entity']))
+                else:
+                    for r in data:
+                        self.retrieved_passages.append(SearchResult.SearchDatum(r))
             elif data[0].__class__ == SearchResult.SearchDatum:
                 for item in data:
                     self.retrieved_passages.append(item)
@@ -122,8 +141,8 @@ class SearchResult:
             raise Exception("TODO: Pending implementation")
             return
 
-    def as_list(self):
-        return {"question": self.question.as_list(), "retrieved_passages": [r.as_dict() for r in self.retrieved_passages]}
+    def as_dict(self):
+        return {"question": self.question.as_dict(), "retrieved_passages": [r.as_dict() for r in self.retrieved_passages]}
 
     def as_json(self, **kwargs):
-        return json.dumps(self.as_list(), **kwargs)
+        return json.dumps(self.as_dict(), **kwargs)
