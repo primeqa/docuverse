@@ -40,51 +40,51 @@ class SpladeSentenceTransformer:
         sorted_sents_inds = sorted(range(0, len(sentences)), key=lambda x: len(sentences[x]), reverse=True)
         sorted_sents = [sentences[i] for i in sorted_sents_inds]
 
-        tk = tqdm(desc="Processed sents", disable=not show_progress_bar, total=num_sents)
-        for b in range(0, num_sents, _batch_size):
-            this_batch_size = min(b+_batch_size, num_sents)-b
-            input_dict = self.tokenizer(sorted_sents[b:b+this_batch_size],
-                                        max_length=512, padding=True, return_tensors='pt', truncation=True)
-            tm.add_timing("tokenizer")
-            num_toks += (input_dict['input_ids'] != 1).sum().item()
-            attention_mask = input_dict['attention_mask']  # (bs,seqlen)
-            if self.device == "cuda":
-                input_dict['input_ids'] = input_dict['input_ids'].cuda()
-                input_dict['attention_mask'] = input_dict['attention_mask'].cuda()
-                if 'token_type_ids' in input_dict:
-                    input_dict['token_type_ids'] = input_dict['token_type_ids'].cuda()
-            tm.add_timing("copy_to_gpu")
-            outputs = self.model(**input_dict)  # , return_dict=True)
-            tm.add_timing("bert_encoding")
-            hidden_state = outputs[0]#.cpu()
-            tm.add_timing("copy_to_cpu")
-            maxarg = torch.log(1.0 + torch.relu(hidden_state))
-            tm.add_timing("relu")
-            #hidden_state = hidden_state.cpu()
+        with tqdm(desc="Processed sents", disable=not show_progress_bar, total=num_sents, leave=False) as tk:
+            for b in range(0, num_sents, _batch_size):
+                this_batch_size = min(b+_batch_size, num_sents)-b
+                input_dict = self.tokenizer(sorted_sents[b:b+this_batch_size],
+                                            max_length=512, padding=True, return_tensors='pt', truncation=True)
+                tm.add_timing("tokenizer")
+                num_toks += (input_dict['input_ids'] != 1).sum().item()
+                attention_mask = input_dict['attention_mask']  # (bs,seqlen)
+                if self.device == "cuda":
+                    input_dict['input_ids'] = input_dict['input_ids'].cuda()
+                    input_dict['attention_mask'] = input_dict['attention_mask'].cuda()
+                    if 'token_type_ids' in input_dict:
+                        input_dict['token_type_ids'] = input_dict['token_type_ids'].cuda()
+                tm.add_timing("copy_to_gpu")
+                outputs = self.model(**input_dict)  # , return_dict=True)
+                tm.add_timing("bert_encoding")
+                hidden_state = outputs[0]#.cpu()
+                tm.add_timing("copy_to_cpu")
+                maxarg = torch.log(1.0 + torch.relu(hidden_state))
+                tm.add_timing("relu")
+                #hidden_state = hidden_state.cpu()
 
-            input_mask_expanded = attention_mask.unsqueeze(-1).to(maxarg.device)# .expand(hidden_state.size()).type(hidden_state.dtype)
+                input_mask_expanded = attention_mask.unsqueeze(-1).to(maxarg.device)# .expand(hidden_state.size()).type(hidden_state.dtype)
 
-             # bs * seqlen * voc
-            maxdim1 = torch.max(maxarg * input_mask_expanded, dim=1).values  # bs * voc
-            tm.add_timing("attention_mask_filter")
-            s1 = torch.sort(maxdim1, descending=True, dim=1)  # values = bs * voc,  indices = bs * voc
-            lengths = attention_mask.sum(dim=1)
-            tm.add_timing("sort")
-            sizes = torch.sum(s1.values>0, dim=1)
-            tm.add_timing("compute_expansion_sizes")
+                 # bs * seqlen * voc
+                maxdim1 = torch.max(maxarg * input_mask_expanded, dim=1).values  # bs * voc
+                tm.add_timing("attention_mask_filter")
+                s1 = torch.sort(maxdim1, descending=True, dim=1)  # values = bs * voc,  indices = bs * voc
+                lengths = attention_mask.sum(dim=1)
+                tm.add_timing("sort")
+                sizes = torch.sum(s1.values>0, dim=1)
+                tm.add_timing("compute_expansion_sizes")
 
-            for idoc in range(this_batch_size):
-                expanded_toks = self.tokenizer.convert_ids_to_tokens(s1.indices[idoc, 0:sizes[idoc]])
-                tm.add_timing("expansion::convert_ids_to_tokens")
-                expanded_weights = s1.values[idoc, 0:sizes[idoc]]
-                tm.add_timing("expansion::get_weights")
-                expansion = [(t, float(w)) for t, w in zip(expanded_toks, expanded_weights)]
-                tm.add_timing("expansion::create_expansion")
-                expansions.append(expansion)
-                tm.add_timing("expansion::add_expansion")
-            # tm.add_timing("expansion")
-            tk.update(min(_batch_size, num_sents-b))
-        tk.close()
+                for idoc in range(this_batch_size):
+                    expanded_toks = self.tokenizer.convert_ids_to_tokens(s1.indices[idoc, 0:sizes[idoc]])
+                    tm.add_timing("expansion::convert_ids_to_tokens")
+                    expanded_weights = s1.values[idoc, 0:sizes[idoc]]
+                    tm.add_timing("expansion::get_weights")
+                    expansion = [(t, float(w)) for t, w in zip(expanded_toks, expanded_weights)]
+                    tm.add_timing("expansion::create_expansion")
+                    expansions.append(expansion)
+                    tm.add_timing("expansion::add_expansion")
+                # tm.add_timing("expansion")
+                tk.update(min(_batch_size, num_sents-b))
+        #tk.close()
 
         tmp = [[]] * len(expansions)
         for i, e in enumerate(expansions):

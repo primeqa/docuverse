@@ -82,7 +82,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         if _batch_size == -1:
             _batch_size = self.batch_size
         if show_progress_bar is None:
-            show_progress_bar = isinstance(texts, str) or max(len(texts), _batch_size) <= 1
+            show_progress_bar = not (isinstance(texts, str) or max(len(texts), _batch_size) <= 1)
 
         if not self.pqa:
             if isinstance(texts, list) and len(texts) > 30 and self.num_devices > 1:

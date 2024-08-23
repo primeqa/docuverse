@@ -55,11 +55,11 @@ def create_retrieval_engine(retriever_config: dict):
 
 def create_reranker_engine(reranker_config: dict|RerankerArguments):
     name = reranker_config.get('reranker_engine', 'dense')
-    if reranker_config.reranker_model is None:
+    if reranker_config.reranker_model is None or name == "none":
         return None
     if name == 'dense':
         return DenseReranker(reranker_config)
     elif name == "splade":
         return SpladeReranker(reranker_config)
     else:
-        raise RuntimeError("The only available reranking engine is 'dense'")
+        raise RuntimeError("The available reranking engine types are 'dense', 'splade', and 'none'.")

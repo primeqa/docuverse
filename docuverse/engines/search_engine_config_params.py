@@ -429,7 +429,7 @@ class RerankerArguments(GenericArguments):
         }
     )
 
-    reranker_engine: Literal["dense", "splade"] = field(
+    reranker_engine: Literal["dense", "splade", "none"] = field(
         default="dense",
         metadata={
             "help": "The model type to use for reranking."

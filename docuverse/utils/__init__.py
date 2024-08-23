@@ -11,7 +11,7 @@ import json
 import copy
 import queue
 
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 
 def get_param(dictionary, key: str, default: str | None | bool = None):
@@ -191,12 +191,12 @@ def file_is_of_type(input_file, extensions: Union[str, List[str]]):
                for ext in itertools.product(extensions, ['', ".bz2", ".gz", ".xz"]))
 
 def parallel_process(process_func, data, num_threads, post_func=None, post_label=None,
-                     msg="Processing items:"):
+                     msg="Processing result:"):
     """
     This method parallelizes the processing of a list of documents using multiple threads.
 
     Parameters:
-    - process_func: The function to apply to each document. It should take a document as input and return a list of processed items.
+    - process_func: The function to apply to each document. It should take a document as input and return a list of processed result.
     - data: The list of documents to process.
     - num_threads: The number of threads to use for processing the documents.
     - post_func (optional): A function to apply to each processed item after applying the process_func. It should take a processed item as input and return a new item.
@@ -204,12 +204,12 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     - msg (optional): The message to display
 
     Returns:
-    - A list of processed items from all the documents.
+    - A list of processed result from all the documents.
 
     Example usage:
     ```python
     def process_document(unit):
-        # Process the document and return a list of items
+        # Process the document and return a list of result
         ...
 
     data = [...]  # List of documents
@@ -219,40 +219,49 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     """
     if num_threads == 1:
         return [process_func(dt) for dt in tqdm(data, desc=msg)]
+
+    num_questions = len(data)
+
     doc_queue = Queue()
     manager = Manager()
     d = manager.dict()
     import multiprocessing as mp
-    def processor(inqueue, d):
+    def processor(inqueue, d, thread_number, size):
         pid = mp.current_process().pid
-        while True:
-            try:
-                id, text = inqueue.get(block=True, timeout=1)
-            except queue.Empty:
-                break
-            except Exception as e:
-                break
+        with tqdm(desc=f"Searching with thread {thread_number}", leave=False,
+                  position=thread_number+1, total=2*size) as tk1:
+            while True:
+                try:
+                    id, text = inqueue.get(block=True, timeout=1)
+                except queue.Empty:
+                    break
+                except Exception as e:
+                    break
 
-            try:
-                items = process_func(text)
-                if post_func is not None:
-                    d[id] = [{**item,
-                              post_label: post_func(item)}
-                              for item in items]
-                else:
-                    d[id] = items
-
-            except Exception as e:
-                d[id] = []
+                try:
+                    result = process_func(text)
+                    if post_func is not None:
+                        if isinstance(result, dict):
+                            d[id] = [{**item,
+                                      post_label: post_func(item)}
+                                      for item in result]
+                        else:
+                            setattr(result, post_label, post_func(result))
+                            d[id] = result
+                    else:
+                        d[id] = result
+                    tk1.update(1)
+                except Exception as e:
+                    d[id] = []
 
     for i, doc in enumerate(data):
         doc_queue.put([i, doc])
     processes = []
+    tk = tqdm(desc=msg, total=doc_queue.qsize(), leave=True, position=0)
     for i in range(num_threads):
-        p = Process(target=processor, args=(doc_queue, d))
+        p = Process(target=processor, args=(doc_queue, d, i, doc_queue.qsize()/num_threads,))
         processes.append(p)
         p.start()
-    tk = tqdm(desc=msg, total=doc_queue.qsize())
     c = doc_queue.qsize()
     while c > 0:
         c1 = doc_queue.qsize()
@@ -260,11 +269,9 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
             tk.update(c - c1)
             c = c1
         time.sleep(0.1)
-    print(f"Dropped out of the while loop: {doc_queue.qsize()}")
-    tk.clear()
-    for i, p in enumerate(processes):
+    # print(f"Dropped out of the while loop: {doc_queue.qsize()}")
+    for p in processes:
         p.join()
-    tpassages = []
-    for i in range(len(data)):
-        tpassages.extend(d[i])
-    return tpassages
+    tk.clear()
+    tk.close()
+    return list(d[i] for i in range(num_questions))
