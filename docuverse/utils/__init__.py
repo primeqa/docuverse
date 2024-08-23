@@ -217,8 +217,19 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     processed_items = parallel_process(process_document, data, num_threads)
     ```
     """
+    def apply_funcs(text):
+        result = process_func(text)
+        if post_func is not None:
+            if isinstance(result[0], dict):
+                result = [{**item,
+                          post_label: post_func(item)}
+                         for item in result]
+            else:
+                setattr(result, post_label, post_func(result))
+        return result
+
     if num_threads == 1:
-        return [process_func(dt) for dt in tqdm(data, desc=msg)]
+        return [apply_funcs(dt) for dt in tqdm(data, desc=msg)]
 
     num_questions = len(data)
 
@@ -228,7 +239,7 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     import multiprocessing as mp
     def processor(inqueue, d, thread_number, size):
         pid = mp.current_process().pid
-        with tqdm(desc=f"Searching with thread {thread_number}", leave=False,
+        with tqdm(desc=f"{msg}/thread {thread_number}", leave=False,
                   position=thread_number+1, total=2*size) as tk1:
             while True:
                 try:
@@ -237,19 +248,18 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
                     break
                 except Exception as e:
                     break
-
                 try:
-                    result = process_func(text)
-                    if post_func is not None:
-                        if isinstance(result, dict):
-                            d[id] = [{**item,
-                                      post_label: post_func(item)}
-                                      for item in result]
-                        else:
-                            setattr(result, post_label, post_func(result))
-                            d[id] = result
-                    else:
-                        d[id] = result
+                    d[id] = apply_funcs(text)
+                    # if post_func is not None:
+                    #     if isinstance(result, dict):
+                    #         d[id] = [{**item,
+                    #                   post_label: post_func(item)}
+                    #                   for item in result]
+                    #     else:
+                    #         setattr(result, post_label, post_func(result))
+                    #         d[id] = result
+                    # else:
+                    #     d[id] = result
                     tk1.update(1)
                 except Exception as e:
                     d[id] = []
@@ -257,7 +267,7 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     for i, doc in enumerate(data):
         doc_queue.put([i, doc])
     processes = []
-    tk = tqdm(desc=msg, total=doc_queue.qsize(), leave=True, position=0)
+    tk = tqdm(desc=f"{msg}:", total=doc_queue.qsize(), leave=True, position=0)
     for i in range(num_threads):
         p = Process(target=processor, args=(doc_queue, d, i, doc_queue.qsize()/num_threads,))
         processes.append(p)

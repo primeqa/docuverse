@@ -4,6 +4,7 @@ import orjson
 import csv
 import re
 import time
+from itertools import chain
 from functools import partial
 from multiprocessing import Manager, Queue, Process
 from typing import Dict, List
@@ -308,26 +309,13 @@ class SearchData:
         output_stream.close()
 
     @classmethod
-    def process_text(cls,
-                     tiler,
-                     unit,
-                     max_doc_size,
-                     stride,
-                     id=None,
-                     remove_url=True,
-                     doc_url=None,
-                     uniform_product_name=None,
-                     data_type="sap",
-                     title_handling="all",
-                     processor=None,
-                     data_template=default_data_template,
-                     docid_filter={},
-                     doc_based=True
-                     ):
+    def process_text(cls, unit:str, tiler, max_doc_size, stride, id=None, remove_url=True, doc_url=None,
+                     uniform_product_name=None, data_type="sap", title_handling="all", processor=None,
+                     data_template=default_data_template, docid_filter={}, doc_based=True):
         """
         Convert a given document or passage (from 'output.json') to a dictionary, splitting the text as necessary.
-        :param tiler: Tiler instance - the Tiler object that creates the tiles from the input text
         :param unit: the paragraph/document structure to proces
+        :param tiler: Tiler instance - the Tiler object that creates the tiles from the input text
         :param max_doc_size: int - the maximum size (in word pieces) of the resulting sub-document/sub-passage texts
         :param stride: int - the stride/overlap for consecutive pieces
         :param remove_url: Boolean - if true, URL in the input text will be replaced with "URL"
@@ -363,7 +351,7 @@ class SearchData:
                         uniform_product_name=uniform_product_name, data_type=data_type, title_handling=title_handling,
                         data_template=data_template)
 
-        if docid_filter and id not in docid_filter or 'title' not in itm or (not itm['title']):
+        if docid_filter and id not in docid_filter: # or 'title' not in itm or (not itm['title']):
             return []
         else:
             if doc_based:
@@ -497,7 +485,7 @@ class SearchData:
                 read_time = tm.mark_and_return_time()
                 print(f" done: {read_time}")
 
-            if num_threads <= 1:
+            if num_threads <= 0:
                 for doc in tqdm(data, desc="Reading docs:"):
                     try:
                         items = process_text_func(unit=doc)
@@ -516,7 +504,8 @@ class SearchData:
                                              post_func=post_func,
                                              post_label="tlen",
                                              data=data, num_threads=num_threads,
-                                             tiler=tiler)
+                                             msg="Tokenizing")
+                tpassages = list(chain.from_iterable(tpassages))
 
             if verbose:
                 read_time = tm.mark_and_return_time()

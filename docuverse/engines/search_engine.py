@@ -66,37 +66,46 @@ class SearchEngine:
         return self.retriever.info()
 
     def search(self, queries: Union[SearchQueries, list[SearchQueries.Query]]) -> List[SearchResult]:
-        # self.retriever.init_client()
-        answers = None
-        cache_file = None
         self.write_necessary = False
-        if self.config.cache_dir is not None and not self.config.no_cache:
-            # Read the results if available, don't search again
-            base_cache_file = os.path.basename(self.config.output_file.replace(".json", ".retrieve.pkl.bz2"))
-            cache_file = os.path.join(self.config.cache_dir, base_cache_file)
-            if os.path.exists(cache_file):
-                print(f"Reading cached search results from {cache_file}")
-                answers = self.read_output(cache_file)
+        answers, cache_file = self.read_cache_file(extension=".retrieve.pkl.bz2")
         if answers is None:
             self.retriever.reconnect_if_necessary()
-            answers = parallel_process(self.retriever.search, queries, num_threads=self.config.num_search_threads,
-                                       msg=f"Searching documents ({self.config.num_search_threads} thread(s)):")
-            # else:
-            #     answers = [self.retriever.search(query) for query in tqdm(queries, desc="Processing queries: ")]
+            answers = parallel_process(self.retriever.search, queries,
+                                       num_threads=self.config.num_search_threads,
+                                       msg=f"Searching documents:")
             self.write_necessary = True
-            if cache_file is not None:
-                if not os.path.exists(self.config.cache_dir):
-                    os.makedirs(self.config.cache_dir)
-                self.write_output(answers, cache_file)
+            self.write_cache_file(answers, cache_file)
         if self.reranker is not None:
             answers = self.reranker.rerank(answers)
             self.write_necessary = True
-            if cache_file is not None:
-                cache_file = cache_file.replace("retrieve", "rerank")
-                self.write_output(answers, cache_file)
-            # answers = [self.reranker.rerank(answer) for answer in tqdm(answers, desc="Reranking queries: ")]
+            cache_file.replace(".retrieve.pkl.bz2", ".rerank.pkl.bz2")
+            self.write_cache_file(answers, cache_file)
 
         return answers
+
+    def read_cache_file(self, extension):
+        answers = None
+        cache_file = None
+        if self.config.cache_dir is not None and not self.config.no_cache:
+            # Read the results if available, don't search again
+            base_cache_file = os.path.basename(self.config.output_file.replace(".json", extension))
+            cache_file = os.path.join(self.config.cache_dir, base_cache_file)
+            if os.path.exists(cache_file):
+                print(f"Reading cached search results from {cache_file}")
+                try:
+                    answers = self.read_output(cache_file)
+                except Exception as e:
+                    print(f"Failed to read cache file {cache_file}: {e}")
+        return answers, cache_file
+
+    def write_cache_file(self, values, cache_file):
+        if cache_file is not None:
+            if not os.path.exists(self.config.cache_dir):
+                os.makedirs(self.config.cache_dir)
+            try:
+                self.write_output(values, cache_file)
+            except Exception as e:
+                print(f"Failed to write cache file {cache_file}: {e}")
 
     def write_output(self, output, output_file:str|None|bytes=None, overwrite=False):
         """

@@ -17,13 +17,13 @@ class DataTemplate:
         }
     )
     relevant_header: str = field(
-        default=None,
+        default="relevant",
         metadata={
             "help": "The header for the query header for relevant document ids."
         }
     )
     answers_header: str = field(
-        default=None,
+        default="answers",
         metadata={
             "help": "The header for the query textual answers"
         }
@@ -88,6 +88,8 @@ class DataTemplate:
     def __post_init__(self):
         if self.keep_fields is not None:
             self.extra_fields = self.keep_fields.split("|")
+        if isinstance(self.extra_fields, str) and self.extra_fields == "None":
+            self.extra_fields = None
 
     def get(self, item, default=None):
         return getattr(self, item, default)
