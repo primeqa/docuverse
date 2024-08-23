@@ -4,7 +4,7 @@ import json
 
 from docuverse.engines import SearchData
 from docuverse.engines.data_template import default_query_template, DataTemplate
-from docuverse.utils import get_param
+from docuverse.utils import get_param, at_most
 
 
 class SearchQueries(SearchData):
@@ -77,6 +77,9 @@ class SearchQueries(SearchData):
             return qfile
 
         questions = []
+        max_num_questions = get_param(kwargs, 'max_num_questions', -1)
+        max_num_questions = -1 if max_num_questions is None else int(max_num_questions)
+        ignore_empty_questions = bool(get_param(kwargs, 'ignore_empty_questions', False))
         if isinstance(in_files, str):
             in_files = [in_files]
         elif not isinstance(in_files, list):
@@ -84,12 +87,6 @@ class SearchQueries(SearchData):
 
         for in_file in in_files:
             with open(in_file, "r", encoding="utf-8") as file_stream:
-                delim = "," if ".csv" in in_file else "\t"
-                # csv_reader = \
-                #     csv.DictReader(file_stream, fieldnames=fields, delimiter=delim) \
-                #         if fields is not None \
-                #         else csv.DictReader(file_stream, delimiter=delim)
-                # next(csv_reader)
                 question_data = cls._read_data(in_file)
                 if 'question_file' in question_data and 'goldstandard_file' in question_data:
                     tfile = get_filename(in_file, question_data['goldstandard_file'])
@@ -109,14 +106,9 @@ class SearchQueries(SearchData):
                                                         query_template=query_template,
                                                         relevant_map=gs_map,
                                                         **kwargs)
-                    # test_questions = []
-                    # for q in tquestions:
-                    #     if q.id in gs_map:
-                    #         q.relevant = get_param(gs_map, q.id, '')
-                    #         test_questions.append(q)
                     questions.extend(tquestions)
                 else:
-                    for it, row in enumerate(question_data):
+                    for it, row in enumerate(at_most(question_data, max_num_questions)):
                         question = get_param(row, query_template.text_header)
                         if url is not None:
                             question = (re.sub(url, lang, 'URL', question), remv_stopwords)
@@ -125,6 +117,8 @@ class SearchQueries(SearchData):
                             rels = get_param(relevant_map, get_param(row, query_template.id_header, None), None)
                         if rels is None:
                             rels = get_param(row, query_template.relevant_header, "")
+                        if ignore_empty_questions and (rels is None or not rels):
+                            continue
                         if isinstance(rels, str):
                             rels = rels.split(",")
                         itm = {query_template.text_header: question,
@@ -164,4 +158,5 @@ class SearchQueries(SearchData):
                         itm['passages'] = answers
 
                         questions.append(SearchQueries.Query(template=query_template, **itm))
+
         return questions

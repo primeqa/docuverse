@@ -209,6 +209,21 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    max_num_questions: Optional[str] | None = field(
+        default=None,
+        metadata={
+            "help": "The maximum number of questions to search (MSMarco has 509k questions!)."
+        }
+    )
+
+    ignore_empty_questions: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "If present and set to true, it will ignore questions that don't have any relevant documents. "
+                    "Useful for evaluation."
+        }
+    )
+
     bulk_batch: Optional[int] = field(
         default=40,
         metadata={
@@ -364,6 +379,13 @@ class EngineArguments(GenericArguments):
         default=None,
         metadata={
             "help": "The cache directory to use for storing intermediate results."
+        }
+    )
+
+    output_name: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "The output name to use for the metrics."
         }
     )
 

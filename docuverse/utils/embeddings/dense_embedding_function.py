@@ -85,6 +85,8 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             show_progress_bar = not (isinstance(texts, str) or max(len(texts), _batch_size) <= 1)
 
         if not self.pqa:
+            sorted_inds = sorted(range(0, len(texts)), key=lambda x: len(texts[x]), reverse=True)
+            stexts = [texts[sorted_inds[i]] for i in range(len(texts))]
             if isinstance(texts, list) and len(texts) > 30 and self.num_devices > 1:
                 if self.emb_pool is None:
                     self.start_pool()
@@ -97,6 +99,10 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                                          show_progress_bar=show_progress_bar,
                                          normalize_embeddings=True
                                          ).tolist()
+            tmp_embs = [None] * len(texts)
+            for i in range(len(texts)):
+                tmp_embs[sorted_inds[i]] = embs[i]
+            embs = tmp_embs
         else:
             raise NotImplemented
             # if batch_size < 0:

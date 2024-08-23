@@ -76,10 +76,14 @@ class SearchEngine:
             self.write_necessary = True
             self.write_cache_file(answers, cache_file)
         if self.reranker is not None:
-            answers = self.reranker.rerank(answers)
-            self.write_necessary = True
-            cache_file.replace(".retrieve.pkl.bz2", ".rerank.pkl.bz2")
-            self.write_cache_file(answers, cache_file)
+            ranswers, cache_file = self.read_cache_file(extension=".rerank.pkl.bz2")
+            if ranswers is None:
+                answers = self.reranker.rerank(answers)
+                self.write_necessary = True
+                # cache_file.replace(".retrieve.pkl.bz2", ".rerank.pkl.bz2")
+                self.write_cache_file(answers, cache_file)
+            else:
+                answers = ranswers
 
         return answers
 
@@ -176,3 +180,9 @@ class SearchEngine:
 
     def read_questions(self, file):
         return SearchQueries.read(file, **vars(self.config.retriever_config))
+
+    def get_output_name(self):
+        if self.config.output_name is None:
+            return self.config.index_name
+        else:
+            return self.config.output_name
