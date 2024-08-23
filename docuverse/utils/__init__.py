@@ -249,7 +249,8 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
                 except Exception as e:
                     break
                 try:
-                    d[id] = apply_funcs(text)
+                    res = apply_funcs(text)
+                    d[i] = res
                     # if post_func is not None:
                     #     if isinstance(result, dict):
                     #         d[id] = [{**item,

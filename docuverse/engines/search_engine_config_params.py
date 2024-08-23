@@ -458,6 +458,13 @@ class RerankerArguments(GenericArguments):
         }
     )
 
+    reranker_lowercase: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "If specified, the text will be lowercased before reranking."
+        }
+    )
+
 
 @dataclass
 class EvaluationArguments(GenericArguments):

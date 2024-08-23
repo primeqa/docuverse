@@ -1,6 +1,4 @@
 from copy import deepcopy
-
-from IPython import embed
 from tqdm import tqdm
 
 from docuverse.engines.search_result import SearchResult
@@ -34,10 +32,13 @@ class Reranker(object):
                     id2pos[doc.id] = len(texts)
                     texts.append(doc.text)
 
-        embeddings = self.model.encode(texts, show_progress=True)
+        if self.config.reranker_lowercase:
+            embeddings = self.model.encode([l.lower() for l in texts], show_progress_bar=True)
+        else:
+            embeddings = self.model.encode(texts, show_progress_bar=True)
 
         # counter = tqdm(desc="Reranking documents: ", total=num_docs, disable=not show_progress)
-        for qid, answer in tqdm(enumerate(answer_list), disable=not show_progress):
+        for qid, answer in tqdm(enumerate(answer_list), total=len(answer_list), disable=not show_progress):
             qembed = embeddings[qid]
             similarity_scores = [self.similarity(qembed, embeddings[id2pos[doc.id]]) for doc in answer]
             num_examples = len(answer)
@@ -116,5 +117,5 @@ class Reranker(object):
 
         total_docs = (len(answer_list[0]) + 1) * len(answer_list)
         saved = total_docs - len(embeddings)
-        print(f"Saved {saved} embedding computations ({saved/total_docs:.1%}%).")
+        print(f"Saved {saved} embedding computations ({saved/total_docs:.1%}).")
         return output[0] if is_single_instance else output

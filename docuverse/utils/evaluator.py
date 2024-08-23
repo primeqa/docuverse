@@ -145,7 +145,7 @@ class EvaluationEngine:
                                    num_judged_queries=num_eval_questions,
                                    doc_scores=self.relevant,
                                    num_gold=num_gold,
-                                   ranks=self.iranks,
+                                   ranks=self.config.iranks,
                                    rouge_scores=rouge_scores,
                                    compute_macro_scores=True,
                                    model_name=model_name,
