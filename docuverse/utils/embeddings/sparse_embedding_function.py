@@ -40,7 +40,7 @@ class SpladeSentenceTransformer:
         sorted_sents_inds = sorted(range(0, len(sentences)), key=lambda x: len(sentences[x]), reverse=True)
         # sorted_sents = [sentences[i] for i in sorted_sents_inds]
 
-        with tqdm(desc="Processed candidates", disable=not show_progress_bar, total=num_sents, leave=False) as tk:
+        with tqdm(desc="Processed candidates", disable=not show_progress_bar, total=num_sents, leave=True) as tk:
             for b in range(0, num_sents, _batch_size):
                 this_batch_size = min(b+_batch_size, num_sents)-b
                 input_dict = self.tokenizer([sentences[sorted_sents_inds[i]] for i in range(b,b+this_batch_size)],
@@ -70,13 +70,13 @@ class SpladeSentenceTransformer:
                 s1 = torch.sort(maxdim1, descending=True, dim=1)  # values = bs * voc,  indices = bs * voc
                 lengths = attention_mask.sum(dim=1)
                 tm.add_timing("sort")
-                sizes = torch.sum(s1.values>0, dim=1)
+                sizes = torch.sum(s1.values>0, dim=1).cpu()
                 tm.add_timing("compute_expansion_sizes")
 
                 for idoc in range(this_batch_size):
-                    expanded_toks = self.tokenizer.convert_ids_to_tokens(s1.indices[idoc, 0:sizes[idoc]])
+                    expanded_toks = self.tokenizer.convert_ids_to_tokens(s1.indices[idoc, 0:sizes[idoc]].cpu())
                     tm.add_timing("expansion::convert_ids_to_tokens")
-                    expanded_weights = s1.values[idoc, 0:sizes[idoc]]
+                    expanded_weights = s1.values[idoc, 0:sizes[idoc]].cpu()
                     tm.add_timing("expansion::get_weights")
                     expansion = [(t, float(w)) for t, w in zip(expanded_toks, expanded_weights)]
                     tm.add_timing("expansion::create_expansion")
