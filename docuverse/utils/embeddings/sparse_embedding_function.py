@@ -56,7 +56,7 @@ class SpladeSentenceTransformer:
                 tm.add_timing("copy_to_gpu")
                 outputs = self.model(**input_dict)  # , return_dict=True)
                 tm.add_timing("bert_encoding")
-                hidden_state = outputs[0]#.cpu()
+                hidden_state = outputs[0].detach() #.cpu()
                 tm.add_timing("copy_to_cpu")
                 maxarg = torch.log(1.0 + torch.relu(hidden_state))
                 tm.add_timing("relu")
@@ -84,6 +84,7 @@ class SpladeSentenceTransformer:
                     tm.add_timing("expansion::add_expansion")
                 # tm.add_timing("expansion")
                 tk.update(min(_batch_size, num_sents-b))
+                del hidden_state
         #tk.close()
 
         tmp = [[]] * len(expansions)

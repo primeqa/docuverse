@@ -247,7 +247,7 @@ class RetrievalArguments(GenericArguments):
     )
 
     num_search_threads: Optional[int] = field(
-        default=1,
+        default=-1,
         metadata={
             "help": "If provided, it will search with multiple threads."
         }

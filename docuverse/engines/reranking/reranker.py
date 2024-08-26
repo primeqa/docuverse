@@ -33,9 +33,11 @@ class Reranker(object):
                     texts.append(doc.text)
 
         if self.config.reranker_lowercase:
-            embeddings = self.model.encode([l.lower() for l in texts], show_progress_bar=True)
+            embeddings = self.model.encode([l.lower() for l in texts], show_progress_bar=True,
+                                           _batch_size=self.config.reranker_gpu_batch_size)
         else:
-            embeddings = self.model.encode(texts, show_progress_bar=True)
+            embeddings = self.model.encode(texts, show_progress_bar=True,
+                                           _batch_size=self.config.reranker_gpu_batch_size)
 
         # counter = tqdm(desc="Reranking documents: ", total=num_docs, disable=not show_progress)
         for qid, answer in tqdm(enumerate(answer_list), total=len(answer_list), disable=not show_progress):

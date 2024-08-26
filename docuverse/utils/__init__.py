@@ -228,10 +228,10 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
                 setattr(result, post_label, post_func(result))
         return result
 
-    if num_threads == 1:
+    if num_threads <= 1:
         return [apply_funcs(dt) for dt in tqdm(data, desc=msg)]
 
-    num_questions = len(data)
+    num_items = len(data)
 
     doc_queue = Queue()
     manager = Manager()
@@ -250,7 +250,7 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
                     break
                 try:
                     res = apply_funcs(text)
-                    d[i] = res
+                    d[id] = res
                     # if post_func is not None:
                     #     if isinstance(result, dict):
                     #         d[id] = [{**item,
@@ -285,4 +285,4 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
         p.join()
     tk.clear()
     tk.close()
-    return list(d[i] for i in range(num_questions))
+    return list(d[i] for i in range(num_items))
