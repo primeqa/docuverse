@@ -35,7 +35,7 @@ class Reranker(object):
         if self.config.reranker_lowercase:
             embeddings = self.model.encode([l.lower() for l in texts], show_progress_bar=True)
         else:
-            embeddings = self.model.encode(texts, show_progress_bar=True)
+            embeddings = self.model.encode(texts, show_progress_bar=True, message="Reranking answers")
 
         # counter = tqdm(desc="Reranking documents: ", total=num_docs, disable=not show_progress)
         for qid, answer in tqdm(enumerate(answer_list), total=len(answer_list), disable=not show_progress):

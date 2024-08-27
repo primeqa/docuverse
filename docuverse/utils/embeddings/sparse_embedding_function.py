@@ -39,8 +39,9 @@ class SpladeSentenceTransformer:
         num_sents = len(sentences)
         sorted_sents_inds = sorted(range(0, len(sentences)), key=lambda x: len(sentences[x]), reverse=True)
         # sorted_sents = [sentences[i] for i in sorted_sents_inds]
+        message = get_param(kwargs, 'message', "Processed candidates")
 
-        with tqdm(desc="Processed candidates", disable=not show_progress_bar, total=num_sents, leave=True) as tk:
+        with tqdm(desc=message, disable=not show_progress_bar, total=num_sents, leave=True) as tk:
             for b in range(0, num_sents, _batch_size):
                 this_batch_size = min(b+_batch_size, num_sents)-b
                 input_dict = self.tokenizer([sentences[sorted_sents_inds[i]] for i in range(b,b+this_batch_size)],
