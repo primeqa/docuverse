@@ -22,16 +22,26 @@ class SpladeReranker(Reranker):
 #         norm2 = float(torch.linalg.norm(embedding2[:,1], ord=2))
 
         # print (norm1)
-        device = self.model.model.device 
+        device = self.model.device
         embedding1 = embedding1.to(device)
-        embedding2 = embedding2.to(device)
-        
-        emb1 = torch.zeros(self.model.model.tokenizer.vocab_size, dtype=torch.bfloat16, device=device)
-        emb1[embedding1[:,0].int()] = embedding1[:,1]
+        vocab_size = self.model.vocab_size
 
-        emb2 = torch.zeros(self.model.model.tokenizer.vocab_size, dtype=torch.bfloat16, device=device)
-        emb2[embedding2[:,0].int()] = embedding2[:,1]
+        emb1 = torch.zeros(vocab_size, dtype=torch.bfloat16, device=device)
+        emb1[embedding1[:, 0].int()] = embedding1[:, 1]
+        if isinstance(embedding2, list):
+            num_vectors = len(embedding2)
+            emb2 = torch.zeros((num_vectors,vocab_size), dtype=torch.bfloat16, device=device)
+            for i in range(len(embedding2)):
+                embedding2[i] = embedding2[i].to(device)
+                emb2[i][embedding2[i][:, 0].int()] = embedding2[i][:, 1]
+            prod = torch.matmul(emb1.reshape(1, vocab_size), emb2.reshape(num_vectors, vocab_size, 1))
+        else:
+            embedding2 = embedding2.to(device)
 
-        prod =  torch.inner(emb1, emb2)
+            emb2 = torch.zeros(vocab_size, dtype=torch.bfloat16, device=device)
+            emb2[embedding2[:,0].int()] = embedding2[:,1]
+
+            prod =  torch.dot(emb1, emb2)
+
         return prod #/ (norm1*norm2) if norm1+norm2>1e-7 else 0
 

@@ -31,9 +31,9 @@ class SpladeSentenceTransformer:
         self.max_terms = max_terms
 
     @torch.no_grad()
-    def encode(self, sentences: List[str], _batch_size=-1, show_progress_bar=False, **kwargs):
+    def encode(self, sentences: List[str], _batch_size=16, show_progress_bar=False, **kwargs):
         # input_dict=self.tokenizer(sentences, max_length=512,padding='max_length',return_tensors='pt')
-        tm = timer("reranking::search::encode")
+        tm = timer("reranking::encode")
         expansions = []
         num_toks = 0
         max_num_expansion = 500
@@ -78,16 +78,21 @@ class SpladeSentenceTransformer:
                 tm.add_timing("expansion::add_expansion")
                 tk.update(min(_batch_size, num_sents-b))
 
-        tmp = [[]] * len(expansions)
-        for i, e in enumerate(expansions):
-            tmp[sorted_sents_inds[i]] = e
-        return tmp, num_toks
+        unsorted_expansions = [[]] * len(expansions)
 
+        for i, e in enumerate(expansions):
+            unsorted_expansions[sorted_sents_inds[i]] = e
+        return unsorted_expansions
+
+    @staticmethod
     def make_vector_from_expansions(expansion, scale):
         eps = 1.0 / scale
         vec = Counter({t: int(scale * w) for n, (t, w) in enumerate(expansion)})  # if w>eps } )
         return {t: w for t, w in vec.most_common()}
 
+    def convert_token_ids_to_tokens(self, res):
+        expansions = [ [(self.tokenizer.convert_ids_to_tokens(int(tok[0])), float(tok[1])) for tok in elem ] for elem in res ]
+        return expansions
 
 class SparseEmbeddingFunction(EmbeddingFunction):
     def __init__(self, model_or_directory_name, batch_size=128, **kwargs):
@@ -134,14 +139,11 @@ class SparseEmbeddingFunction(EmbeddingFunction):
         if show_progress_bar is None:
             show_progress_bar = not (isinstance(texts, str) or max(len(texts), _batch_size) <= 1)
 
-        res, num_tokens = self.model.encode(texts, _batch_size=_batch_size,
+        res = self.model.encode(texts, _batch_size=_batch_size,
                                             show_progress_bar=show_progress_bar, **kwargs)
         
         if kwargs.get("create_vector_for_ingestion", False):
-            res = self.convert_token_ids_to_tokens(res)
+            res = self.model.convert_token_ids_to_tokens(res)
 
         return res
 
-    def convert_token_ids_to_tokens(self, res):
-        expansions = [ [(self.tokenizer.convert_ids_to_tokens(int(tok[0])), float(tok[1])) for tok in elem ] for elem in res ]
-        return expansions

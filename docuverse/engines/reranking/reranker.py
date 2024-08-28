@@ -2,7 +2,7 @@ from copy import deepcopy
 from tqdm import tqdm
 
 from docuverse.engines.search_result import SearchResult
-
+from docuverse.utils.timer import timer
 
 
 class Reranker(object):
@@ -38,9 +38,11 @@ class Reranker(object):
             embeddings = self.model.encode(texts, show_progress_bar=True, message="Reranking answers")
 
         # counter = tqdm(desc="Reranking documents: ", total=num_docs, disable=not show_progress)
+        tm = timer("reranking")
         for qid, answer in tqdm(enumerate(answer_list), desc="Computing Cosine: ", total=len(answer_list), disable=not show_progress):
             qembed = embeddings[qid]
-            similarity_scores = [self.similarity(qembed, embeddings[id2pos[doc.id]]) for doc in answer]
+            # similarity_scores = [self.similarity(qembed, embeddings[id2pos[doc.id]]) for doc in answer]
+            similarity_scores = self.similarity(qembed, [embeddings[id2pos[doc.id]] for doc in answer])
             num_examples = len(answer)
             hybrid_similarities = [0] * num_examples
             if self.config.reranker_combination_type == 'weight':
@@ -67,7 +69,7 @@ class Reranker(object):
                 doc1.score = sim
                 op.append(doc1)
             output.append(op)
-
+        tm.add_timing("cosine")
         total_docs = (len(answer_list[0]) + 1) * len(answer_list)
         saved = total_docs - len(embeddings)
         print(f"Saved {saved} embedding computations ({saved/total_docs:.1%}).")
