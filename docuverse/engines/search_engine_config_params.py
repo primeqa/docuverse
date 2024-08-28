@@ -314,6 +314,13 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    task: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Used in the config.yaml to create index name, etc."
+        }
+    )
+
     query_template: DataTemplate = default_query_template
     data_template: DataTemplate = default_data_template
 
@@ -462,6 +469,13 @@ class RerankerArguments(GenericArguments):
         default=False,
         metadata={
             "help": "If specified, the text will be lowercased before reranking."
+        }
+    )
+
+    create_vector_for_ingestion: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "If specified, the splade vector would be formatted with text tokens"
         }
     )
 

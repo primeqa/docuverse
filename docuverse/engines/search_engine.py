@@ -69,6 +69,8 @@ class SearchEngine:
         self.write_necessary = False
         answers, cache_file = self.read_cache_file(extension=".retrieve.pkl.bz2")
         if answers is None:
+            if len(queries) == 0:
+                 print(f"No queries to seaarch. Check {self.config.input_queries}")
             self.retriever.reconnect_if_necessary()
             answers = parallel_process(self.retriever.search, queries,
                                        num_threads=self.config.num_search_threads,
@@ -129,6 +131,8 @@ class SearchEngine:
         if output_file is None:
             output_file = self.config.output_file
         if file_is_of_type(output_file, extensions=".json"):
+            if not os.path.exists(os.path.dirname(output_file)):
+                os.makedirs(os.path.dirname(output_file), exist_ok=True)
             with open(output_file, "w") as outfile:
                 outp = [r.as_dict() for r in output]
                 outfile.write(json.dumps(outp, indent=2))

@@ -33,9 +33,10 @@ class SpladeSentenceTransformer:
     @torch.no_grad()
     def encode(self, sentences: List[str], _batch_size=-1, show_progress_bar=False, **kwargs):
         # input_dict=self.tokenizer(sentences, max_length=512,padding='max_length',return_tensors='pt')
-        tm = timer("ingest_and_test::run::encode")
+        tm = timer("reranking::search::encode")
         expansions = []
         num_toks = 0
+        max_num_expansion = 500
         num_sents = len(sentences)
         sorted_sents_inds = sorted(range(0, len(sentences)), key=lambda x: len(sentences[x]), reverse=True)
         # sorted_sents = [sentences[i] for i in sorted_sents_inds]
@@ -57,36 +58,25 @@ class SpladeSentenceTransformer:
                 tm.add_timing("copy_to_gpu")
                 outputs = self.model(**input_dict)  # , return_dict=True)
                 tm.add_timing("bert_encoding")
-                hidden_state = outputs[0].detach() #.cpu()
+                hidden_state = outputs[0]
                 tm.add_timing("copy_to_cpu")
                 maxarg = torch.log(1.0 + torch.relu(hidden_state))
                 tm.add_timing("relu")
-                #hidden_state = hidden_state.cpu()
 
                 input_mask_expanded = attention_mask.unsqueeze(-1).to(maxarg.device)# .expand(hidden_state.size()).type(hidden_state.dtype)
-
                  # bs * seqlen * voc
                 maxdim1 = torch.max(maxarg * input_mask_expanded, dim=1).values  # bs * voc
                 tm.add_timing("attention_mask_filter")
-                s1 = torch.sort(maxdim1, descending=True, dim=1)  # values = bs * voc,  indices = bs * voc
-                lengths = attention_mask.sum(dim=1)
-                tm.add_timing("sort")
-                sizes = torch.sum(s1.values>0, dim=1).cpu()
-                tm.add_timing("compute_expansion_sizes")
-
-                for idoc in range(this_batch_size):
-                    expanded_toks = self.tokenizer.convert_ids_to_tokens(s1.indices[idoc, 0:sizes[idoc]].cpu())
-                    tm.add_timing("expansion::convert_ids_to_tokens")
-                    expanded_weights = s1.values[idoc, 0:sizes[idoc]].cpu()
-                    tm.add_timing("expansion::get_weights")
-                    expansion = [(t, float(w)) for t, w in zip(expanded_toks, expanded_weights)]
-                    tm.add_timing("expansion::create_expansion")
-                    expansions.append(expansion)
-                    tm.add_timing("expansion::add_expansion")
-                # tm.add_timing("expansion")
+                # get topk high weights
+                topk = torch.topk(maxdim1, k=self.max_terms) # (weight - (bs * max_terms), index - (bs * max_terms))
+                # stack [index, weight] for each active token
+                topk_i_w = torch.stack(topk, dim=2).flip(2) # bs * max_terms * 2
+                tm.add_timing("get_topk_weights")
+                expansion = [ elem[elem[:,1] > 0] for elem in topk_i_w.cpu().unbind(dim=0)] # [ [expansion_for_doc * 2] * bs]
+                tm.add_timing("expansion::create_expansion")
+                expansions.extend(expansion)
+                tm.add_timing("expansion::add_expansion")
                 tk.update(min(_batch_size, num_sents-b))
-                del hidden_state
-        #tk.close()
 
         tmp = [[]] * len(expansions)
         for i, e in enumerate(expansions):
@@ -146,4 +136,12 @@ class SparseEmbeddingFunction(EmbeddingFunction):
 
         res, num_tokens = self.model.encode(texts, _batch_size=_batch_size,
                                             show_progress_bar=show_progress_bar, **kwargs)
+        
+        if kwargs.get("create_vector_for_ingestion", False):
+            res = self.convert_token_ids_to_tokens(res)
+
         return res
+
+    def convert_token_ids_to_tokens(self, res):
+        expansions = [ [(self.tokenizer.convert_ids_to_tokens(int(tok[0])), float(tok[1])) for tok in elem ] for elem in res ]
+        return expansions

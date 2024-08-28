@@ -1,8 +1,7 @@
 import math
 from copy import deepcopy
 
-import numpy as np
-from torch.nn.functional import embedding
+import torch
 
 from docuverse import SearchResult
 from docuverse.utils.embeddings.dense_embedding_function import DenseEmbeddingFunction
@@ -19,12 +18,20 @@ class SpladeReranker(Reranker):
                                              batch_size=reranking_config.reranker_gpu_batch_size)
 
     def similarity(self, embedding1, embedding2):
-        emb1, emb2 = (embedding1, embedding2) if len(embedding1) > len(embedding2) else (embedding2, embedding1)
-        keys = {k:v for (k,v) in emb1}
+#         norm1 = float(torch.linalg.norm(embedding1[:,1], ord=2))
+#         norm2 = float(torch.linalg.norm(embedding2[:,1], ord=2))
 
+        # print (norm1)
+        device = self.model.model.device 
+        embedding1 = embedding1.to(device)
+        embedding2 = embedding2.to(device)
+        
+        emb1 = torch.zeros(self.model.model.tokenizer.vocab_size, dtype=torch.bfloat16, device=device)
+        emb1[embedding1[:,0].int()] = embedding1[:,1]
 
-        norm1 = np.linalg.norm([e[1] for e in emb1], ord=2)
-        norm2 = np.linalg.norm([e[1] for e in emb2], ord=2)
+        emb2 = torch.zeros(self.model.model.tokenizer.vocab_size, dtype=torch.bfloat16, device=device)
+        emb2[embedding2[:,0].int()] = embedding2[:,1]
 
-        val = sum(keys[key]*value for (key, value) in emb2 if key in keys)
-        return val / (norm1*norm2) if norm1+norm2>1e-7 else 0
+        prod =  torch.inner(emb1, emb2)
+        return prod #/ (norm1*norm2) if norm1+norm2>1e-7 else 0
+

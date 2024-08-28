@@ -38,7 +38,7 @@ class Reranker(object):
             embeddings = self.model.encode(texts, show_progress_bar=True, message="Reranking answers")
 
         # counter = tqdm(desc="Reranking documents: ", total=num_docs, disable=not show_progress)
-        for qid, answer in tqdm(enumerate(answer_list), total=len(answer_list), disable=not show_progress):
+        for qid, answer in tqdm(enumerate(answer_list), desc="Computing Cosine: ", total=len(answer_list), disable=not show_progress):
             qembed = embeddings[qid]
             similarity_scores = [self.similarity(qembed, embeddings[id2pos[doc.id]]) for doc in answer]
             num_examples = len(answer)
