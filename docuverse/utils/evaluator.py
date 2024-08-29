@@ -108,6 +108,9 @@ class EvaluationEngine:
                                 total=len(system),
                                 desc='Evaluating questions: '):
             qid = get_param(record.question, query_id_header)
+            if qid not in rqmap or rqmap[qid]>=len(input_queries):
+                print(f"Missing queryid {qid}")
+                continue
             query = input_queries[rqmap[qid]]
             num_gold.append(num_positive[qid])
             if '-1' in gt[qid]:

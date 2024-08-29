@@ -48,4 +48,4 @@ if __name__ == '__main__':
             out.write(str(results))
         tm.add_timing("evaluate")
 
-    timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0)
+    timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0, sorted_by="%", reverse=True)

@@ -15,6 +15,7 @@ class Reranker(object):
         pass
 
     def rerank(self, answer_list, show_progress=True):
+        tm = timer("reranking")
         is_single_instance = isinstance(answer_list, SearchResult)
         if is_single_instance:
             answer_list = [answer_list]
@@ -31,14 +32,13 @@ class Reranker(object):
                 if doc.id not in id2pos:
                     id2pos[doc.id] = len(texts)
                     texts.append(doc.text)
-
+        tm.add_timing("preparation")
         if self.config.reranker_lowercase:
             embeddings = self.model.encode([l.lower() for l in texts], show_progress_bar=True)
         else:
             embeddings = self.model.encode(texts, show_progress_bar=True, message="Reranking answers")
 
         # counter = tqdm(desc="Reranking documents: ", total=num_docs, disable=not show_progress)
-        tm = timer("reranking")
         for qid, answer in tqdm(enumerate(answer_list), desc="Computing Cosine: ", total=len(answer_list), disable=not show_progress):
             qembed = embeddings[qid]
             # similarity_scores = [self.similarity(qembed, embeddings[id2pos[doc.id]]) for doc in answer]
@@ -62,14 +62,15 @@ class Reranker(object):
 
             sorted_similarities = sorted(zip(answer, hybrid_similarities),
                                          key=lambda pair: pair[1], reverse=True)
-
+            tm.add_timing("cosine::reorder")
             op = SearchResult(answer.question, [])
             for _doc, sim in sorted_similarities:
                 doc1 = deepcopy(_doc)
                 doc1.score = sim
                 op.append(doc1)
             output.append(op)
-        tm.add_timing("cosine")
+            tm.add_timing("cosine::copy_data")
+        #tm.add_timing("cosine")
         total_docs = (len(answer_list[0]) + 1) * len(answer_list)
         saved = total_docs - len(embeddings)
         print(f"Saved {saved} embedding computations ({saved/total_docs:.1%}).")
