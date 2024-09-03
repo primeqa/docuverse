@@ -2,6 +2,7 @@ from copy import deepcopy
 from tqdm import tqdm
 
 from docuverse.engines.search_result import SearchResult
+from docuverse.utils import parallel_process
 from docuverse.utils.timer import timer
 
 
@@ -11,8 +12,11 @@ class Reranker(object):
         self.config = reranking_config
         self.name = reranking_config['name']
 
-    def similarity(self, embedding1, embedding2):
+    def similarity(self, embedding1, embedding2, device='cuda'):
         pass
+
+    def pair_similarity(self, embedding_pair):
+        return self.similarity(embedding_pair[0], embedding_pair[1], device=device)
 
     def rerank(self, answer_list, show_progress=True):
         tm = timer("reranking")
@@ -39,11 +43,26 @@ class Reranker(object):
             embeddings = self.model.encode(texts, show_progress_bar=True, message="Reranking answers")
 
         # counter = tqdm(desc="Reranking documents: ", total=num_docs, disable=not show_progress)
-        for qid, answer in tqdm(enumerate(answer_list), desc="Computing Cosine: ", total=len(answer_list), disable=not show_progress):
-            qembed = embeddings[qid]
-            # similarity_scores = [self.similarity(qembed, embeddings[id2pos[doc.id]]) for doc in answer]
-            similarity_scores = self.similarity(qembed, [embeddings[id2pos[doc.id]] for doc in answer])
+        # embedding_scores = []
+        # for bi in range(0, len(answer_list), 1000):
+        #     end=min(bi+_batch_size, len(answer_list))
+        #     embedding_list = [[embeddings[qid].tolist(), [embeddings[id2pos[doc.id]].tolist() for doc in answer]]
+        #                       for qid, answer in enumerate(answer_list[bi:end])]
+        #
+        #     _embedding_scores = parallel_process(self.pair_similarity, embedding_list, num_threads=10,
+        #                                        msg="Computing cosine scores:")
+        #     embedding_scores.extend(_embedding_scores)
+
+        for qid, answer in tqdm(enumerate(answer_list), desc="Computing Cosine: ",
+                                total=len(answer_list), disable=not show_progress):
             num_examples = len(answer)
+            if num_examples == 0:
+                output.append(answer)
+                continue
+            qembed = embeddings[qid]
+            similarity_scores = self.similarity(qembed, [embeddings[id2pos[doc.id]] for doc in answer], device='cpu')
+            # similarity_scores = embedding_scores[qid]
+            tm.mark() # make sure the time does not include the time spent in computing similarity_scores.
             hybrid_similarities = [0] * num_examples
             if self.config.reranker_combination_type == 'weight':
                 weight = self.config.reranker_combine_weight
