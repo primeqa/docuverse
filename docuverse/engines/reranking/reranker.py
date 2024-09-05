@@ -15,7 +15,7 @@ class Reranker(object):
     def similarity(self, embedding1, embedding2, device='cuda'):
         pass
 
-    def pair_similarity(self, embedding_pair):
+    def pair_similarity(self, embedding_pair, device='cuda'):
         return self.similarity(embedding_pair[0], embedding_pair[1], device=device)
 
     def rerank(self, answer_list, show_progress=True):
