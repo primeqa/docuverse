@@ -3,7 +3,7 @@ import json
 from typing import Union, Tuple, List
 
 from docuverse.engines.retrieval.retrieval_servers import RetrievalServers
-from docuverse.utils import read_config_file, get_config_dir
+from docuverse.utils import get_config_dir
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines import SearchData, RetrievalEngine
 
@@ -256,63 +256,20 @@ class ElasticEngine(RetrievalEngine):
                 keys_to_index.append(k)
         return keys_to_index
 
-    def check_index_rebuild(self):
-        """
-        Checks if the user wants to recreate the index.
-
-        :return: True if the user wants to recreate the index, False otherwise.
-        """
-        index_name = self.config.index_name
-        import sys
-        while True:
-            r = input(
-                f"Are you sure you want to recreate the index {index_name}? It might take a long time!!"
-                f" Say 'yes', 'no', or 'skip':").strip()
-            if r == 'no':
-                print("OK - exiting. Run with '--actions r'")
-                sys.exit(0)
-            elif r == 'yes':
-                return True
-            elif r == 'skip':
-                print("Skipping ingestion.")
-                return False
-            else:
-                print(f"Please type 'yes' or 'no', not {r}!")
-        return True
-
-    def has_index(self, index_name):
+    def has_index(self, index_name, **kwargs):
         return self.client.indices.exists(index=index_name)
 
-    def create_update_index(self, do_update:bool=True) -> bool:
-        """
-        Create or update the Elasticsearch index.
+    def create_index(self, index_name: str, **kwargs):
+        self.client.indices.create(index=index_name,
+                                   mappings=self.coga_mappings[self.config.lang],
+                                   settings=self.settings[self.config.lang])
 
-        Parameters:
-        - do_update (bool): Specifies whether to perform an update operation (default=True).
+    def delete_index(self, index_name: str|None = None, **kwargs):
+        if index_name is None:
+            index_name = self.config.index_name
+        self.client.options(ignore_status=[400, 404]).indices.delete(index=self.config.index_name)
 
-        Returns:
-        - bool: True if the operation is successful, False otherwise.
 
-        """
-        if self.has_index(index_name=self.config.index_name):
-            if do_update:
-                do_index = self.check_index_rebuild()
-                if not do_index:
-                    return False
-                self.client.options(ignore_status=[400, 404]).indices.delete(index=self.config.index_name)
-                return True
-            else:
-                print(f"This will overwrite your existent index {self.config.index_name} - use --actions 'u' instead.")
-                return self.check_index_rebuild()
-        else:
-            if do_update:
-                print("You are trying to update an index that does not exist "
-                      "- will ignore your command and create the index.")
-        if not self.client.indices.exists(index=self.config.index_name):
-            self.client.indices.create(index=self.config.index_name,
-                                       mappings=self.coga_mappings[self.config.lang],
-                                       settings=self.settings[self.config.lang])
-        return True
 
     def ingest(self, corpus: SearchData, **kwargs):
         """

@@ -88,8 +88,8 @@ class DataTemplate:
     def __post_init__(self):
         if self.keep_fields is not None:
             self.extra_fields = self.keep_fields.split("|")
-        if isinstance(self.extra_fields, str) and self.extra_fields == "None":
-            self.extra_fields = None
+        if isinstance(self.extra_fields, str) and self.extra_fields == "None" or self.extra_fields is None:
+            self.extra_fields = []
 
     def get(self, item, default=None):
         return getattr(self, item, default)

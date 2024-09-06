@@ -68,9 +68,7 @@ class MilvusEngine(RetrievalEngine):
         self.servers = self.read_servers()
         self.server = None
         if get_param(self.config, 'server', None):
-            server = self.servers[self.config.server]
-            self.host = server.host
-            self.port = server.port
+            self.server = self.servers[self.config.server]
         self.model = None
         self.init_model(kwargs)
         # Milvus does not accept '-', only letters, numbers, and "_"
@@ -100,11 +98,13 @@ class MilvusEngine(RetrievalEngine):
         super().load_model_config(config_params)
         self.config.index_name = self.config.index_name.replace("-", "_")
 
+
+
     def init_client(self):
         #connections.connect("default", host=self.host, port=self.port)
         if self.server is None:
-            print("MilvusEngine client is not initialized!")
-            raise RuntimeError("MilvusEngine client is not initialized!")
+            print("MilvusEngine server is not initialized!")
+            raise RuntimeError("MilvusEngine server is not initialized!")
         self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
                                    user=get_param(self.server, "user", ""),
                                    password=get_param(self.server, "password", ""),
@@ -113,37 +113,54 @@ class MilvusEngine(RetrievalEngine):
                                    server_pem_path = get_param(self.server, "server_pem_path", None)
                                    )
 
+    def has_index(self, index_name: str):
+        return self.client.has_collection(self.config.index_name)
+
+    def create_index(self, index_name: str, fields=None, fmt=None, **kwargs):
+        schema = CollectionSchema(fields, self.config.index_name)
+        if fmt:
+            print(fmt.format(f"Create collection `{self.config.index_name}`"))
+        index_params = self.prepare_index_params()
+        # self.index = Collection(self.config.index_name, schema, consistency_level="Strong", index_file_size=128)
+        self.client.create_collection(self.config.index_name, schema=schema, index_params=index_params)
+        return index_params
+
+    def delete_index(self, index_name: str|None=None, fmt=None, **kwargs):
+        if index_name is None:
+            index_name = self.config.index_name
+        if fmt:
+            print(fmt.format(f"Collection {self.config.index_name} exists, dropping"))
+        self.client.drop_collection(index_name)
+
     def ingest(self, corpus: SearchCorpus, update: bool = False):
         fmt = "\n=== {:30} ==="
         fields = self.create_fields()
-        collection_loaded = self.client.has_collection(self.config.index_name)
-        if collection_loaded:
-            print(fmt.format(f"Collection {self.config.index_name} exists, dropping"))
-            self.client.drop_collection(self.config.index_name)
-            # utility.drop_collection(self.config.index_name)
-        schema = CollectionSchema(fields, self.config.index_name)
-        print(fmt.format(f"Create collection `{self.config.index_name}`"))
-
-        index_params = self.prepare_index_params()
-
-        # self.index = Collection(self.config.index_name, schema, consistency_level="Strong", index_file_size=128)
-        self.client.create_collection(self.config.index_name, schema=schema, index_params=index_params)
-
-        text_vectors = [row['text'] for row in corpus]
+        # collection_loaded = self.has_index(self.config.index_name)
+        # if collection_loaded:
+        #     print(fmt.format(f"Collection {self.config.index_name} exists, dropping"))
+        #     self.client.drop_collection(self.config.index_name)
+        #     # utility.drop_collection(self.config.index_name)
+        # index_params = self.create_index(fields, fmt)
+        self.create_update_index(fmt=fmt, fields=fields)
         batch_size = get_param(self.config, 'bulk_batch', 40)
-        passage_vectors = self.model.encode(text_vectors, _batch_size=batch_size, show_progress_bar=True)
-        # create embeddings
-        batch_size = 1000
+
+        texts = [row['text'] for row in corpus]
+        passage_vectors = self.encode_data(texts, batch_size)
         data = []
         for i, item in enumerate(corpus):
             dt = {"id": item["id"], "embeddings": passage_vectors[i], "text": item['text'], 'title': item['title']}
             for f in self.config.data_template.extra_fields:
                 dt[f] = str(item[f])
             data.append(dt)
-
         for i in tqdm(range(0, len(data), batch_size), desc="Ingesting documents"):
             self.client.insert(collection_name=self.config.index_name, data=data[i:i + batch_size])
-        self.client.create_index(collection_name=self.config.index_name, index_params=index_params)
+        self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
+
+    def encode_data(self, texts, batch_size):
+        passage_vectors = self.model.encode(texts,
+                                            _batch_size=batch_size, show_progress_bar=True)
+        # create embeddings
+        return passage_vectors
 
     def create_fields(self):
         fields = [
@@ -163,23 +180,30 @@ class MilvusEngine(RetrievalEngine):
     def search(self, question: SearchQueries.Query, **kwargs) -> SearchResult:
         search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'
-
-        query_vector = self.model.encode(question.text, show_progress_bar=False)
+        query_vector = self.encode_query(question)
+        group_by = get_param(kwargs, 'group_by', None)
+        extra = {}
+        if group_by is not None:
+            search_params['params']['group_by_field'] = group_by
+            extra = {'group_by_field': group_by}
 
         res = self.client.search(
             collection_name=self.config.index_name,
             data=[query_vector],
-            # "embeddings",
             search_params=search_params,
             limit=self.config.top_k,
             # limit=1000,
-            # group_by_field="url",
-            output_fields=self.output_fields
+            output_fields=self.output_fields,
+            **extra
         )
         result = SearchResult(question=question, data=res[0])
         result.remove_duplicates(self.config.duplicate_removal,
                                  self.config.rouge_duplicate_threshold)
         return result
+
+    def encode_query(self, question):
+        query_vector = self.model.encode(question.text, show_progress_bar=False)
+        return query_vector
 
     def get_search_params(self):
         pass

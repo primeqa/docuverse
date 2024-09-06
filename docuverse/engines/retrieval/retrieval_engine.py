@@ -58,6 +58,64 @@ class RetrievalEngine:
     def has_index(self, index_name):
         return False
 
+    def delete_index(self, index_name, **kwargs):
+        pass
+
+    def check_index_rebuild(self, **kwargs) -> bool:
+        """
+        Checks if the user wants to recreate the index.
+
+        :return: True if the user wants to recreate the index, False otherwise.
+        """
+        index_name = self.config.index_name
+        import sys
+        while True:
+            r = input(
+                f"Are you sure you want to recreate the index {index_name}? It might take a long time!!"
+                f" Say 'yes', 'no', or 'skip':").strip()
+            if r == 'no':
+                print("OK - exiting. Run with '--actions r'")
+                sys.exit(0)
+            elif r == 'yes':
+                return True
+            elif r == 'skip':
+                print("Skipping ingestion.")
+                return False
+            else:
+                print(f"Please type 'yes' or 'no', not {r}!")
+        # return True
+
+    def create_update_index(self, do_update:bool=True, **kwargs) -> bool:
+        """
+        Create or update an index.
+
+        Parameters:
+        - do_update (bool): Specifies whether to perform an update operation (default=True).
+
+        Returns:
+        - bool: True if the operation is successful, False otherwise.
+
+        """
+        if self.has_index(index_name=self.config.index_name):
+            if do_update:
+                do_index = self.check_index_rebuild()
+                if not do_index:
+                    return False
+                self.delete_index(index_name=self.config.index_name, **kwargs)
+            else:
+                print(f"This will overwrite your existent index {self.config.index_name} - use --actions 'u' instead.")
+                return self.check_index_rebuild()
+        else:
+            if do_update:
+                print("You are trying to update an index that does not exist "
+                      "- will ignore your command and create the index.")
+        if not self.has_index(index_name=self.config.index_name):
+            self.create_index(self.config.index_name, **kwargs)
+        return True
+
+    def create_index(self, index_name: str, **kwargs):
+        pass
+
     @staticmethod
     def create_query(text, **kwargs) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
         return None, None, None
@@ -84,3 +142,9 @@ class RetrievalEngine:
             setattr(self, param_name, get_param(config_params, param_name))
 
         self.config = config_params
+
+
+
+
+
+

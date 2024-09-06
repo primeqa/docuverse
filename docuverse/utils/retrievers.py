@@ -1,6 +1,7 @@
 import docuverse.engines.retrieval.elastic as elastic
 from docuverse.engines.reranking.dense_reranker import DenseReranker
 from docuverse.engines.reranking.splade_reranker import SpladeReranker
+from docuverse.engines.reranking.splade3_reranker import Splade3Reranker
 from docuverse.engines.search_engine_config_params import RerankerArguments
 
 
@@ -37,13 +38,17 @@ def create_retrieval_engine(retriever_config: dict):
             raise e
     elif name.startswith('milvus'):
         try:
-            if name == 'milvus_dense':
+            if name in ['milvus_dense', 'milvus']:
                 from docuverse.engines.retrieval.milvus.milvus_dense import MilvusDenseEngine
                 engine = MilvusDenseEngine(retriever_config)
             elif name == 'milvus_sparse':
                 from docuverse.engines.retrieval.milvus.milvus_sparse import MilvusSparseEngine
                 engine = MilvusSparseEngine(retriever_config)
-
+            elif name == "milvus_bm25":
+                from docuverse.engines.retrieval.milvus.milvus_bm25 import MilvusBM25Engine
+                engine = MilvusBM25Engine(retriever_config)
+            else:
+                raise NotImplementedError(f"Unknown engine type: {name}")
         except ImportError as e:
             print("You need to install pymilvus package.")
             raise e
@@ -61,5 +66,7 @@ def create_reranker_engine(reranker_config: dict|RerankerArguments):
         return DenseReranker(reranker_config)
     elif name == "splade":
         return SpladeReranker(reranker_config)
+    elif name == "splade3":
+        return Splade3Reranker(reranker_config)
     else:
         raise RuntimeError("The available reranking engine types are 'dense', 'splade', and 'none'.")

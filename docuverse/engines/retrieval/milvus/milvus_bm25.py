@@ -1,5 +1,3 @@
-from typing import List
-
 from docuverse.engines.retrieval.milvus.milvus import MilvusEngine
 
 try:
@@ -8,20 +6,25 @@ try:
         Collection,
     )
     from pymilvus import model as MilvusModel
+    from pymilvus.model.sparse.bm25.tokenizers import build_default_analyzer
+    from milvus_model.sparse.bm25 import BM25EmbeddingFunction
 except:
     print(f"You need to install pymilvus to be using Milvus functionality!")
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
 from docuverse.engines.search_engine_config_params import SearchEngineConfig
 from docuverse.utils import get_param
+
 from docuverse.utils.embeddings.sparse_embedding_function import SparseEmbeddingFunction
 
-
-class MilvusSparseEngine(MilvusEngine):
+class MilvusBM25Engine(MilvusEngine):
     def __init__(self, config: SearchEngineConfig|dict, **kwargs) -> None:
         super().__init__(config, **kwargs)
+        self.analyzer = build_default_analyzer(get_param(kwargs, 'language', "en"))
+        self.bm25_ef = BM25EmbeddingFunction(self.analyzer)
 
     def init_model(self, kwargs):
-        self.model = SparseEmbeddingFunction(self.config.model_name, batch_size=self.config.bulk_batch)
+        pass
+        # self.model =
 
     def prepare_index_params(self):
         index_params = self.client.prepare_index_params()
@@ -45,9 +48,17 @@ class MilvusSparseEngine(MilvusEngine):
 
     def get_search_params(self):
         search_params = get_param(self.config, 'search_params',
-                                  self.milvus_defaults['search_params']["SPLADE"])
+                                  self.milvus_defaults['search_params']["BM25"])
 
         return search_params
+
+    def encode_data(self, texts, batch_size):
+        self.bm25_ef.fit(texts)
+        embeddings = self.bm25_ef.encode_documents(texts)
+        return list(embeddings)
+
+    def encode_query(self, question):
+        return self.bm25_ef.encode_query(question.text)
 
     @classmethod
     def test(cls):
