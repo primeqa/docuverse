@@ -36,6 +36,14 @@ class RetrievalArguments(GenericArguments):
             "help": "The root dir for the configuration files."
         }
     )
+
+    milvus_idf_file: str = field(
+        default=None,
+        metadata={
+            "help": "The path to the milvus idf file."
+        }
+    )
+
     _argument_group_name = "Search Arguments"
 
     model_name: str = field(

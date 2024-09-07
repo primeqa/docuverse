@@ -1,4 +1,8 @@
+import os
+
+from docuverse import SearchCorpus
 from docuverse.engines.retrieval.milvus.milvus import MilvusEngine
+from docuverse.run_retrieval_modelrunner import output_file
 
 try:
     from pymilvus import (
@@ -19,12 +23,14 @@ from docuverse.utils.embeddings.sparse_embedding_function import SparseEmbedding
 class MilvusBM25Engine(MilvusEngine):
     def __init__(self, config: SearchEngineConfig|dict, **kwargs) -> None:
         super().__init__(config, **kwargs)
-        self.analyzer = build_default_analyzer(get_param(kwargs, 'language', "en"))
-        self.bm25_ef = BM25EmbeddingFunction(self.analyzer)
+
 
     def init_model(self, kwargs):
-        pass
-        # self.model =
+        self.analyzer = build_default_analyzer(get_param(kwargs, 'language', "en"))
+        self.bm25_ef = BM25EmbeddingFunction(self.analyzer)
+        idf_file = self.config.milvus_idf_file
+        if idf_file is not None and os.path.exists(idf_file):
+            self.bm25_ef.load_idf(idf_file)
 
     def prepare_index_params(self):
         index_params = self.client.prepare_index_params()
@@ -58,7 +64,16 @@ class MilvusBM25Engine(MilvusEngine):
         return list(embeddings)
 
     def encode_query(self, question):
-        return self.bm25_ef.encode_query(question.text)
+        return self.bm25_ef.encode_queries([question.text])[0]
+
+    def ingest(self, corpus: SearchCorpus, update: bool = False):
+        skipped = super().ingest(corpus, update)
+        if not skipped:
+            idf_file = self.config.milvus_idf_file
+            if idf_file is None:
+                idf_file = os.path.join(self.config.project_name, f"{self.config.index_name}.idf")
+                self.bm25_ef.save_idf(idf_file)
+
 
     @classmethod
     def test(cls):

@@ -141,7 +141,9 @@ class MilvusEngine(RetrievalEngine):
         #     self.client.drop_collection(self.config.index_name)
         #     # utility.drop_collection(self.config.index_name)
         # index_params = self.create_index(fields, fmt)
-        self.create_update_index(fmt=fmt, fields=fields)
+        still_create_index = self.create_update_index(fmt=fmt, update=update, fields=fields)
+        if not still_create_index:
+            return False
         batch_size = get_param(self.config, 'bulk_batch', 40)
 
         texts = [row['text'] for row in corpus]
@@ -155,6 +157,7 @@ class MilvusEngine(RetrievalEngine):
         for i in tqdm(range(0, len(data), batch_size), desc="Ingesting documents"):
             self.client.insert(collection_name=self.config.index_name, data=data[i:i + batch_size])
         self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
+        return True
 
     def encode_data(self, texts, batch_size):
         passage_vectors = self.model.encode(texts,
