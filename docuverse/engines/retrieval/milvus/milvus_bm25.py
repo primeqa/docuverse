@@ -29,7 +29,7 @@ class MilvusBM25Engine(MilvusEngine):
         self.bm25_ef = BM25EmbeddingFunction(self.analyzer)
         idf_file = self.config.milvus_idf_file
         if idf_file is not None and os.path.exists(idf_file):
-            self.bm25_ef.load_idf(idf_file)
+            self.bm25_ef.load(idf_file)
 
     def prepare_index_params(self):
         index_params = self.client.prepare_index_params()
@@ -63,7 +63,7 @@ class MilvusBM25Engine(MilvusEngine):
         return list(embeddings)
 
     def encode_query(self, question):
-        return self.bm25_ef.encode_queries([question.text])[0]
+        return list(self.bm25_ef.encode_queries([question.text]))[0]
 
     def ingest(self, corpus: SearchCorpus, update: bool = False):
         index_created = super().ingest(corpus, update)

@@ -184,6 +184,11 @@ class MilvusEngine(RetrievalEngine):
         search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'
         query_vector = self.encode_query(question)
+        vals = query_vector.todense()
+        non_zero = len(vals.nonzero()[1])
+        if non_zero == 0:
+            print(f"Query \"{question.text}\" has 0 length representation.")
+            return SearchResult(question=question, data=[])
         group_by = get_param(kwargs, 'group_by', None)
         extra = {}
         if group_by is not None:

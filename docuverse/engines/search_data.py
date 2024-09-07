@@ -389,6 +389,8 @@ class SearchData:
 
     @staticmethod
     def get_orig_docid(id):
+        if isinstance(id, int):
+            return id
         index = id.rfind("-", 0, id.rfind("-"))
         if index >= 0:
             return id[:index]
