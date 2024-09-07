@@ -2,7 +2,6 @@ import os
 
 from docuverse import SearchCorpus
 from docuverse.engines.retrieval.milvus.milvus import MilvusEngine
-from docuverse.run_retrieval_modelrunner import output_file
 
 try:
     from pymilvus import (
@@ -67,13 +66,17 @@ class MilvusBM25Engine(MilvusEngine):
         return self.bm25_ef.encode_queries([question.text])[0]
 
     def ingest(self, corpus: SearchCorpus, update: bool = False):
-        skipped = super().ingest(corpus, update)
-        if not skipped:
-            idf_file = self.config.milvus_idf_file
-            if idf_file is None:
-                idf_file = os.path.join(self.config.project_name, f"{self.config.index_name}.idf")
-                self.bm25_ef.save_idf(idf_file)
+        index_created = super().ingest(corpus, update)
+        if index_created:
+            self.save_idf_index()
 
+    def save_idf_index(self):
+        idf_file = self.config.milvus_idf_file
+        if idf_file is None:
+            idf_file = os.path.join(self.config.project_name, f"{self.config.index_name}.idf")
+        if not os.path.exists(os.path.dirname(idf_file)):
+            os.makedirs(os.path.dirname(idf_file))
+        self.bm25_ef.save(idf_file)
 
     @classmethod
     def test(cls):
