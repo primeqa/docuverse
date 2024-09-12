@@ -1,6 +1,7 @@
 import os
 
-from docuverse import SearchCorpus
+from docuverse import SearchCorpus, SearchQueries
+from docuverse.engines import SearchData
 from docuverse.engines.retrieval.milvus.milvus import MilvusEngine
 
 try:
@@ -16,6 +17,7 @@ except:
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
 from docuverse.engines.search_engine_config_params import SearchEngineConfig
 from docuverse.utils import get_param
+from tqdm import tqdm
 
 from docuverse.utils.embeddings.sparse_embedding_function import SparseEmbeddingFunction
 
@@ -51,16 +53,29 @@ class MilvusBM25Engine(MilvusEngine):
         )
         return fields
 
+    def analyze(self, text):
+        res = self.bm25_ef.encode_documents([text])
+        return list(res[0])
+
     def get_search_params(self):
         search_params = get_param(self.config, 'search_params',
                                   self.milvus_defaults['search_params']["BM25"])
 
         return search_params
 
-    def encode_data(self, texts, batch_size):
+    def encode_data(self, texts, batch_size, show_progress=True):
+        print(f"Computing IDF - will might a while.")
         self.bm25_ef.fit(texts)
-        embeddings = self.bm25_ef.encode_documents(texts)
-        return list(embeddings)
+        # print("Computing embeddings for the input.")
+        embeddings = []
+        t=tqdm(desc="Encoding documents", total=len(texts), disable=not show_progress)
+        for i in range(0, len(texts), batch_size):
+            last = min(i + batch_size, len(texts))
+            encs = self.bm25_ef.encode_documents(texts[i:last])
+            embeddings.extend(list(encs))
+            t.update(last - i)
+        #embeddings = self.bm25_ef.encode_documents(texts)
+        return embeddings
 
     def encode_query(self, question):
         return list(self.bm25_ef.encode_queries([question.text]))[0]
@@ -88,10 +103,29 @@ class MilvusBM25Engine(MilvusEngine):
             "The quick setup collection has two mandatory fields: the primary and vector fields. "
             "It also allows the insertion of undefined fields and their values in key-value pairs in a dynamic field."
         ]
+        config = {
+            "index_name": collection_name,
+            "server": "localhost",
+            "milvus_idf_file": os.path.join("/tmp", collection_name+".idf"),
+            "db_engine": "milvus-bm25",
+            "num_preprocessor_threads": -1,
+            "top_k": 2,
+        }
         queries = ["Who is Alan Turing?", "What is quick setup?"]
-
-        splade_enc, milvus_client = cls.setup(collection_name)
-        cls.encode_and_index(collection_name, splade_enc, milvus_client, docs)
-        cls.query(collection_name, splade_enc, milvus_client, queries)
-        milvus_client.drop_collection(collection_name)
+        server = cls(config)
+        input = [
+            {"text": txt, 'id': f"sent{id}", "title": ""} for i, txt in enumerate(docs)
+        ]
+        data = SearchData.read_data(input, num_preprocessor_threads=-1)
+        server.ingest(data)
+        qs = [{"text": q, "id": i} for i, q in enumerate(queries)]
+        qs = SearchQueries.read_question_data(qs)
+        res = [server.search(q) for q in qs]
+        import json
+        for r in res:
+            print(r.as_json(indent=2))
+        # splade_enc, milvus_client = cls.setup(collection_name)
+        # cls.encode_and_index(collection_name, splade_enc, milvus_client, docs)
+        # cls.query(collection_name, splade_enc, milvus_client, queries)
+        # milvus_client.drop_collection(collection_name)
 

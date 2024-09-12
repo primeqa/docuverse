@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Tuple, Dict, Union
 
 from docuverse.engines.search_corpus import SearchCorpus
-from docuverse.engines.search_engine_config_params import SearchEngineConfig
+from docuverse.engines.search_engine_config_params import SearchEngineConfig, RetrievalArguments
 from docuverse.utils import get_param
 
 
@@ -133,7 +133,8 @@ class RetrievalEngine:
 
     def load_model_config(self, config_params: Union[dict, SearchEngineConfig]):
         if isinstance(config_params, dict):
-            config_params = SearchEngineConfig(config=config_params)
+            # config_params = SearchEngineConfig(config=config_params)
+            config_params = RetrievalArguments(**config_params)
 
         _param_names = ["index_name", "title_field", "text_field", "n_docs", "filters", "duplicate_removal",
                        "rouge_duplicate_threshold"]

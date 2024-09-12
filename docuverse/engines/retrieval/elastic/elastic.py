@@ -20,8 +20,6 @@ import os
 from dotenv import load_dotenv
 
 
-
-
 class ElasticEngine(RetrievalEngine):
     """
     `ElasticEngine` class is a subclass of `RetrievalEngine` class and provides retrieval functionality
@@ -309,7 +307,9 @@ class ElasticEngine(RetrievalEngine):
         still_create_index = self.create_update_index(do_update=update)
         if not still_create_index:
             return
-        t = tqdm(total=num_passages, desc="Ingesting dense documents: ", smoothing=0.05)
+        t = tqdm(total=num_passages,
+                 desc=f"Ingesting {self.config.db_engine.replace('es-','')} documents: ",
+                 smoothing=0.05)
         for k in range(0, num_passages, bulk_batch):
             actions = [
                 {

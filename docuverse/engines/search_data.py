@@ -235,6 +235,9 @@ class SearchData:
         'sap': SAPProccesor()
     }
 
+    default_tiler = TextTiler(tokenizer=None, count_type="char", max_doc_size=20000, stride=2000,
+                              aligned_on_sentences=False)
+
     class Entry:
         def __init__(self, config: Dict[str, str]):
             self.__dict__.update(config)
@@ -282,8 +285,6 @@ class SearchData:
                                        )
         print(f"Cache filename is {cache_file_name}")
         return cache_file_name
-
-    @staticmethod
 
     @staticmethod
     def read_cache_file_if_needed(cache_file_name, input_file):
@@ -346,6 +347,8 @@ class SearchData:
 
         if id is None:
             id = get_param(unit, data_template.id_header)
+        if tiler is None:
+            tiler = cls.default_tiler
 
         itm = processor(unit=unit, id=id, remove_url=remove_url, doc_url=doc_url,
                         uniform_product_name=uniform_product_name, data_type=data_type, title_handling=title_handling,
@@ -425,8 +428,13 @@ class SearchData:
             max_num_documents = int(max_num_documents)
         url = r'https?://(?:www\.)?(?:[-a-zA-Z0-9@:%._\+~#=]{1,256})\.(:?[a-zA-Z0-9()]{1,6})(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)*\b'
         data_type = kwargs.get('data_type', 'auto')
+        data = None
         if isinstance(input_files, list):
-            files = input_files
+            if isinstance(input_files, str):
+                files = input_files
+            elif isinstance(input_files[0], dict): # getting a read dictionary already
+                files = [input_files]
+                use_cache = False
         elif isinstance(input_files, str):
             files = [input_files]
         else:
@@ -449,10 +457,32 @@ class SearchData:
 
         for input_file in files:
             docs_read = 0
-            if input_file.find(":") >= 0:
-                productId, input_file = input_file.split(":")
-            else:
-                productId = uniform_product_name
+            productId = uniform_product_name
+            if isinstance(input_file, str):
+                if input_file.find(":") >= 0:
+                    productId, input_file = input_file.split(":")
+
+                if use_cache:
+                    cache_filename = cls.get_cached_filename(input_file,
+                                                             max_doc_size=max_doc_length, stride=stride,
+                                                             aligned=aligned_on_sentences,
+                                                             title_handling=title_handling, tiler=tiler)
+                    cached_passages = cls.read_cache_file_if_needed(
+                        cache_filename,
+                        input_file)
+                    if cached_passages:
+                        passages.extend(cached_passages[:max_num_documents]
+                                        if 'max_num_documents' in kwargs
+                                        else cached_passages)
+                        continue
+                if verbose:
+                    print(f"Reading {input_file}", end='')
+                data = cls._read_data(input_file, max_num_documents)
+            elif isinstance(input_file, list) and isinstance(input_file[0], dict):
+                data = input_file
+            if verbose:
+                read_time = tm.mark_and_return_time()
+                print(f" done: {read_time}")
 
             process_text_func = partial(cls.process_text,
                                         tiler=tiler,
@@ -465,28 +495,7 @@ class SearchData:
                                         doc_based=doc_based,
                                         docid_filter=docid_filter)
 
-            if use_cache:
-                cache_filename = cls.get_cached_filename(input_file,
-                                                         max_doc_size=max_doc_length, stride=stride,
-                                                         aligned=aligned_on_sentences,
-                                                         title_handling=title_handling, tiler=tiler)
-                cached_passages = cls.read_cache_file_if_needed(
-                    cache_filename,
-                    input_file)
-                if cached_passages:
-                    passages.extend(cached_passages[:max_num_documents]
-                                    if 'max_num_documents' in kwargs
-                                    else cached_passages)
-                    continue
-            if verbose:
-                print(f"Reading {input_file}", end='')
             tpassages = []
-            data = cls._read_data(input_file, max_num_documents)
-
-            if verbose:
-                read_time = tm.mark_and_return_time()
-                print(f" done: {read_time}")
-
             if num_threads <= 0:
                 for doc in tqdm(data, desc="Reading docs:"):
                     try:

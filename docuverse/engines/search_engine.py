@@ -18,6 +18,7 @@ from docuverse.engines.search_engine_config_params import DocUVerseConfig, Searc
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
+from docuverse.utils.elastic.elastic_ingestion import cache_dir
 from docuverse.utils.evaluation_output import EvaluationOutput
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.engines.reranking.reranker import Reranker

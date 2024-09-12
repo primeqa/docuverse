@@ -53,7 +53,7 @@ def get_config_dir(config_path: str | None = None) -> str:
         head = os.path.basename(dir)
         found = False
         while dir:
-            if head == basename:
+            if head == basename and os.path.basename(os.path.dirname(dir)) != basename:
                 return dir
             dir = os.path.dirname(dir)
             head = os.path.basename(dir)

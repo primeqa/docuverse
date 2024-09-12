@@ -73,8 +73,8 @@ class MilvusEngine(RetrievalEngine):
         self.init_model(kwargs)
         # Milvus does not accept '-', only letters, numbers, and "_"
         self.init_client()
-        # self.output_fields = ["id", "text", 'title']
-        self.output_fields = [self.config.data_template.get(f"{t}_header", t) for t in ["id", "text", 'title']]
+        self.output_fields = ["id", "text", 'title']
+        # self.output_fields = [self.config.data_template.get(f"{t}_header", t) for t in ["id", "text", 'title']]
         extra = get_param(self.config.data_template, 'extra_fields', None)
 
         if extra is not None and len(extra) > 0:
@@ -150,7 +150,14 @@ class MilvusEngine(RetrievalEngine):
         passage_vectors = self.encode_data(texts, batch_size)
         data = []
         for i, item in enumerate(corpus):
-            dt = {"id": item["id"], "embeddings": passage_vectors[i], "text": item['text'], 'title': item['title']}
+            if passage_vectors[i].getnnz()==0:
+                continue
+            dt = {key:item[key] for key in ['id', 'text', 'title']}
+            dt['embeddings'] = passage_vectors[i]
+            # dt = {"id": item["id"],
+            #       "embeddings": passage_vectors[i],
+            #       "text": item['text'],
+            #       'title': item['title']}
             for f in self.config.data_template.extra_fields:
                 dt[f] = str(item[f])
             data.append(dt)
@@ -172,12 +179,16 @@ class MilvusEngine(RetrievalEngine):
             FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=10000),
             FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=10000),
         ]
-        for f in self.config.data_template.extra_fields:
-            fields.append(FieldSchema(name=f, dtype=DataType.VARCHAR, max_length=10000))
+        if self.config.data_template.extra_fields is not None:
+            for f in self.config.data_template.extra_fields:
+                fields.append(FieldSchema(name=f, dtype=DataType.VARCHAR, max_length=10000))
 
         return fields
 
     def prepare_index_params(self):
+        pass
+
+    def analyze(self, text):
         pass
 
     def search(self, question: SearchQueries.Query, **kwargs) -> SearchResult:

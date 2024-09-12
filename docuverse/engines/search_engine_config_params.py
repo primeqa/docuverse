@@ -537,6 +537,7 @@ class SearchEngineConfig:
 
     def __init__(self, config: dict):
         self.index = get_param(config, 'index|index_name')
+        self.index_name = self.index
         self.title_field = get_param(config, 'title_field', None)
         self.text_field = get_param(config, 'text_field', None)
         self.productId_field = get_param(config, 'productId_field', None)
@@ -562,6 +563,9 @@ class SearchEngineConfig:
         self.server = config.get("server", None)
         self.data_template = config.get("data_template", None)
         self.query_template = config.get("query_template", None)
+
+    def get(self, key, default=None):
+        return getattr(self, key) if hasattr(self, key) else default
 
 
 class RunConfig(GenericArguments):

@@ -35,11 +35,11 @@ class SearchQueries(SearchData):
 
         @property
         def id(self):
-            return self.get(self.template.id_header)
+            return get_param(self, self.template.id_header)
 
         @property
         def text(self):
-            return self.get(self.template.text_header)
+            return get_param(self, self.template.text_header)
 
     def __init__(self, preprocessor, filenames, **data):
         super().__init__(filenames, **data)
@@ -80,83 +80,91 @@ class SearchQueries(SearchData):
         max_num_questions = get_param(kwargs, 'max_num_questions', -1)
         max_num_questions = -1 if max_num_questions is None else int(max_num_questions)
         ignore_empty_questions = bool(get_param(kwargs, 'ignore_empty_questions', False))
-        if isinstance(in_files, str):
+        if isinstance(in_files, str|dict):
             in_files = [in_files]
-        elif not isinstance(in_files, list):
+        elif isinstance(in_files, list):
+            if isinstance(in_files[0], dict):
+                in_files = [in_files]
+        else:
             raise RuntimeError(f"Invalid argument 'in_files' type: {type(in_files)}")
 
         for in_file in in_files:
-            with open(in_file, "r", encoding="utf-8") as file_stream:
+            if isinstance(in_file, dict|list):
+                question_data = in_file
+            elif isinstance(in_file, str):
                 question_data = cls._read_data(in_file)
-                if 'question_file' in question_data and 'goldstandard_file' in question_data:
-                    tfile = get_filename(in_file, question_data['goldstandard_file'])
-                    goldstandard = cls._read_data(tfile)
-                    gs_map = {}
-                    for gs in goldstandard:
-                        qid = get_param(gs, query_template.truth_id)
-                        doc_id = get_param(gs, query_template.truth_label)
-                        if qid in gs_map:
-                            gs_map[qid].append(doc_id)
-                        else:
-                            gs_map[qid] = [doc_id]
-                    qfile = get_filename(in_file, question_data['question_file'])
-                    tquestions = cls.read_question_data(qfile, fields=fields,
-                                                        lang=lang,
-                                                        url=url,
-                                                        query_template=query_template,
-                                                        relevant_map=gs_map,
-                                                        **kwargs)
-                    questions.extend(tquestions)
-                else:
-                    for it, row in enumerate(at_most(question_data, max_num_questions)):
-                        question = get_param(row, query_template.text_header)
-                        if url is not None:
-                            question = (re.sub(url, lang, 'URL', question), remv_stopwords)
-                        rels = None
-                        if relevant_map is not None:
-                            rels = get_param(relevant_map, get_param(row, query_template.id_header, None), None)
-                        if rels is None:
-                            rels = get_param(row, query_template.relevant_header, "")
-                        if ignore_empty_questions and (rels is None or not rels):
-                            continue
-                        if isinstance(rels, str):
-                            rels = rels.split(",")
-                        itm = {query_template.text_header: question,
-                               query_template.id_header: get_param(row, query_template.id_header, str(it)),
-                               query_template.relevant_header: rels
-                               }
-                        if query_template.extra_fields is not None:
-                            for extra in query_template.extra_fields:
-                                if extra in row:
-                                    val = row[extra]
-                                    if isinstance(val, str):
-                                        if val.find('[') >= 0 > val.find("None"):
-                                            # Assume it's some sort of json field
-                                            if val.find("'") >= 0:
-                                                if val.find("' '") >= 0:
-                                                    val = re.sub(cls._ms, "','", val)
-                                                val = val.replace("'", '"')
-                                            try:
-                                                # print(f"Loading {it}: {val}")
-                                                val = json.loads(val)
-                                                itm[extra] = val
-                                            except Exception as e:
-                                                print(f"Cannot parse field {row[extra]}: {e}")
-                                        else:
+            if 'question_file' in question_data and 'goldstandard_file' in question_data:
+                tfile = get_filename(in_file, question_data['goldstandard_file'])
+                goldstandard = cls._read_data(tfile)
+                gs_map = {}
+                for gs in goldstandard:
+                    qid = get_param(gs, query_template.truth_id)
+                    doc_id = get_param(gs, query_template.truth_label)
+                    if qid in gs_map:
+                        gs_map[qid].append(doc_id)
+                    else:
+                        gs_map[qid] = [doc_id]
+                qfile = get_filename(in_file, question_data['question_file'])
+                tquestions = cls.read_question_data(qfile, fields=fields,
+                                                    lang=lang,
+                                                    url=url,
+                                                    query_template=query_template,
+                                                    relevant_map=gs_map,
+                                                    **kwargs)
+                questions.extend(tquestions)
+            else:
+                out_text_header = query_template.text_header.split("|")[0]
+                out_id_header = query_template.id_header.split("|")[0]
+                out_relevant_header = query_template.relevant_header.split("|")[0]
+                for it, row in enumerate(at_most(question_data, max_num_questions)):
+                    question = get_param(row, query_template.text_header)
+                    if url is not None:
+                        question = (re.sub(url, lang, 'URL', question), remv_stopwords)
+                    rels = None
+                    if relevant_map is not None:
+                        rels = get_param(relevant_map, get_param(row, query_template.id_header, None), None)
+                    if rels is None:
+                        rels = get_param(row, query_template.relevant_header, "")
+                    if ignore_empty_questions and (rels is None or not rels):
+                        continue
+                    if isinstance(rels, str):
+                        rels = rels.split(",")
+                    itm = {out_text_header: question,
+                           out_id_header: get_param(row, query_template.id_header, str(it)),
+                           out_relevant_header: rels
+                           }
+                    if query_template.extra_fields is not None:
+                        for extra in query_template.extra_fields:
+                            if extra in row:
+                                val = row[extra]
+                                if isinstance(val, str):
+                                    if val.find('[') >= 0 > val.find("None"):
+                                        # Assume it's some sort of json field
+                                        if val.find("'") >= 0:
+                                            if val.find("' '") >= 0:
+                                                val = re.sub(cls._ms, "','", val)
+                                            val = val.replace("'", '"')
+                                        try:
+                                            # print(f"Loading {it}: {val}")
+                                            val = json.loads(val)
                                             itm[extra] = val
-                                    elif isinstance(val, list|dict):
+                                        except Exception as e:
+                                            print(f"Cannot parse field {row[extra]}: {e}")
+                                    else:
                                         itm[extra] = val
+                                elif isinstance(val, list|dict):
+                                    itm[extra] = val
 
-                        answers = get_param(row, query_template.answers_header, "")
-                        if isinstance(answers, str):
-                            if "::" in answers:
-                                itm['answers'] = answers.split("::")
-                            else:
-                                itm['answers'] = [answers]
-                        elif isinstance(answers, list):
-                            itm['answers'] = answers
-                        itm['passages'] = answers
+                    answers = get_param(row, query_template.answers_header, "")
+                    if isinstance(answers, str):
+                        if "::" in answers:
+                            itm['answers'] = answers.split("::")
+                        else:
+                            itm['answers'] = [answers]
+                    elif isinstance(answers, list):
+                        itm['answers'] = answers
+                    itm['passages'] = answers
 
-                        questions.append(SearchQueries.Query(template=query_template, **itm))
+                    questions.append(SearchQueries.Query(template=query_template, **itm))
 
         return questions
