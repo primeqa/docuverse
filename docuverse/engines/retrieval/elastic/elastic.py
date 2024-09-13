@@ -182,7 +182,7 @@ class ElasticEngine(RetrievalEngine):
         - SearchResult - The search result containing relevant information.
 
         """
-        query, knn, rank = self.create_query(question['text'], **kwargs)
+        query, knn, rank = self.create_query(get_param(question, self.config.query_template.text_header), **kwargs)
         if self.filters:
             for filter in self.filters:
                 # print(filter)
