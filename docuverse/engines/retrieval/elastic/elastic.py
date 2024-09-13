@@ -184,32 +184,59 @@ class ElasticEngine(RetrievalEngine):
         """
         query, knn, rank = self.create_query(get_param(question, self.config.query_template.text_header), **kwargs)
         if self.filters:
-            for filter in self.filters:
-                # print(filter)
-                if query is None:
-                    query = {'bool': {}}
-                vals = get_param(question, filter.query_field, None)
-                if vals is not None:
-                    query = self.add_filter(query,
-                                            type=filter.type,
-                                            field=filter.document_field,
-                                            terms=vals)
+            filters = self.create_filters(question)
+            if 'bool' in query:
+                query['bool'].update(**filters)
+            elif 'sub-searches' in query:
+                for q in query["sub-searches"]:
+                    q['bool'].update(**filters)
+            # for filter in self.filters:
+            #     # print(filter)
+            #     if query is None:
+            #         query = {'bool': {}}
+            #     vals = get_param(question, filter.query_field, None)
+            #     if vals is not None:
+            #         query = self.add_filter(query,
+            #                                 type=filter.type,
+            #                                 field=filter.document_field,
+            #                                 terms=vals)
 
-        res = self.client.search(
-            index=self.index_name,
-            knn=knn,
-            query=query,
-            rank=rank,
-            # TODO - top_k and n_docs is the same argument or am I missing something?
-            size=self.config.top_k,
-            # TODO - This should be specified in the retrieval config too
-            source_excludes=['vector', 'ml.predicted_value', 'ml.tokens']
-        )
+        if 'sub_searches' in query:
+            query.update(size=self.config.top_k,
+                         _source={"exclude": ["vector", "ml.predicted_value", "ml.tokens"]},
+                         rank=rank)
+            res = self.client.search(
+                index=self.index_name,
+                body=json.dumps(query),
+            )
+        else:
+            res = self.client.search(
+                index=self.index_name,
+                knn=knn,
+                query=query,
+                rank=rank,
+                size=self.config.top_k,
+                source_excludes=['vector', 'ml.predicted_value', 'ml.tokens']
+            )
 
         result = SearchResult(question=question, data=self.read_results(res))
         result.remove_duplicates(self.duplicate_removal,
                                  self.rouge_duplicate_threshold)
         return result
+
+    @staticmethod
+    def add_filter(query, type: str = "filter", field: str = "productId", terms: str = None):
+        query["bool"][type] = {"terms": {field: terms}}
+        return query
+
+    def create_filters(self, question):
+        filter = {"filter": []}
+
+        for f in self.filters:
+            vals = get_param(question, f.query_field, None)
+            if vals is not None:
+                filter["filter"].append({f.query_field: vals})
+        return filter
 
     # Read specific to engine, e.g. Elasticsearch results
     def read_results(self, data):
@@ -348,11 +375,6 @@ class ElasticEngine(RetrievalEngine):
             None
         """
         pass
-
-    @staticmethod
-    def add_filter(query, type: str = "filter", field: str = "productId", terms: str = None):
-        query["bool"][type] = {"terms": {field: terms}}
-        return query
 
     def ingest_documents(self, documents, **kwargs):
         pass

@@ -140,7 +140,7 @@ class SparseEmbeddingFunction(EmbeddingFunction):
             show_progress_bar = not (isinstance(texts, str) or max(len(texts), _batch_size) <= 1)
 
         res = self.model.encode(texts, _batch_size=_batch_size,
-                                            show_progress_bar=show_progress_bar, **kwargs)
+                                show_progress_bar=show_progress_bar, **kwargs)
         
         if kwargs.get("create_vector_for_ingestion", False):
             res = self.model.convert_token_ids_to_tokens(res)

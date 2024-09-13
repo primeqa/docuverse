@@ -9,7 +9,9 @@ class ElasticElserEngine(ElasticEngine):
         self._init_connection()
 
     def create_query(self, text, **kwargs):
-        return {
+        _knn = None
+        _rank = None
+        _query = {
             "bool": {
                 "must": {
                     "text_expansion": {
@@ -20,7 +22,19 @@ class ElasticElserEngine(ElasticEngine):
                     }
                 }
             }
-        }, None, None
+        }
+        if self.config.hybrid == "rrf":
+            _query1 = {"bool": {
+                "must": {
+                    "multi_match": {
+                        "query": text,
+                        "fields": [self.config.text_field, self.config.title_field]
+                    }
+                }
+            }}
+            _query = {"sub_searches": [{"query":_query}, {"query":_query1}]}
+            _rank = {"rrf": {"window_size": 200}}
+        return _query, _knn, _rank
 
     def _set_pipelines(self, **kwargs):
         mappings = self.coga_mappings[self.config.lang]
