@@ -450,6 +450,7 @@ class SearchData:
             data_template = beir_data_template
 
         docid_filter = kwargs.get('docid_filter', [])
+        exclude_docids = kwargs.get('exclude_docids', [])
         uniform_product_name = kwargs.get('uniform_product_name')
         from docuverse.utils.timer import timer
         tm = timer("Data Loading")
@@ -475,11 +476,12 @@ class SearchData:
                                         if 'max_num_documents' in kwargs
                                         else cached_passages)
                         skipped = 0
-                        if docid_filter is not None:
+                        num_docs = len(to_copy)
+                        if docid_filter:
                             to_copy = [d for d in to_copy if d[data_template.id_header] in docid_filter]
-                        else:
-                            skipped += 1
-                        print(f"Skipped {skipped} passages.")
+                        elif exclude_docids:
+                            to_copy = [d for d in to_copy if d[data_template.id_header] not in exclude_docids]
+                        print(f"Skipped {num_docs-len(to_copy)} passages.")
                         passages.extend(to_copy)
                         continue
                 if verbose:

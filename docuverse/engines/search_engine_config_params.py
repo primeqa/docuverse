@@ -232,6 +232,22 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    docid_filter: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "If provided, it will only ingest the documents with the id in the provided list."
+        }
+    )
+
+    exclude_docid_filter: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "If provided, it will exclude the documents with the id in the provided list."
+        }
+    )
+
+
+
     bulk_batch: Optional[int] = field(
         default=40,
         metadata={
