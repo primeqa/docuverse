@@ -471,9 +471,16 @@ class SearchData:
                         cache_filename,
                         input_file)
                     if cached_passages:
-                        passages.extend(cached_passages[:max_num_documents]
+                        to_copy = (cached_passages[:max_num_documents]
                                         if 'max_num_documents' in kwargs
                                         else cached_passages)
+                        skipped = 0
+                        if docid_filter is not None:
+                            to_copy = [d for d in to_copy if d[data_template.id_header] in docid_filter]
+                        else:
+                            skipped += 1
+                        print(f"Skipped {skipped} passages.")
+                        passages.extend(to_copy)
                         continue
                 if verbose:
                     print(f"Reading {input_file}", end='')
