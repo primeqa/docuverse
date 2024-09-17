@@ -33,7 +33,10 @@ class ElasticElserEngine(ElasticEngine):
                 }
             }}
             _query = {"sub_searches": [{"query":_query}, {"query":_query1}]}
-            _rank = {"rrf": {"window_size": 200}}
+            if self.version >= "8.15.0":
+                _rank = {"rrf": {"rank_window_size": 200}}
+            else:
+                _rank = {"rrf": {"window_size": 200}}
         return _query, _knn, _rank
 
     def _set_pipelines(self, **kwargs):

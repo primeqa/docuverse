@@ -54,6 +54,7 @@ class ElasticEngine(RetrievalEngine):
 
     def __init__(self, config_params, **kwargs):
         super().__init__(config_params, **kwargs)
+        self.version = None
         self.pipeline_name = None
         self.rouge_duplicate_threshold = 0.7
         self.index_name = None
@@ -154,7 +155,7 @@ class ElasticEngine(RetrievalEngine):
                 ssl_assert_fingerprint=self.ssl_fingerprint
             )
         try:
-            _ = self.client.info()
+            self.version = self.client.info()['version']['number']
         except Exception as e:
             print(f"Error: {e}")
             import sys
