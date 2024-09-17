@@ -100,7 +100,10 @@ class TextTiler:
         if stride is None:
             stride = self.stride
         itm = template
-        text = text.replace(r'\n+', '\n').replace(r' +', ' ')
+        if text is None:
+            return []
+        else:
+            text = text.replace(r'\n+', '\n').replace(r' +', ' ')
         pieces = []
 
         if text.find("With this app") >= 0 or text.find("App ID") >= 0:
