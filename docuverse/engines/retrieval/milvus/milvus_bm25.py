@@ -80,6 +80,10 @@ class MilvusBM25Engine(MilvusEngine):
     def encode_query(self, question):
         return list(self.bm25_ef.encode_queries([question.text]))[0]
 
+    def get_search_request(self, text):
+        data = self.encode_data([text], batch_size=1, show_progress=False)
+        search_params = self.get_search_params()
+
     def ingest(self, corpus: SearchCorpus, update: bool = False):
         index_created = super().ingest(corpus, update)
         if index_created:

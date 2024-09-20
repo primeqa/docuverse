@@ -226,3 +226,9 @@ class MilvusEngine(RetrievalEngine):
 
     def get_search_params(self):
         pass
+
+    def get_search_request(self, text):
+        """
+        Creates a search request, based on the type of the engine - used in hybrid/multi-index search
+        """
+        pass
