@@ -66,10 +66,11 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
-    hybrid: Optional[str] = field(
-        default="none",
+    hybrid: Optional[str|dict] = field(
+        # default="none",
+        default="",
         metadata={
-            "choices": ["rrf", "none"],
+            # "choices": ["rrf", "none"],
             "help": "The type of hybrid combination to use (default is RRF)."
         }
     )
@@ -378,6 +379,8 @@ class RetrievalArguments(GenericArguments):
                     self.data_template.extra_fields.append(f.document_field)
                 res.append(f)
             self.filter_on = res
+        if self.hybrid == "":
+            self.hybrid = {}
 
 
 @dataclass

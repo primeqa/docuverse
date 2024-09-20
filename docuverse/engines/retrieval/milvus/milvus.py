@@ -99,7 +99,6 @@ class MilvusEngine(RetrievalEngine):
         self.config.index_name = self.config.index_name.replace("-", "_")
 
 
-
     def init_client(self):
         #connections.connect("default", host=self.host, port=self.port)
         if self.server is None:
@@ -116,7 +115,9 @@ class MilvusEngine(RetrievalEngine):
     def has_index(self, index_name: str):
         return self.client.has_collection(self.config.index_name)
 
-    def create_index(self, index_name: str, fields=None, fmt=None, **kwargs):
+    def create_index(self, index_name: str=None, fields=None, fmt=None, **kwargs):
+        if index_name is None:
+            index_name = self.config.index_name
         schema = CollectionSchema(fields, self.config.index_name)
         if fmt:
             print(fmt.format(f"Create collection `{self.config.index_name}`"))
