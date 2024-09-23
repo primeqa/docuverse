@@ -38,10 +38,10 @@ class MilvusDenseEngine(MilvusEngine):
         )
         return index_params
 
-    def create_fields(self):
+    def create_fields(self, embedding_name="embeddings"):
         fields = super().create_fields()
         fields.append(
-            FieldSchema(name="embeddings", dtype=DataType.FLOAT_VECTOR, dim=self.hidden_dim)
+            FieldSchema(name=embedding_name, dtype=DataType.FLOAT_VECTOR, dim=self.hidden_dim)
         )
         return fields
 
