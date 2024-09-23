@@ -81,13 +81,27 @@ def read_config_file(config_file):
     if not os.path.exists(config_file):
         config_file = os.path.join(get_config_dir(os.path.dirname(config_file)), os.path.basename(config_file))
     def replace(local_dict:dict, global_dict:dict, parent_key: str=""):
+        def get_value_recursive(global_dict, val, parent_key):
+            parents = parent_key.split(".")
+            rr = None
+            while rr is None:
+                if len(parents) > 0:
+                    skey = f"{'.'.join(parents)}.{val}"
+                else:
+                    skey = val
+                rr = get_param(global_dict, skey)
+                if rr is not None:
+                    return rr
+                if len(parents) == 0:
+                    return "None"
+                parents = parents[:-1]
+
         not_done = False
         for key, val in local_dict.items():
             if isinstance(val, str):
                 m = re.search(patt, val)
                 while m:
-                    skey = f"{parent_key}.{m.group(1)}" if parent_key != "" else m.group(1)
-                    rr = get_param(global_dict, skey)
+                    rr = get_value_recursive(global_dict, m.group(1), parent_key)
                     start="{{"
                     end="}}"
                     if not isinstance(rr, str) or rr.find("{{") < 0:
@@ -101,6 +115,7 @@ def read_config_file(config_file):
                 not_done |= replace(local_dict=val, global_dict=global_dict,
                                     parent_key=f"{parent_key}.{key}" if parent_key != "" else key)
         return not_done
+
 
     config = {}
     if config_file.endswith(".yml") or config_file.endswith(".yaml"):

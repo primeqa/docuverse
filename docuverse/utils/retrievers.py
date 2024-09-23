@@ -47,7 +47,7 @@ def create_retrieval_engine(retriever_config: dict):
                 from docuverse.engines.retrieval.milvus.milvus_bm25 import MilvusBM25Engine
                 engine = MilvusBM25Engine(retriever_config)
             elif name in ['milvus_hybrid', "milvus-hybrid"]:
-                from docuverse.engines.retrieval.milvus.milvus_bm25 import MilvusHybridEngine
+                from docuverse.engines.retrieval.milvus.milvus_hybrid import MilvusHybridEngine
                 engine = MilvusHybridEngine(retriever_config)
             else:
                 raise NotImplementedError(f"Unknown engine type: {name}")

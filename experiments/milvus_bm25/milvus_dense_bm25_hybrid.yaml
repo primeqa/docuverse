@@ -9,6 +9,7 @@ retriever:
     data_format: config/beir_data_format.yml
     doc_based: True
     verbose: True
+    date: 08292024
     hybrid:
         shared_tokenizer: true
         model_name: /home/raduf/mnlp-models-rag/06302024/slate.30m.english.rtrvr
@@ -20,7 +21,6 @@ retriever:
         models:
             bm25-model:
                 top_k: 100
-                date: 08292024
                 db_engine: milvus_bm25
                 index_name: "beir-{{corpus}}-hybrid-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
                 milvus_idf_file: "{{project_dir}}/{{index_name}}.idf"
@@ -31,7 +31,6 @@ retriever:
             slate-dense-model:
                 top_k: 100
                 db_engine: milvus_dense
-                date: 08292024
                 index_name: "beir-{{corpus}}-hybrid-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
                 server: localhost
                 bulk_batch: 128

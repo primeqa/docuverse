@@ -8,7 +8,7 @@ from docuverse.utils.retrievers import create_retrieval_engine
 try:
     from pymilvus import (
         FieldSchema, CollectionSchema, DataType, MilvusClient,
-        Collection, AnnSearchRequest, RRFRanker,
+        Collection, AnnSearchRequest, RRFRanker, connections,
 )
 except:
     print(f"You need to install pymilvus to be using Milvus functionality!")
@@ -27,35 +27,46 @@ class MilvusHybridEngine(MilvusEngine):
         self.index_params = None
         self.models = None
         self.configs = None
-        self.shared_tokenizer = get_param(self, 'hybrid.shared_tokenizer',
+        self.config = config
+        self.shared_tokenizer = get_param(config, 'hybrid.shared_tokenizer',
                                           get_param(kwargs, 'shared_tokenizer', False))
 
         super().__init__(config, **kwargs)
 
     def init_model(self, kwargs):
         # self.model = SparseEmbeddingFunction(self.config.model_name, batch_size=self.config.bulk_batch)
-        models_names = self.config.hybrid['models'].keys()
-        servers = self.config.hybrid['servers']
+        self.model_names = list(self.config.hybrid['models'].keys())
+        servers = [get_param(self.config.hybrid, f"models.{m}.server") for m in self.model_names]
         uniq_servers = list(set(servers))
         if len(uniq_servers) != 1:
             raise RuntimeError("In the MilvusHybridEngine, all milvus instances need "
                                f"to be on the same server, but I found [{uniq_servers}] servers.")
-        uniq_names = list(set(models_names))
-        if len(uniq_names) != len(models_names):
+        uniq_names = list(set(self.model_names))
+        if len(uniq_names) != len(self.model_names):
             raise RuntimeError("In the MilvusHybridEngine, all models need to have a different name"
                                f" but I found [{uniq_names}] names.")
         common_config = {k:v for k, v in self.config.hybrid.items() if k!='models'}
-        for m in models_names:
-            self.configs[m] = {**common_config, **self.config.hybrid['models'][m]}
-        engine_types = {'milvus_dense|milvus-dense': MilvusDenseEngine,
-                        'milvus_sparse|milvus-sparse': MilvusSparseEngine,
-                        'milvus_bm25|milvus-bm25': MilvusBM25Engine}
+        self.configs = {}
+        self.models = []
+        engine_types = {'milvus_dense': MilvusDenseEngine,
+                        'milvus-dense': MilvusDenseEngine,
+                        'milvus_sparse': MilvusSparseEngine,
+                        'milvus-sparse': MilvusSparseEngine,
+                        'milvus_bm25': MilvusBM25Engine,
+                        'milvus-bm25': MilvusBM25Engine}
+        for m in self.model_names:
+            self.configs[m] = {**{k:v for k,v in self.config.__dict__.items() if k!='hybrid'},
+            **common_config, **self.config.hybrid['models'][m]}
+            engine = get_param(engine_types, get_param(self.configs[m], 'db_engine'))
+            self.models.append(engine(self.configs[m]))
 
-        self.models = [get_param(self.configs[m], 'db_engine')(self.configs[m])
-                       for m in models_names]
         self.model = None
         self.client = self.models[0].client
+        self.connection = connections.connect(host=self.server.host, port=self.server.port)
         self.reranker = RRFRanker()
+
+    def init_client(self): #override the parent functionality
+        pass
 
     def ingest(self, corpus: SearchCorpus, update: bool = False):
         for m in self.models:
@@ -85,7 +96,7 @@ class MilvusHybridEngine(MilvusEngine):
         raise NotImplementedError
 
     def search(self, question: SearchQueries.Query, **kwargs):
-        search_params = [m.get_search_params() for m in self.models]
+        search_params = [{"param": m.get_search_params()} for m in self.models]
         data = [m.encode_query(question) for m in self.models]
         requests = []
         for s, d, m in zip(search_params, data, self.models):
@@ -93,7 +104,7 @@ class MilvusHybridEngine(MilvusEngine):
             s['anns_field'] = 'embeddings'
             s['limit'] = m.config.top_k
             requests.append(AnnSearchRequest(**s))
-        res = self.client.hybrid_search(requests, self.reranker, limit=self.config.top_k)
+        res = self.connection.hybrid_search(requests, self.reranker, limit=self.config.top_k)
         result = SearchResult(question=question, data=res)
         result.remove_duplicates(self.config.duplicate_removal,
                                  self.config.rouge_duplicate_threshold)

@@ -1,3 +1,4 @@
+import inspect
 from datetime import datetime
 from typing import Tuple, Dict, Union
 
@@ -134,7 +135,9 @@ class RetrievalEngine:
     def load_model_config(self, config_params: Union[dict, SearchEngineConfig]):
         if isinstance(config_params, dict):
             # config_params = SearchEngineConfig(config=config_params)
-            config_params = RetrievalArguments(**config_params)
+            members = inspect.getmembers(RetrievalArguments)
+            fields =[x.name for x in list(filter(lambda x: x[0] == '__dataclass_fields__', members))[0][1].values()]
+            config_params = RetrievalArguments(**{k:v for k,v in config_params.items() if k in fields})
 
         _param_names = ["index_name", "title_field", "text_field", "n_docs", "filters", "duplicate_removal",
                        "rouge_duplicate_threshold"]

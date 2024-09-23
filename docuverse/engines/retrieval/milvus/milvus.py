@@ -1,5 +1,6 @@
 from typing import Union
 
+from scipy.sparse import spmatrix
 from tqdm import tqdm
 
 from docuverse import SearchCorpus
@@ -96,7 +97,11 @@ class MilvusEngine(RetrievalEngine):
 
         """
         super().load_model_config(config_params)
-        self.config.index_name = self.config.index_name.replace("-", "_")
+        if self.config.index_name is not None:
+            # It's possible for the index_name to be None if it's a hybrid model.
+            self.config.index_name = self.config.index_name.replace("-", "_")
+        elif not self.config.db_engine.endswith("hybrid"):
+            raise RuntimeError("The index_name cannot be null for a non-hybrid Milvus configuration!")
 
 
     def init_client(self):
@@ -151,7 +156,7 @@ class MilvusEngine(RetrievalEngine):
         passage_vectors = self.encode_data(texts, batch_size)
         data = []
         for i, item in enumerate(corpus):
-            if passage_vectors[i].getnnz()==0:
+            if isinstance(passage_vectors[i],spmatrix) and passage_vectors[i].getnnz()==0:
                 continue
             dt = {key:item[key] for key in ['id', 'text', 'title']}
             dt['embeddings'] = passage_vectors[i]

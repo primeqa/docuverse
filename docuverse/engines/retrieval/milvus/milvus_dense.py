@@ -15,13 +15,13 @@ from docuverse.utils.embeddings.dense_embedding_function import DenseEmbeddingFu
 
 class MilvusDenseEngine(MilvusEngine):
     def __init__(self, config: SearchEngineConfig|dict, **kwargs) -> None:
-        super().__init__(config, **kwargs)
         self.normalize_embs = False
         self.hidden_dim = 0
+        super().__init__(config, **kwargs)
 
     def init_model(self, kwargs):
         self.model = DenseEmbeddingFunction(self.config.model_name)
-        self.hidden_dim = len(self.model.encode('text', show_progress_bar=False))
+        self.hidden_dim = len(self.model.encode(['text'], show_progress_bar=False)[0])
         self.normalize_embs = get_param(kwargs, 'normalize_embs', False)
 
     def prepare_index_params(self):
@@ -43,6 +43,7 @@ class MilvusDenseEngine(MilvusEngine):
         fields.append(
             FieldSchema(name="embeddings", dtype=DataType.FLOAT_VECTOR, dim=self.hidden_dim)
         )
+        return fields
 
     def get_search_params(self):
         search_params = get_param(self.config, 'search_params',

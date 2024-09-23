@@ -172,7 +172,7 @@ class SearchEngine:
                                 )
             else: # Use the first hybrid model
                 return self._read_data(file, no_cache=no_cache,
-                                       retriever_config=self.retriever.models[0].retriever_config)
+                                       retriever_config=self.retriever.models[0].config)
         else:
             return self._read_data(file, no_cache=no_cache)
         return data
