@@ -36,6 +36,14 @@ class RetrievalArguments(GenericArguments):
             "help": "The root dir for the configuration files."
         }
     )
+
+    milvus_idf_file: str = field(
+        default=None,
+        metadata={
+            "help": "The path to the milvus idf file."
+        }
+    )
+
     _argument_group_name = "Search Arguments"
 
     model_name: str = field(
@@ -209,6 +217,37 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    max_num_questions: Optional[str] | None = field(
+        default=None,
+        metadata={
+            "help": "The maximum number of questions to search (MSMarco has 509k questions!)."
+        }
+    )
+
+    ignore_empty_questions: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "If present and set to true, it will ignore questions that don't have any relevant documents. "
+                    "Useful for evaluation."
+        }
+    )
+
+    docid_filter: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "If provided, it will only ingest the documents with the id in the provided list."
+        }
+    )
+
+    exclude_docid_filter: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "If provided, it will exclude the documents with the id in the provided list."
+        }
+    )
+
+
+
     bulk_batch: Optional[int] = field(
         default=40,
         metadata={
@@ -232,7 +271,7 @@ class RetrievalArguments(GenericArguments):
     )
 
     num_search_threads: Optional[int] = field(
-        default=1,
+        default=-1,
         metadata={
             "help": "If provided, it will search with multiple threads."
         }
@@ -296,6 +335,13 @@ class RetrievalArguments(GenericArguments):
         default=False,
         metadata={
             "help": "If provided, information about statistics on the data read will be displayed."
+        }
+    )
+
+    task: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Used in the config.yaml to create index name, etc."
         }
     )
 
@@ -364,6 +410,13 @@ class EngineArguments(GenericArguments):
         default=None,
         metadata={
             "help": "The cache directory to use for storing intermediate results."
+        }
+    )
+
+    output_name: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "The output name to use for the metrics."
         }
     )
 
@@ -436,6 +489,20 @@ class RerankerArguments(GenericArguments):
         }
     )
 
+    reranker_lowercase: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "If specified, the text will be lowercased before reranking."
+        }
+    )
+
+    create_vector_for_ingestion: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "If specified, the splade vector would be formatted with text tokens"
+        }
+    )
+
 
 @dataclass
 class EvaluationArguments(GenericArguments):
@@ -486,6 +553,7 @@ class SearchEngineConfig:
 
     def __init__(self, config: dict):
         self.index = get_param(config, 'index|index_name')
+        self.index_name = self.index
         self.title_field = get_param(config, 'title_field', None)
         self.text_field = get_param(config, 'text_field', None)
         self.productId_field = get_param(config, 'productId_field', None)
@@ -511,6 +579,9 @@ class SearchEngineConfig:
         self.server = config.get("server", None)
         self.data_template = config.get("data_template", None)
         self.query_template = config.get("query_template", None)
+
+    def get(self, key, default=None):
+        return getattr(self, key) if hasattr(self, key) else default
 
 
 class RunConfig(GenericArguments):

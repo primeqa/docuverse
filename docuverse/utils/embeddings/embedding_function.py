@@ -45,3 +45,11 @@ class EmbeddingFunction:
 
     def encode(self, texts:Union[List[str], str], _batch_size:int=-1, show_progress_bar=False, **kwargs):
         return []
+
+    @property
+    def vocab_size(self):
+        return self.model.tokenizer.vocab_size
+
+    @property
+    def device(self):
+        return self.model.model.device

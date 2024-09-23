@@ -1,5 +1,3 @@
-from typing import List
-
 from docuverse.engines.retrieval.milvus.milvus import MilvusEngine
 
 try:
@@ -7,7 +5,6 @@ try:
         FieldSchema, CollectionSchema, DataType, MilvusClient,
         Collection,
     )
-    from pymilvus import model as MilvusModel
 except:
     print(f"You need to install pymilvus to be using Milvus functionality!")
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")

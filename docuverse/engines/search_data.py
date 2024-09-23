@@ -4,6 +4,7 @@ import orjson
 import csv
 import re
 import time
+from itertools import chain
 from functools import partial
 from multiprocessing import Manager, Queue, Process
 from typing import Dict, List
@@ -234,6 +235,9 @@ class SearchData:
         'sap': SAPProccesor()
     }
 
+    default_tiler = TextTiler(tokenizer=None, count_type="char", max_doc_size=20000, stride=2000,
+                              aligned_on_sentences=False)
+
     class Entry:
         def __init__(self, config: Dict[str, str]):
             self.__dict__.update(config)
@@ -283,8 +287,6 @@ class SearchData:
         return cache_file_name
 
     @staticmethod
-
-    @staticmethod
     def read_cache_file_if_needed(cache_file_name, input_file):
         passages = []
 
@@ -308,26 +310,13 @@ class SearchData:
         output_stream.close()
 
     @classmethod
-    def process_text(cls,
-                     tiler,
-                     unit,
-                     max_doc_size,
-                     stride,
-                     id=None,
-                     remove_url=True,
-                     doc_url=None,
-                     uniform_product_name=None,
-                     data_type="sap",
-                     title_handling="all",
-                     processor=None,
-                     data_template=default_data_template,
-                     docid_filter={},
-                     doc_based=True
-                     ):
+    def process_text(cls, unit:str, tiler, max_doc_size, stride, id=None, remove_url=True, doc_url=None,
+                     uniform_product_name=None, data_type="sap", title_handling="all", processor=None,
+                     data_template=default_data_template, docid_filter={}, doc_based=True):
         """
         Convert a given document or passage (from 'output.json') to a dictionary, splitting the text as necessary.
-        :param tiler: Tiler instance - the Tiler object that creates the tiles from the input text
         :param unit: the paragraph/document structure to proces
+        :param tiler: Tiler instance - the Tiler object that creates the tiles from the input text
         :param max_doc_size: int - the maximum size (in word pieces) of the resulting sub-document/sub-passage texts
         :param stride: int - the stride/overlap for consecutive pieces
         :param remove_url: Boolean - if true, URL in the input text will be replaced with "URL"
@@ -358,12 +347,14 @@ class SearchData:
 
         if id is None:
             id = get_param(unit, data_template.id_header)
+        if tiler is None:
+            tiler = cls.default_tiler
 
         itm = processor(unit=unit, id=id, remove_url=remove_url, doc_url=doc_url,
                         uniform_product_name=uniform_product_name, data_type=data_type, title_handling=title_handling,
                         data_template=data_template)
 
-        if docid_filter and id not in docid_filter or 'title' not in itm or (not itm['title']):
+        if docid_filter and id not in docid_filter: # or 'title' not in itm or (not itm['title']):
             return []
         else:
             if doc_based:
@@ -401,6 +392,8 @@ class SearchData:
 
     @staticmethod
     def get_orig_docid(id):
+        if isinstance(id, int):
+            return id
         index = id.rfind("-", 0, id.rfind("-"))
         if index >= 0:
             return id[:index]
@@ -435,8 +428,13 @@ class SearchData:
             max_num_documents = int(max_num_documents)
         url = r'https?://(?:www\.)?(?:[-a-zA-Z0-9@:%._\+~#=]{1,256})\.(:?[a-zA-Z0-9()]{1,6})(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)*\b'
         data_type = kwargs.get('data_type', 'auto')
+        data = None
         if isinstance(input_files, list):
-            files = input_files
+            if isinstance(input_files, str):
+                files = input_files
+            elif isinstance(input_files[0], dict): # getting a read dictionary already
+                files = [input_files]
+                use_cache = False
         elif isinstance(input_files, str):
             files = [input_files]
         else:
@@ -452,6 +450,7 @@ class SearchData:
             data_template = beir_data_template
 
         docid_filter = kwargs.get('docid_filter', [])
+        exclude_docids = kwargs.get('exclude_docids', [])
         uniform_product_name = kwargs.get('uniform_product_name')
         from docuverse.utils.timer import timer
         tm = timer("Data Loading")
@@ -459,10 +458,40 @@ class SearchData:
 
         for input_file in files:
             docs_read = 0
-            if input_file.find(":") >= 0:
-                productId, input_file = input_file.split(":")
-            else:
-                productId = uniform_product_name
+            productId = uniform_product_name
+            if isinstance(input_file, str):
+                if input_file.find(":") >= 0:
+                    productId, input_file = input_file.split(":")
+
+                if use_cache:
+                    cache_filename = cls.get_cached_filename(input_file,
+                                                             max_doc_size=max_doc_length, stride=stride,
+                                                             aligned=aligned_on_sentences,
+                                                             title_handling=title_handling, tiler=tiler)
+                    cached_passages = cls.read_cache_file_if_needed(
+                        cache_filename,
+                        input_file)
+                    if cached_passages:
+                        to_copy = (cached_passages[:max_num_documents]
+                                        if 'max_num_documents' in kwargs
+                                        else cached_passages)
+                        skipped = 0
+                        num_docs = len(to_copy)
+                        if docid_filter:
+                            to_copy = [d for d in to_copy if d[data_template.id_header] in docid_filter]
+                        elif exclude_docids:
+                            to_copy = [d for d in to_copy if d[data_template.id_header] not in exclude_docids]
+                        print(f"Skipped {num_docs-len(to_copy)} passages.")
+                        passages.extend(to_copy)
+                        continue
+                if verbose:
+                    print(f"Reading {input_file}", end='')
+                data = cls._read_data(input_file, max_num_documents)
+            elif isinstance(input_file, list) and isinstance(input_file[0], dict):
+                data = input_file
+            if verbose:
+                read_time = tm.mark_and_return_time()
+                print(f" done: {read_time}")
 
             process_text_func = partial(cls.process_text,
                                         tiler=tiler,
@@ -475,29 +504,8 @@ class SearchData:
                                         doc_based=doc_based,
                                         docid_filter=docid_filter)
 
-            if use_cache:
-                cache_filename = cls.get_cached_filename(input_file,
-                                                         max_doc_size=max_doc_length, stride=stride,
-                                                         aligned=aligned_on_sentences,
-                                                         title_handling=title_handling, tiler=tiler)
-                cached_passages = cls.read_cache_file_if_needed(
-                    cache_filename,
-                    input_file)
-                if cached_passages:
-                    passages.extend(cached_passages[:max_num_documents]
-                                    if 'max_num_documents' in kwargs
-                                    else cached_passages)
-                    continue
-            if verbose:
-                print(f"Reading {input_file}", end='')
             tpassages = []
-            data = cls._read_data(input_file, max_num_documents)
-
-            if verbose:
-                read_time = tm.mark_and_return_time()
-                print(f" done: {read_time}")
-
-            if num_threads <= 1:
+            if num_threads <= 0:
                 for doc in tqdm(data, desc="Reading docs:"):
                     try:
                         items = process_text_func(unit=doc)
@@ -516,7 +524,8 @@ class SearchData:
                                              post_func=post_func,
                                              post_label="tlen",
                                              data=data, num_threads=num_threads,
-                                             tiler=tiler)
+                                             msg="Tokenizing")
+                tpassages = list(chain.from_iterable(tpassages))
 
             if verbose:
                 read_time = tm.mark_and_return_time()

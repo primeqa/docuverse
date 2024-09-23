@@ -37,13 +37,17 @@ def create_retrieval_engine(retriever_config: dict):
             raise e
     elif name.startswith('milvus'):
         try:
-            if name == 'milvus_dense':
+            if name in ['milvus_dense', 'milvus', 'milvus-dense']:
                 from docuverse.engines.retrieval.milvus.milvus_dense import MilvusDenseEngine
                 engine = MilvusDenseEngine(retriever_config)
-            elif name == 'milvus_sparse':
+            elif name in ['milvus_sparse', "milvus-sparse"]:
                 from docuverse.engines.retrieval.milvus.milvus_sparse import MilvusSparseEngine
                 engine = MilvusSparseEngine(retriever_config)
-
+            elif name in ["milvus_bm25", "milvus-bm25"]:
+                from docuverse.engines.retrieval.milvus.milvus_bm25 import MilvusBM25Engine
+                engine = MilvusBM25Engine(retriever_config)
+            else:
+                raise NotImplementedError(f"Unknown engine type: {name}")
         except ImportError as e:
             print("You need to install pymilvus package.")
             raise e

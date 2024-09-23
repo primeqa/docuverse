@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from docuverse import SearchResult, SearchQueries
 from docuverse.engines import SearchData
-from docuverse.engines.search_engine_config_params import EvaluationArguments
+from docuverse.engines.search_engine_config_params import EvaluationArguments, DocUVerseConfig
 from . import get_param
 from .evaluation_output import EvaluationOutput
 from rouge_score.rouge_scorer import RougeScorer
@@ -19,30 +19,41 @@ class EvaluationEngine:
         self.rouge_scorer = None
         self.compute_rouge_score = None
         self.eval_measure = config.eval_measure
-        self.config = config
-        self.read(config)
+        if isinstance(config, DocUVerseConfig):
+            self.config = config.eval_config
+            self.data_template = config.data_template
+            self.query_template = config.query_template
+        elif isinstance(config, EvaluationArguments):
+            self.config = config
+            self.data_template = None
+            self.query_template = None
+        self.read()
 
-    def read(self, config):
-        if isinstance(config, EvaluationArguments):
+    def read(self, config=None):
+        if config is None:
+            config = self.config
+        if isinstance(config, DocUVerseConfig):
             for param in vars(config):
                 setattr(self, param, getattr(config, param))
         elif isinstance(config, str) and os.path.exists(config):  # It's a file
             pass
         if self.config.compute_rouge:
+            from rouge_score.rouge_scorer import RougeScorer
             self.rouge_scorer = RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
 
     def compute_score(self, input_queries: SearchQueries, system: List[SearchResult],
                       model_name="model", **kwargs) -> EvaluationOutput:
-        if self.compute_rouge_score:
-            from rouge_score.rouge_scorer import RougeScorer
-            scorer = RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
         data_id_header = 'id'
         # if 'data_template'in kwargs:
-        data_text_header = get_param(kwargs.get('data_template'), 'text_header', 'text')
-        data_id_header = get_param(kwargs['data_template'], 'id_header', 'id')
+        data_text_header = get_param(get_param(kwargs, 'data_template', self.data_template),
+                                     'text_header', 'text')
+        data_id_header = get_param(get_param(kwargs, 'data_template', self.data_template),
+                                   'id_header', 'id')
         # if 'query_template'in kwargs:
-        query_id_header = get_param(kwargs.get('query_template'), 'id_header', 'id')
-        relevant_header = get_param(kwargs.get('query_template'), 'relevant_header', "relevant")
+        query_id_header = get_param(get_param(kwargs, 'query_template', self.query_template),
+                                    'id_header', 'id')
+        relevant_header = get_param(get_param(kwargs, 'query_template', self.query_template),
+                                    'relevant_header', "relevant")
         if get_param(input_queries[0], relevant_header, None) is None:
             print("The input question file does not contain answers. Please fix that and restart.")
             return EvaluationOutput()
@@ -97,6 +108,9 @@ class EvaluationEngine:
                                 total=len(system),
                                 desc='Evaluating questions: '):
             qid = get_param(record.question, query_id_header)
+            if qid not in rqmap or rqmap[qid]>=len(input_queries):
+                print(f"Missing queryid {qid}")
+                continue
             query = input_queries[rqmap[qid]]
             num_gold.append(num_positive[qid])
             if '-1' in gt[qid]:
@@ -134,7 +148,7 @@ class EvaluationEngine:
                                    num_judged_queries=num_eval_questions,
                                    doc_scores=self.relevant,
                                    num_gold=num_gold,
-                                   ranks=self.iranks,
+                                   ranks=self.config.iranks,
                                    rouge_scores=rouge_scores,
                                    compute_macro_scores=True,
                                    model_name=model_name,

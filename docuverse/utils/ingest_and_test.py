@@ -35,18 +35,17 @@ if __name__ == '__main__':
         queries = None
 
     if config.evaluate and config.eval_config is not None:
-        scorer = EvaluationEngine(config.eval_config)
+        scorer = EvaluationEngine(config)
         if queries is None:
             queries = engine.read_questions(config.input_queries)
 
         if output is None:
             output = engine.read_output(config.output_file)
-        results = scorer.compute_score(queries, output, model_name=config.index_name,
-                                       data_template=config.data_template, query_template=config.query_template)
+        results = scorer.compute_score(queries, output, model_name=engine.get_output_name())
         metrics_file = config.output_file.replace(".json", ".metrics")
         print(f"Results:\n{results}")
         with open(metrics_file, "w") as out:
             out.write(str(results))
         tm.add_timing("evaluate")
 
-    timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0)
+    timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0, sorted_by="%", reverse=True)

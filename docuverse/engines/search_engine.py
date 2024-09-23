@@ -18,6 +18,7 @@ from docuverse.engines.search_engine_config_params import DocUVerseConfig, Searc
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
+from docuverse.utils.elastic.elastic_ingestion import cache_dir
 from docuverse.utils.evaluation_output import EvaluationOutput
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.engines.reranking.reranker import Reranker
@@ -66,37 +67,52 @@ class SearchEngine:
         return self.retriever.info()
 
     def search(self, queries: Union[SearchQueries, list[SearchQueries.Query]]) -> List[SearchResult]:
-        # self.retriever.init_client()
+        self.write_necessary = False
+        answers, cache_file = self.read_cache_file(extension=".retrieve.pkl.bz2")
+        if answers is None:
+            if len(queries) == 0:
+                 print(f"No queries to seaarch. Check {self.config.input_queries}")
+            self.retriever.reconnect_if_necessary()
+            answers = parallel_process(self.retriever.search, queries,
+                                       num_threads=self.config.num_search_threads,
+                                       msg=f"Searching documents:")
+            self.write_necessary = True
+            self.write_cache_file(answers, cache_file)
+        if self.reranker is not None:
+            ranswers, cache_file = self.read_cache_file(extension=".rerank.pkl.bz2")
+            if ranswers is None:
+                answers = self.reranker.rerank(answers)
+                self.write_necessary = True
+                # cache_file.replace(".retrieve.pkl.bz2", ".rerank.pkl.bz2")
+                self.write_cache_file(answers, cache_file)
+            else:
+                answers = ranswers
+
+        return answers
+
+    def read_cache_file(self, extension):
         answers = None
         cache_file = None
-        self.write_necessary = False
         if self.config.cache_dir is not None and not self.config.no_cache:
             # Read the results if available, don't search again
-            base_cache_file = os.path.basename(self.config.output_file.replace(".json", ".retrieve.pkl.bz2"))
+            base_cache_file = os.path.basename(self.config.output_file.replace(".json", extension))
             cache_file = os.path.join(self.config.cache_dir, base_cache_file)
             if os.path.exists(cache_file):
                 print(f"Reading cached search results from {cache_file}")
-                answers = self.read_output(cache_file)
-        if answers is None:
-            self.retriever.reconnect_if_necessary()
-            answers = parallel_process(self.retriever.search, queries, num_threads=self.config.num_search_threads,
-                                       msg=f"Searching documents ({self.config.num_search_threads} thread(s)):")
-            # else:
-            #     answers = [self.retriever.search(query) for query in tqdm(queries, desc="Processing queries: ")]
-            self.write_necessary = True
-            if cache_file is not None:
-                if not os.path.exists(self.config.cache_dir):
-                    os.makedirs(self.config.cache_dir)
-                self.write_output(answers, cache_file)
-        if self.reranker is not None:
-            answers = self.reranker.rerank(answers)
-            self.write_necessary = True
-            if cache_file is not None:
-                cache_file = cache_file.replace("retrieve", "rerank")
-                self.write_output(answers, cache_file)
-            # answers = [self.reranker.rerank(answer) for answer in tqdm(answers, desc="Reranking queries: ")]
+                try:
+                    answers = self.read_output(cache_file)
+                except Exception as e:
+                    print(f"Failed to read cache file {cache_file}: {e}")
+        return answers, cache_file
 
-        return answers
+    def write_cache_file(self, values, cache_file):
+        if cache_file is not None:
+            if not os.path.exists(self.config.cache_dir):
+                os.makedirs(self.config.cache_dir)
+            try:
+                self.write_output(values, cache_file)
+            except Exception as e:
+                print(f"Failed to write cache file {cache_file}: {e}")
 
     def write_output(self, output, output_file:str|None|bytes=None, overwrite=False):
         """
@@ -116,6 +132,8 @@ class SearchEngine:
         if output_file is None:
             output_file = self.config.output_file
         if file_is_of_type(output_file, extensions=".json"):
+            if not os.path.exists(os.path.dirname(output_file)):
+                os.makedirs(os.path.dirname(output_file), exist_ok=True)
             with open(output_file, "w") as outfile:
                 outp = [r.as_dict() for r in output]
                 outfile.write(json.dumps(outp, indent=2))
@@ -167,3 +185,9 @@ class SearchEngine:
 
     def read_questions(self, file):
         return SearchQueries.read(file, **vars(self.config.retriever_config))
+
+    def get_output_name(self):
+        if self.config.output_name is None:
+            return self.config.index_name
+        else:
+            return self.config.output_name

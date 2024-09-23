@@ -1,8 +1,8 @@
 import math
 from copy import deepcopy
 
-import numpy as np
-from torch.nn.functional import embedding
+import torch
+from transformers.models.deta.image_processing_deta import max_across_indices
 
 from docuverse import SearchResult
 from docuverse.utils.embeddings.dense_embedding_function import DenseEmbeddingFunction
@@ -10,51 +10,60 @@ from .reranker import Reranker
 from sentence_transformers import util as st_util
 from docuverse.engines.search_engine_config_params import RerankerConfig as RerankerConfig
 from ...utils.embeddings.sparse_embedding_function import SparseEmbeddingFunction
+from ...utils.timer import timer
 
 
 class SpladeReranker(Reranker):
     def __init__(self, reranking_config: RerankerConfig|dict, **kwargs):
         super().__init__(reranking_config, **kwargs)
-        self.model = SparseEmbeddingFunction(reranking_config.reranker_model)
+        self.model = SparseEmbeddingFunction(reranking_config.reranker_model,
+                                             batch_size=reranking_config.reranker_gpu_batch_size)
 
-    def similarity(self, embedding1, embedding2):
-        emb1, emb2 = (embedding1, embedding2) if len(embedding1) > len(embedding2) else (embedding2, embedding1)
-        keys = {k:v for (k,v) in emb1}
+    def pair_similarity(self, pair, device='cpu'):
+        return self.similarity(pair[0], pair[1], device)
 
+    def similarity(self, embedding1, embedding2, device='cuda'):
+        def make_zeros(arg, dtype=float):
+            if device == 'cuda':
+                return torch.zeros(arg, dtype=torch.bfloat16, device=device)
+            else:
+                return torch.zeros(arg, dtype=dtype, device=device)
+        tm=timer("reranking::cosine")
+        # device = self.model.device
+        if not isinstance(embedding1, torch.Tensor):
+            embedding1 = torch.tensor(embedding1)
+            ee2 = []
+            for e in embedding2:
+                ee2.append(torch.tensor(e))
+            embedding2 = ee2
+        embedding1 = embedding1.to(device)
+        vocab_size = self.model.vocab_size
+        max1 = int(torch.max(embedding1[:, 0]))+1
+        emb1 = make_zeros(max1, dtype=embedding1.dtype)
+        emb1[embedding1[:, 0].int()] = embedding1[:, 1]
+        tm.add_timing("sim::valcopy")
 
-        norm1 = np.linalg.norm([e[1] for e in emb1], ord=2)
-        norm2 = np.linalg.norm([e[1] for e in emb2], ord=2)
+        if isinstance(embedding2, list):
+            maxind =  max([int(torch.max(emb[:, 0])) for emb in embedding2])+1
+            num_vectors = len(embedding2)
+            emb2 = make_zeros((num_vectors, maxind), embedding2[0].dtype)
+            for i in range(len(embedding2)):
+                embedding2[i] = embedding2[i].to(device)
+                emb2[i][embedding2[i][:, 0].int()] = embedding2[i][:, 1]
+            tm.add_timing("sim::valcopy")
+            final_max = min(max1, maxind)
+            prod = torch.matmul(emb1[:final_max].reshape(1, final_max), emb2[:,:final_max].reshape(num_vectors, final_max, 1))
+            tm.add_timing("sim::dotproduct")
+        else:
+            maxind = int(torch.max(torch.max(embedding1[:, 0]), torch.max(embedding2[:, 0])))
+            embedding2 = embedding2.to(device)
 
-        val = sum(keys[key]*value for (key, value) in emb2 if key in keys)
-        return val / (norm1*norm2) if norm1+norm2>1e-7 else 0
+            emb2 = make_zeros(maxind)
+            emb2[embedding2[:,0].int()] = embedding2[:,1]
+            tm.add_timing("sim::valcopy")
 
+            prod =  torch.dot(emb1, emb2)
+            tm.add_timing("sim::dotproduct")
 
-    # def rerank(self, documents: SearchResult | list[SearchResult]) \
-    #         -> SearchResult | list[SearchResult]:
-    #         # Computing RRF is as follows (taken from
-    #         #                      https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html)
-    #         # score = 0.0
-    #         # for q in queries:
-    #         #     if d in result(q):
-    #         #         score += 1.0 / ( k + rank( result(q), d ) )
-    #         # return score
-    #         #
-    #         # # where
-    #         # # k is a ranking constant
-    #         # # q is a query in the set of queries
-    #         # # d is a document in the result set of q
-    #         # # result(q) is the result set of q
-    #         # # rank( result(q), d ) is d's rank within the result(q) starting from 1
-    #         k = len(documents)
-    #         for i in range(len(documents)):
-    #             hybrid_similarities[i] = 1.0/(k+i+1) + 1.0/(k+idx_to_rerank_idx[i]+1)
-    #
-    #     sorted_similarities = sorted(zip(documents, hybrid_similarities),
-    #                                  key=lambda pair: pair[1], reverse=True)
-    #
-    #     output = SearchResult(documents.question, [])
-    #     for doc, sim in sorted_similarities:
-    #         doc1 = deepcopy(doc)
-    #         doc1.score = sim
-    #         output.append(doc1)
-    #     return output
+        return prod #/ (norm1*norm2) if norm1+norm2>1e-7 else 0
+

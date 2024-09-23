@@ -1,6 +1,5 @@
 rouge-score
 pyyaml~=6.0.1
-elasticsearch~=8.13.2
 sentence-transformers
 python-dotenv~=1.0.1
 numpy~=1.26.1

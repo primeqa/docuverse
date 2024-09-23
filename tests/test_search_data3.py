@@ -60,17 +60,9 @@ class TestSearchData(unittest.TestCase):
 
     def test_process_text(self):
         # Provide other necessary arguments based on your dataset and the way process_text is implemented
-        SearchData.process_text(tiler='test_tiler',
-                         unit='characters',
-                         max_doc_size=20,
-                         stride=10,
-                         id='0',
-                         remove_url=True,
-                         doc_url=None,
-                         uniform_product_name=None,
-                         data_type="sap",
-                         title_handling="all",
-                         processor='test')
+        SearchData.process_text(unit='characters', tiler='test_tiler', max_doc_size=20, stride=10, id='0',
+                                remove_url=True, doc_url=None, uniform_product_name=None, data_type="sap",
+                                title_handling="all", processor='test')
 
     def test_remove_stopwords(self):
         text_with_stopwords = "this is a test"

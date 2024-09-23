@@ -3,7 +3,7 @@ import json
 from typing import Union, Tuple, List
 
 from docuverse.engines.retrieval.retrieval_servers import RetrievalServers
-from docuverse.utils import read_config_file, get_config_dir
+from docuverse.utils import get_config_dir
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines import SearchData, RetrievalEngine
 
@@ -18,8 +18,6 @@ from docuverse.utils import get_param
 
 import os
 from dotenv import load_dotenv
-
-
 
 
 class ElasticEngine(RetrievalEngine):
@@ -56,6 +54,7 @@ class ElasticEngine(RetrievalEngine):
 
     def __init__(self, config_params, **kwargs):
         super().__init__(config_params, **kwargs)
+        self.version = None
         self.pipeline_name = None
         self.rouge_duplicate_threshold = 0.7
         self.index_name = None
@@ -156,7 +155,7 @@ class ElasticEngine(RetrievalEngine):
                 ssl_assert_fingerprint=self.ssl_fingerprint
             )
         try:
-            _ = self.client.info()
+            self.version = self.client.info()['version']['number']
         except Exception as e:
             print(f"Error: {e}")
             import sys
@@ -184,34 +183,61 @@ class ElasticEngine(RetrievalEngine):
         - SearchResult - The search result containing relevant information.
 
         """
-        query, knn, rank = self.create_query(question['text'], **kwargs)
+        query, knn, rank = self.create_query(get_param(question, self.config.query_template.text_header), **kwargs)
         if self.filters:
-            for filter in self.filters:
-                # print(filter)
-                if query is None:
-                    query = {'bool': {}}
-                vals = get_param(question, filter.query_field, None)
-                if vals is not None:
-                    query = self.add_filter(query,
-                                            type=filter.type,
-                                            field=filter.document_field,
-                                            terms=vals)
+            filters = self.create_filters(question)
+            if 'bool' in query:
+                query['bool'].update(**filters)
+            elif 'sub-searches' in query:
+                for q in query["sub-searches"]:
+                    q['bool'].update(**filters)
+            # for filter in self.filters:
+            #     # print(filter)
+            #     if query is None:
+            #         query = {'bool': {}}
+            #     vals = get_param(question, filter.query_field, None)
+            #     if vals is not None:
+            #         query = self.add_filter(query,
+            #                                 type=filter.type,
+            #                                 field=filter.document_field,
+            #                                 terms=vals)
 
-        res = self.client.search(
-            index=self.index_name,
-            knn=knn,
-            query=query,
-            rank=rank,
-            # TODO - top_k and n_docs is the same argument or am I missing something?
-            size=self.config.top_k,
-            # TODO - This should be specified in the retrieval config too
-            source_excludes=['vector', 'ml.predicted_value', 'ml.tokens']
-        )
+        if 'sub_searches' in query:
+            query.update(size=self.config.top_k,
+                         _source={("excludes" if self.version>="8.15.0" else "exclude"): ["vector", "ml.predicted_value", "ml.tokens"]},
+                         rank=rank)
+            res = self.client.search(
+                index=self.index_name,
+                body=json.dumps(query),
+            )
+        else:
+            res = self.client.search(
+                index=self.index_name,
+                knn=knn,
+                query=query,
+                rank=rank,
+                size=self.config.top_k,
+                source_excludes=['vector', 'ml.predicted_value', 'ml.tokens']
+            )
 
         result = SearchResult(question=question, data=self.read_results(res))
         result.remove_duplicates(self.duplicate_removal,
                                  self.rouge_duplicate_threshold)
         return result
+
+    @staticmethod
+    def add_filter(query, type: str = "filter", field: str = "productId", terms: str = None):
+        query["bool"][type] = {"terms": {field: terms}}
+        return query
+
+    def create_filters(self, question):
+        filter = {"filter": []}
+
+        for f in self.filters:
+            vals = get_param(question, f.query_field, None)
+            if vals is not None:
+                filter["filter"].append({f.query_field: vals})
+        return filter
 
     # Read specific to engine, e.g. Elasticsearch results
     def read_results(self, data):
@@ -256,63 +282,20 @@ class ElasticEngine(RetrievalEngine):
                 keys_to_index.append(k)
         return keys_to_index
 
-    def check_index_rebuild(self):
-        """
-        Checks if the user wants to recreate the index.
-
-        :return: True if the user wants to recreate the index, False otherwise.
-        """
-        index_name = self.config.index_name
-        import sys
-        while True:
-            r = input(
-                f"Are you sure you want to recreate the index {index_name}? It might take a long time!!"
-                f" Say 'yes', 'no', or 'skip':").strip()
-            if r == 'no':
-                print("OK - exiting. Run with '--actions r'")
-                sys.exit(0)
-            elif r == 'yes':
-                return True
-            elif r == 'skip':
-                print("Skipping ingestion.")
-                return False
-            else:
-                print(f"Please type 'yes' or 'no', not {r}!")
-        return True
-
-    def has_index(self, index_name):
+    def has_index(self, index_name, **kwargs):
         return self.client.indices.exists(index=index_name)
 
-    def create_update_index(self, do_update:bool=True) -> bool:
-        """
-        Create or update the Elasticsearch index.
+    def create_index(self, index_name: str, **kwargs):
+        self.client.indices.create(index=index_name,
+                                   mappings=self.coga_mappings[self.config.lang],
+                                   settings=self.settings[self.config.lang])
 
-        Parameters:
-        - do_update (bool): Specifies whether to perform an update operation (default=True).
+    def delete_index(self, index_name: str|None = None, **kwargs):
+        if index_name is None:
+            index_name = self.config.index_name
+        self.client.options(ignore_status=[400, 404]).indices.delete(index=self.config.index_name)
 
-        Returns:
-        - bool: True if the operation is successful, False otherwise.
 
-        """
-        if self.has_index(index_name=self.config.index_name):
-            if do_update:
-                do_index = self.check_index_rebuild()
-                if not do_index:
-                    return False
-                self.client.options(ignore_status=[400, 404]).indices.delete(index=self.config.index_name)
-                return True
-            else:
-                print(f"This will overwrite your existent index {self.config.index_name} - use --actions 'u' instead.")
-                return self.check_index_rebuild()
-        else:
-            if do_update:
-                print("You are trying to update an index that does not exist "
-                      "- will ignore your command and create the index.")
-        if not self.client.indices.exists(index=self.config.index_name):
-            self.client.indices.create(index=self.config.index_name,
-                                       mappings=self.coga_mappings[self.config.lang],
-                                       settings=self.settings[self.config.lang])
-        return True
 
     def ingest(self, corpus: SearchData, **kwargs):
         """
@@ -352,7 +335,9 @@ class ElasticEngine(RetrievalEngine):
         still_create_index = self.create_update_index(do_update=update)
         if not still_create_index:
             return
-        t = tqdm(total=num_passages, desc="Ingesting dense documents: ", smoothing=0.05)
+        t = tqdm(total=num_passages,
+                 desc=f"Ingesting {self.config.db_engine.replace('es-','')} documents: ",
+                 smoothing=0.05)
         for k in range(0, num_passages, bulk_batch):
             actions = [
                 {
@@ -391,11 +376,6 @@ class ElasticEngine(RetrievalEngine):
             None
         """
         pass
-
-    @staticmethod
-    def add_filter(query, type: str = "filter", field: str = "productId", terms: str = None):
-        query["bool"][type] = {"terms": {field: terms}}
-        return query
 
     def ingest_documents(self, documents, **kwargs):
         pass

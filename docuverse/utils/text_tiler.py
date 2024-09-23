@@ -22,7 +22,7 @@ class TextTiler:
     COUNT_TYPE_CHAR = 1
 
     def __init__(self, max_doc_size: int, stride: int,
-                 tokenizer: Union[str, PreTrainedTokenizer],
+                 tokenizer: Union[str, PreTrainedTokenizer, None],
                  aligned_on_sentences: bool = True,
                  count_type='token'):
         """
@@ -45,7 +45,7 @@ class TextTiler:
             self.count_type = self.COUNT_TYPE_CHAR
         else:
             raise RuntimeError('count_type must be either "token" or "chars"')
-        if count_type == self.COUNT_TYPE_CHAR:
+        if self.count_type == self.COUNT_TYPE_CHAR:
             self.tokenizer = None
         else:
             if isinstance(tokenizer, str):
@@ -100,7 +100,10 @@ class TextTiler:
         if stride is None:
             stride = self.stride
         itm = template
-        text = text.replace(r'\n+', '\n').replace(r' +', ' ')
+        if text is None:
+            return []
+        else:
+            text = text.replace(r'\n+', '\n').replace(r' +', ' ')
         pieces = []
 
         if text.find("With this app") >= 0 or text.find("App ID") >= 0:

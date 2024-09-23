@@ -238,7 +238,7 @@ class timer(object):
         return res
 
     @staticmethod
-    def display_timing(totalms, level=0, stat_list=None, num_words=0, num_chars=0):
+    def display_timing(totalms, level=0, stat_list=None, num_words=0, num_chars=0, sorted_by:str|None=None, reverse=False):
         '''Static method that will print the hierarchical times for the labeled times.
         The speeds computed are in kilo-words/sec and kilo-chars/sec.
         Arguments:
@@ -257,6 +257,11 @@ class timer(object):
             print("{:<40s}{:>10.1f}s {:>10.1f}% {:10.1f}%{:10.1f}{:10.1f}".
                   format(okey, secs, perc, ms*100 / totalms, num_words * 1.0 / ms,
                          num_chars * 1.0 / ms))
+            if sorted_by == "%":
+                node["children"] = sorted(node["children"], key=lambda val: val["percent"], reverse=reverse)
+            elif sorted_by == "name":
+                node["children"] = sorted(node["children"], key=lambda val: val["key"], reverse=reverse)
+
             for child in node["children"]:
                 _display_tree(child, level+1, num_words, num_chars)
 
