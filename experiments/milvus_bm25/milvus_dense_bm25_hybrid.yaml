@@ -1,0 +1,48 @@
+retriever:
+    corpus: quora
+    project_dir: /home/raduf/sandbox2/docuverse/experiments/milvus_bm25
+    input_passages: "benchmark/beir_dev/{{corpus}}//en/corpus.jsonl"
+    input_queries: "benchmark/beir_dev/{{corpus}}/queries_conf.json"
+    cache_dir: "{{project_dir}}/cache"
+    db_engine: milvus-hybrid
+    actions: ire
+    data_format: config/beir_data_format.yml
+    doc_based: True
+    verbose: True
+    hybrid:
+        shared_tokenizer: true
+        model_name: /home/raduf/mnlp-models-rag/06302024/slate.30m.english.rtrvr
+        max_doc_length: 512
+        stride: 100
+        title_handling: all
+        num_preprocessor_threads: 10
+        top_k: 100
+        models:
+            bm25-model:
+                top_k: 100
+                date: 08292024
+                db_engine: milvus_bm25
+                index_name: "beir-{{corpus}}-hybrid-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
+                milvus_idf_file: "{{project_dir}}/{{index_name}}.idf"
+                server: localhost
+                bulk_batch: 128
+                num_search_threads: -1
+                ignore_empty_questions: 1
+            slate-dense-model:
+                top_k: 100
+                db_engine: milvus_dense
+                date: 08292024
+                index_name: "beir-{{corpus}}-hybrid-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
+                server: localhost
+                bulk_batch: 128
+                num_search_threads: -1
+                ignore_empty_questions: 1
+
+    output_file: "output/beir-{{corpus}}-{{db_engine}}-bm25-{{max_doc_length}}-{{stride}}.json"
+    max_num_documents: 1000
+reranker: null
+evaluate:
+    eval_measure: match,mrr,ndcg
+    ranks: 1,5,10,100
+
+#--input_queries benchmark/ibm_search/questions_combined_labels_with_dccs.csv --input_passages benchmark/ibm_search/passages_combined_data_filtered.jsonl.gz --db_engine es-elser --model_name .elser_model_2_linux-x86_64 --top_k 40 --actions ire --max_doc_length 512 --stride 100 --count_type token --index_name ibm_sw-elser-512-100-06192024 --server RESCONVAI --doc_based --title_handling all --output_file output/ibmsw-elserv2-512-100.json --eval_measure match,mrr,ndcg --ranks 1,3,5,10,40 --data_format config/ibm_search_data.yml --bulk_batch 50 --num_preprocessor_threads 16 --verbose
