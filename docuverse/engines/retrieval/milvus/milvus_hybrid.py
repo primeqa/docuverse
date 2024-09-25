@@ -1,3 +1,10 @@
+import os
+
+from pandas.conftest import spmatrix
+from pydantic.v1 import NoneBytes
+from tqdm import tqdm
+from transformers.models.cvt.convert_cvt_original_pytorch_checkpoint_to_pytorch import embeddings
+from scipy.sparse._csr import csr_array
 from docuverse import SearchCorpus, SearchQueries, SearchResult
 from docuverse.engines.retrieval.milvus.milvus import MilvusEngine
 from docuverse.engines.retrieval.milvus.milvus_dense import MilvusDenseEngine
@@ -8,7 +15,7 @@ from docuverse.utils.retrievers import create_retrieval_engine
 try:
     from pymilvus import (
         FieldSchema, CollectionSchema, DataType, MilvusClient,
-        Collection, AnnSearchRequest, RRFRanker, connections,
+        Collection, AnnSearchRequest, RRFRanker, connections, utility
 )
 except:
     print(f"You need to install pymilvus to be using Milvus functionality!")
@@ -20,9 +27,56 @@ from docuverse.utils.embeddings.sparse_embedding_function import SparseEmbedding
 
 class MilvusHybridEngine(MilvusEngine):
     """
-    This type of engine will hold multiple engines, that will be called sequentially, as needed.
+        MilvusHybridEngine class extends the MilvusEngine to support hybrid search capabilities using multiple models.
+        The code has to temporarily use the old interface, as the MilvusClient interface to hybrid search is not available.
+
+        Attributes:
+        reranker (Optional[RRFRanker]): Reranker object used to rerank search results.
+        index_params (Optional[List[Dict]]): Index parameters for the models.
+        models (Optional[List[MilvusEngine]]): List of MilvusEngine instances.
+        configs (Optional[Dict]): Configuration details for each model.
+        config (SearchEngineConfig|dict): Configuration for the search engine.
+        shared_tokenizer (bool): Indicates if a shared tokenizer is used across models.
+
+        Methods:
+        __init__(config: SearchEngineConfig|dict, **kwargs) -> None:
+            Initializes the MilvusHybridEngine with the given configuration and additional arguments.
+
+        init_model(kwargs) -> None:
+            Initializes the models as specified in the configuration, setting up their individual configurations and engines.
+
+        init_client() -> None:
+            Overrides the parent method to avoid re-initializing the client.
+
+        ingest(corpus: SearchCorpus, update: bool = False) -> None:
+            Ingests the given corpus into all models, with an option to update existing corpus.
+
+        create_index(index_name: str = None, fields = None, fmt = None, **kwargs) -> None:
+            Creates index for all models using the specified index name, fields, and format.
+
+        prepare_index_params() -> None:
+            Prepares index parameters for all models.
+
+        create_fields() -> List[FieldSchema]:
+            Extends the parent method to add additional fields specific to embedding vectors.
+
+        delete_index(index_name: str = None, fmt = None, **kwargs) -> None:
+            Deletes index for all models using the specified index name and format.
+
+        get_search_params() -> None:
+            Retrieves search parameters for all models.
+
+        search(question: SearchQueries.Query, **kwargs) -> SearchResult:
+            Conducts a hybrid search across models using the given search query and additional arguments.
+
+        test() -> None:
+            Class method to perform basic testing of the hybrid engine capabilities.
     """
     def __init__(self, config: SearchEngineConfig|dict, **kwargs) -> None:
+        self.collection = None
+        self.model_names = None
+        self.embedding_names = []
+        self.connection = None
         self.reranker = None
         self.index_params = None
         self.models = None
@@ -34,17 +88,8 @@ class MilvusHybridEngine(MilvusEngine):
         super().__init__(config, **kwargs)
 
     def init_model(self, kwargs):
-        # self.model = SparseEmbeddingFunction(self.config.model_name, batch_size=self.config.bulk_batch)
         self.model_names = list(self.config.hybrid['models'].keys())
-        servers = [get_param(self.config.hybrid, f"models.{m}.server") for m in self.model_names]
-        uniq_servers = list(set(servers))
-        if len(uniq_servers) != 1:
-            raise RuntimeError("In the MilvusHybridEngine, all milvus instances need "
-                               f"to be on the same server, but I found [{uniq_servers}] servers.")
-        uniq_names = list(set(self.model_names))
-        if len(uniq_names) != len(self.model_names):
-            raise RuntimeError("In the MilvusHybridEngine, all models need to have a different name"
-                               f" but I found [{uniq_names}] names.")
+
         common_config = {k:v for k, v in self.config.hybrid.items() if k!='models'}
         self.configs = {}
         self.models = []
@@ -56,41 +101,113 @@ class MilvusHybridEngine(MilvusEngine):
                         'milvus-bm25': MilvusBM25Engine}
         for m in self.model_names:
             self.configs[m] = {**{k:v for k,v in self.config.__dict__.items() if k!='hybrid'},
-            **common_config, **self.config.hybrid['models'][m]}
+                               **common_config,
+                               **self.config.hybrid['models'][m]}
             engine = get_param(engine_types, get_param(self.configs[m], 'db_engine'))
             self.models.append(engine(self.configs[m]))
 
+            self.embedding_names.append(f"{m}_embeddings".replace("-", "_"))
+
         self.model = None
-        self.client = self.models[0].client
-        self.connection = connections.connect(host=self.server.host, port=self.server.port)
+        self.client = None
+        # self.connection = connections.connect(host=self.server.host, port=self.server.port)
         self.reranker = RRFRanker()
 
     def init_client(self): #override the parent functionality
-        pass
+        # if self.server is None:
+        #     print("MilvusEngine server is not initialized - it's OK if this in a hybrid combination!")
+        #
+        # else: # the client here will be None - since we need to use connections for the search
+        #     self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
+        #                                user=get_param(self.server, "user", ""),
+        #                                password=get_param(self.server, "password", ""),
+        #                                server_name=get_param(self.server, "server_name", ""),
+        #                                secure=get_param(self.server, "secure", False),
+        #                                server_pem_path = get_param(self.server, "server_pem_path", None)
+        #                                )
+        super().init_client()
+        connections.connect(host=self.server.host, port=self.server.port,
+                            secure=get_param(self.server, "secure", False),
+                            server_pem_path=get_param(self.server, "server_pem_path", None))
+        if self.has_index(self.config.index_name):
+            self.collection = Collection(name=self.config.index_name)
 
-    def ingest(self, corpus: SearchCorpus, update: bool = False):
+
+    def _create_data(self, corpus, texts):
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        data = []
         for m in self.models:
-            m.ingest(corpus, update)
+            data.append(m.encode_data(texts, self.ingest_batch_size))
 
-    def create_index(self, index_name: str=None, fields=None, fmt=None, **kwargs):
-        for m in self.models:
-            m.create_index(index_name=None, fields=fields, fmt=fmt, **kwargs)
+        vals = []
+        for i, item in enumerate(corpus):
+            # if isinstance(passage_vectors[i], spmatrix) and passage_vectors[i].getnnz() == 0:
+            #     continue
+            dt = {key: item[key] for key in ['id', 'text', 'title']}
+            for f in self.config.data_template.extra_fields:
+                dt[f] = str(item[f])
+            for j, (m, name) in enumerate(zip(self.models, self.model_names)):
+                val = data[j][i]
+                if self._check_zero_size_sparse_vector(val):
+                    print(f"Skipping {texts[i]}")
+                    dt = None
+                    break
+                dt[self.embedding_names[j]] = val
+            if dt: # skip elements for which the sparse vector is empty..
+                vals.append(dt)
 
-    def prepare_index_params(self):
-        raise NotImplementedError
-        # self.index_params = [self.models.prepare_index_params() for m in self.models]
-        # return self.index_params
+        return vals
+        #     if i%self.ingest_batch_size == 0 and vals:
+        #         self.collection.insert(vals)
+        #         vals = []
+        # if len(vals) > 0:
+        #     self.collection.insert(vals)
 
-    def create_fields(self):
+    @staticmethod
+    def _check_zero_size_sparse_vector(val):
+        return isinstance(val, csr_array) and val.getnnz() == 0
+
+    def _insert_data(self, data):
+        for i in tqdm(range(0, len(data), self.ingest_batch_size), desc="Ingesting documents"):
+            self.collection.insert(data[i:i+self.ingest_batch_size])
+
+    def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
         fields = super().create_fields()
-        fields.append(
-            FieldSchema(name="embeddings", dtype=DataType.SPARSE_FLOAT_VECTOR)
-        )
+
+        for i, (m, name) in enumerate(zip(self.models, self.model_names)):
+            self.embedding_names.append(f"{name}_embeddings".replace("-", "_"))
+            fields.extend(m.create_fields(embeddings_name=self.embedding_names[i], new_fields_only=True))
         return fields
 
+    def create_index(self, index_name: str=None, fields=None, fmt=None, **kwargs):
+        if index_name is None:
+            index_name = self.config.index_name
+
+        schema = CollectionSchema(fields, index_name)
+        self.collection = Collection(name=index_name, schema=schema)
+        for m, emb_name in zip(self.models, self.embedding_names):
+            index_params = m.prepare_index_params()
+            self.collection.create_index(emb_name, index_params)
+
+    # def ingest(self, corpus: SearchCorpus|list[SearchCorpus], update: bool = False):
+    #     texts = self._check_index_creation_and_get_text(corpus)
+    #
+    #     if texts is None:
+    #         return False
+    #     data = self._create_data(corpus, texts)
+    #     self._insert_data(data)
+    #     return True
+
+    def prepare_index_params(self, embeddings_name="embeddings"):
+        raise NotImplementedError
+
+    def check_client(self):
+        return True
+
     def delete_index(self, index_name: str|None=None, fmt=None, **kwargs):
-        for m in self.models:
-            m.delete_index(index_name=None, fmt=fmt, **kwargs)
+        utility.drop_collection(self.config.index_name)
+        # for m in self.models:
+        #     m.delete_index(index_name=None, fmt=fmt, **kwargs)
 
     def get_search_params(self):
         raise NotImplementedError
@@ -99,13 +216,22 @@ class MilvusHybridEngine(MilvusEngine):
         search_params = [{"param": m.get_search_params()} for m in self.models]
         data = [m.encode_query(question) for m in self.models]
         requests = []
-        for s, d, m in zip(search_params, data, self.models):
-            s['data'] = d
-            s['anns_field'] = 'embeddings'
+        self.collection.load()
+        for s, d, m, name in zip(search_params, data, self.models, self.embedding_names):
+            if self._check_zero_size_sparse_vector(d):
+                if self.config.verbose:
+                    print(f"Question {question.text} has a 0-size sparse representation")
+                continue
+            s['data'] = [d]
+            s['anns_field'] = name
             s['limit'] = m.config.top_k
             requests.append(AnnSearchRequest(**s))
-        res = self.connection.hybrid_search(requests, self.reranker, limit=self.config.top_k)
-        result = SearchResult(question=question, data=res)
+
+        if len(requests)==0:
+            return SearchResult(question=question, data=[])
+        res = self.collection.hybrid_search(requests, self.reranker, limit=self.config.top_k, output_fields=self.output_fields)
+        res_as_dict = [hit.to_dict() for hit in res[0]]
+        result = SearchResult(question=question, data=res_as_dict)
         result.remove_duplicates(self.config.duplicate_removal,
                                  self.config.rouge_duplicate_threshold)
         return result

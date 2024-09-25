@@ -57,6 +57,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
         return self.encode(texts)
 
+
     def __del__(self):
         if self.emb_pool is not None:
             self.stop_pool()

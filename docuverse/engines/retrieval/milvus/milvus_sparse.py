@@ -23,21 +23,21 @@ class MilvusSparseEngine(MilvusEngine):
     def init_model(self, kwargs):
         self.model = SparseEmbeddingFunction(self.config.model_name, batch_size=self.config.bulk_batch)
 
-    def prepare_index_params(self):
+    def prepare_index_params(self, embeddings_name="embeddings"):
         index_params = self.client.prepare_index_params()
         index_params.add_index(
             field_name="_id",
             index_type="STL_SORT"
         )
-        index_params.add_index(field_name="embeddings",
+        index_params.add_index(field_name=embeddings_name,
                                index_name="sparse_inverted_index",
                                index_type="SPARSE_INVERTED_INDEX",
                                metric_type="IP",
                                params={"drop_ratio_build": 0.2})
         return index_params
 
-    def create_fields(self):
-        fields = super().create_fields()
+    def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
+        fields = [] if new_fields_only else super().create_fields()
         fields.append(
             FieldSchema(name="embeddings", dtype=DataType.SPARSE_FLOAT_VECTOR)
         )

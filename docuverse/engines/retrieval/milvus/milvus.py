@@ -1,5 +1,6 @@
 from typing import Union
 
+from onnx.reference.custom_element_types import bfloat16
 from scipy.sparse import spmatrix
 from tqdm import tqdm
 
@@ -77,6 +78,7 @@ class MilvusEngine(RetrievalEngine):
         self.output_fields = ["id", "text", 'title']
         # self.output_fields = [self.config.data_template.get(f"{t}_header", t) for t in ["id", "text", 'title']]
         extra = get_param(self.config.data_template, 'extra_fields', None)
+        self.ingest_batch_size = get_param(self.config, 'bulk_batch', 40)
 
         if extra is not None and len(extra) > 0:
             self.output_fields += extra
@@ -107,22 +109,24 @@ class MilvusEngine(RetrievalEngine):
     def init_client(self):
         #connections.connect("default", host=self.host, port=self.port)
         if self.server is None:
-            print("MilvusEngine server is not initialized!")
-            raise RuntimeError("MilvusEngine server is not initialized!")
-        self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
-                                   user=get_param(self.server, "user", ""),
-                                   password=get_param(self.server, "password", ""),
-                                   server_name=get_param(self.server, "server_name", ""),
-                                   secure=get_param(self.server, "secure", False),
-                                   server_pem_path = get_param(self.server, "server_pem_path", None)
-                                   )
+            print("MilvusEngine server is not initialized - it's OK if this in a hybrid combination!")
+            # raise RuntimeError("MilvusEngine server is not initialized!")
+        else:
+            self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
+                                       user=get_param(self.server, "user", ""),
+                                       password=get_param(self.server, "password", ""),
+                                       server_name=get_param(self.server, "server_name", ""),
+                                       secure=get_param(self.server, "secure", False),
+                                       server_pem_path = get_param(self.server, "server_pem_path", None)
+                                       )
 
     def has_index(self, index_name: str):
-        return self.client.has_collection(self.config.index_name)
+        return self.client.has_collection(self.config.index_name) if self.client else False
 
     def create_index(self, index_name: str=None, fields=None, fmt=None, **kwargs):
         if index_name is None:
             index_name = self.config.index_name
+        self.check_client()
         schema = CollectionSchema(fields, self.config.index_name)
         if fmt:
             print(fmt.format(f"Create collection `{self.config.index_name}`"))
@@ -131,54 +135,64 @@ class MilvusEngine(RetrievalEngine):
         self.client.create_collection(self.config.index_name, schema=schema, index_params=index_params)
         return index_params
 
+    def check_client(self):
+        if self.client is None:
+            raise RuntimeError("MilvusEngine server is not defined/initialized.")
+
     def delete_index(self, index_name: str|None=None, fmt=None, **kwargs):
+        self.check_client()
         if index_name is None:
             index_name = self.config.index_name
         if fmt:
             print(fmt.format(f"Collection {self.config.index_name} exists, dropping"))
         self.client.drop_collection(index_name)
 
-    def ingest(self, corpus: SearchCorpus, update: bool = False):
+    def _check_index_creation_and_get_text(self, corpus, update):
+        self.check_client()
         fmt = "\n=== {:30} ==="
         fields = self.create_fields()
-        # collection_loaded = self.has_index(self.config.index_name)
-        # if collection_loaded:
-        #     print(fmt.format(f"Collection {self.config.index_name} exists, dropping"))
-        #     self.client.drop_collection(self.config.index_name)
-        #     # utility.drop_collection(self.config.index_name)
-        # index_params = self.create_index(fields, fmt)
+
         still_create_index = self.create_update_index(fmt=fmt, update=update, fields=fields)
         if not still_create_index:
-            return False
-        batch_size = get_param(self.config, 'bulk_batch', 40)
+            return None
 
         texts = [row['text'] for row in corpus]
-        passage_vectors = self.encode_data(texts, batch_size)
+        return texts
+
+    def ingest(self, corpus: SearchCorpus, update: bool = False):
+        texts = self._check_index_creation_and_get_text(corpus, update)
+
+        if texts is None:
+            return False
+        data = self._create_data(corpus, texts)
+        self._insert_data(data)
+        return True
+
+    def _insert_data(self, data):
+        for i in tqdm(range(0, len(data), self.ingest_batch_size), desc="Ingesting documents"):
+            self.client.insert(collection_name=self.config.index_name, data=data[i:i + self.ingest_batch_size])
+        self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
+
+    def _create_data(self, corpus, texts):
+        passage_vectors = self.encode_data(texts, self.ingest_batch_size)
         data = []
         for i, item in enumerate(corpus):
-            if isinstance(passage_vectors[i],spmatrix) and passage_vectors[i].getnnz()==0:
+            if isinstance(passage_vectors[i], spmatrix) and passage_vectors[i].getnnz() == 0:
                 continue
-            dt = {key:item[key] for key in ['id', 'text', 'title']}
+            dt = {key: item[key] for key in ['id', 'text', 'title']}
             dt['embeddings'] = passage_vectors[i]
-            # dt = {"id": item["id"],
-            #       "embeddings": passage_vectors[i],
-            #       "text": item['text'],
-            #       'title': item['title']}
             for f in self.config.data_template.extra_fields:
                 dt[f] = str(item[f])
             data.append(dt)
-        for i in tqdm(range(0, len(data), batch_size), desc="Ingesting documents"):
-            self.client.insert(collection_name=self.config.index_name, data=data[i:i + batch_size])
-        self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
-        return True
+        return data
 
     def encode_data(self, texts, batch_size):
         passage_vectors = self.model.encode(texts,
-                                            _batch_size=batch_size, show_progress_bar=True)
+                                            _batch_size=batch_size, show_progress_bar=len(texts)>1)
         # create embeddings
         return passage_vectors
 
-    def create_fields(self):
+    def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
         fields = [
             FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID", auto_id=True),
             FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=False, max_length=1000, auto_id=False),
@@ -191,13 +205,14 @@ class MilvusEngine(RetrievalEngine):
 
         return fields
 
-    def prepare_index_params(self):
+    def prepare_index_params(self, embeddings_name:str="embeddings"):
         pass
 
     def analyze(self, text):
         pass
 
     def search(self, question: SearchQueries.Query, **kwargs) -> SearchResult:
+        self.check_client()
         search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'
         query_vector = self.encode_query(question)
@@ -228,7 +243,6 @@ class MilvusEngine(RetrievalEngine):
 
     def encode_query(self, question):
         query_vector = self.model.encode(question.text, show_progress_bar=False)
-        return query_vector
 
     def get_search_params(self):
         pass

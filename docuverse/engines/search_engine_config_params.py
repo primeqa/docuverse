@@ -285,6 +285,13 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    storage_size: Optional[str] = field(
+        default="fp32",
+        metadata={
+            "help": "Defines the storage size of the document vectors (default: fp32)."
+        }
+    )
+
     duplicate_removal: Optional[bool]|None = field(
         default=None,
         metadata={
