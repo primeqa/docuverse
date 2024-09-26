@@ -30,7 +30,7 @@ class MilvusDenseEngine(MilvusEngine):
         self.normalize_embs = False
         self.hidden_dim = 0
         super().__init__(config, **kwargs)
-        self.storage_size = get_param(kwargs, 'storage_size', "fp16")
+        self.storage_size = get_param([config, kwargs], 'storage_size', "fp16")
         self.storage_rep = self.STORAGE_MAP[self.storage_size]
 
     def init_model(self, kwargs):
@@ -67,7 +67,7 @@ class MilvusDenseEngine(MilvusEngine):
 
     def encode_data(self, texts, batch_size):
         passage_vectors = super().encode_data(texts=texts, batch_size=batch_size)
-        if self.storage_size != self.FP32:
+        if self.storage_size != "fp32":
             passage_vectors = [np.array(p, dtype=self.storage_rep[1]) for p in passage_vectors]
         return passage_vectors
 

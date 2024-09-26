@@ -14,14 +14,14 @@ import queue
 from tqdm.auto import tqdm
 
 
-def get_param(dictionary, key: str, default: str | None | bool = None):
+def get_param(dictionary: dict|list[dict], key: str, default: str | None | bool = None):
     def recursive_get(_dictionary, key, default):
         if _dictionary is None:
             return default
         if key.find(".") >= 0:
             keys = key.split(".")
             res = default
-            if isinstance(dictionary, dict):
+            if isinstance(_dictionary, dict):
                 dd = _dictionary
             else:
                 dd = _dictionary.__dict__
@@ -32,12 +32,12 @@ def get_param(dictionary, key: str, default: str | None | bool = None):
                     return res
             return dd
         else:
-            return dictionary.get(key, default)
+            return _dictionary.get(key, default)
 
+    weird_value = ":+:+"
     if key is None:
         return default
     elif key.find("|") > 0:
-        weird_value = ":+:+"
         keys = key.split("|")
         for k in keys:
             k = recursive_get(dictionary, k, weird_value)
@@ -45,7 +45,14 @@ def get_param(dictionary, key: str, default: str | None | bool = None):
                 return k
         return default
     else:
-        return recursive_get(dictionary, key, default)
+        if isinstance(dictionary, list):
+            for dct in dictionary:
+                val = recursive_get(dct, key, weird_value)
+                if val != weird_value:
+                    return val
+            return default
+        else:
+            return recursive_get(dictionary, key, default)
 
 def get_config_dir(config_path: str | None = None) -> str:
     def find_docuverse_base(path: str, basename="docuverse"):

@@ -32,7 +32,7 @@ retriever:
                 milvus_idf_file: "{{project_dir}}/{{index_name}}.idf"
             slate-dense-model:
                 top_k: 100
-                storage_size: fp16
+                storage_size: fp32
                 db_engine: milvus_dense
 
     output_file: "output/beir-{{corpus}}-{{db_engine}}-bm25-{{max_doc_length}}-{{stride}}.json"
