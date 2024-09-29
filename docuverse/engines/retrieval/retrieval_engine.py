@@ -4,7 +4,7 @@ from typing import Tuple, Dict, Union
 
 from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_engine_config_params import SearchEngineConfig, RetrievalArguments
-from docuverse.utils import get_param
+from docuverse.utils import get_param, ask_for_confirmation
 
 
 class RetrievalEngine:
@@ -64,16 +64,19 @@ class RetrievalEngine:
 
     def check_index_rebuild(self, **kwargs) -> bool:
         """
-        Checks if the user wants to recreate the index.
+        check_index_rebuild(**kwargs) -> bool
 
-        :return: True if the user wants to recreate the index, False otherwise.
+        Prompts the user to confirm if they want to recreate the index. This method will ask for confirmation using a prompt and wait for the user's response. Depending on the user's input, the method will return True, False, or exit the program.
+        Parameters:
+          **kwargs: Additional keyword arguments (not used in this function).
+        Returns:
+          bool: Returns True if the user confirms to recreate the index, False if the user chooses to skip the operation.
         """
-        index_name = self.config.index_name
         import sys
         while True:
-            r = input(
-                f"Are you sure you want to recreate the index {index_name}? It might take a long time!!"
-                f" Say 'yes', 'no', or 'skip':").strip()
+            r = ask_for_confirmation(text=f"Are you sure you want to recreate the index {self.config.index_name}? It might take a long time!!",
+                                     answers=['yes', 'no', 'skip'],
+                                     default='skip')
             if r == 'no':
                 print("OK - exiting. Run with '--actions r'")
                 sys.exit(0)
@@ -82,8 +85,6 @@ class RetrievalEngine:
             elif r == 'skip':
                 print("Skipping ingestion.")
                 return False
-            else:
-                print(f"Please type 'yes' or 'no', not {r}!")
         # return True
 
     def create_update_index(self, do_update:bool=True, **kwargs) -> bool:

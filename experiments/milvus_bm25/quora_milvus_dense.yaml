@@ -4,7 +4,8 @@ retriever:
     input_passages: "benchmark/beir_dev/{{corpus}}//en/corpus.jsonl"
     input_queries: "benchmark/beir_dev/{{corpus}}/queries_conf.json"
     cache_dir: "{{project_dir}}/cache"
-    db_engine: milvus-hybrid
+    db_engine: milvus-dense
+    storage_size: fp32
     actions: ire
     data_format: config/beir_data_format.yml
     doc_based: True
@@ -12,31 +13,17 @@ retriever:
     date: 08292024
     server: localhost
     top_k: 100
+    model_name: thenlper/gte-small # /home/raduf/mnlp-models-rag/06302024/slate.30m.english.rtrvr
+    title_handling: all
+    num_preprocessor_threads: 10
     num_search_threads: -1
     ignore_empty_questions: 1
     bulk_batch: 128
     max_doc_length: 512
     stride: 100
     index_name: "beir-{{corpus}}-new-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
-    hybrid:
-        shared_tokenizer: true
-        model_name: /home/raduf/mnlp-models-rag/06302024/slate.30m.english.rtrvr
-#        max_doc_length: 512
-#        stride: 100
-        title_handling: all
-        num_preprocessor_threads: 10
-        models:
-#            bm25-model:
-#                top_k: 100
-#                db_engine: milvus_bm25
-#                milvus_idf_file: "{{project_dir}}/{{index_name}}.idf"
-            slate-dense-model:
-                top_k: 100
-                storage_size: fp32
-                db_engine: milvus_dense
-
     output_file: "output/beir-{{corpus}}-{{db_engine}}-bm25-{{max_doc_length}}-{{stride}}.json"
-    # max_num_documents: 1000
+    # max_num_documents: 100
 reranker: null
 evaluate:
     eval_measure: match,mrr,ndcg

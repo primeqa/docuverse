@@ -48,7 +48,7 @@ class MilvusBM25Engine(MilvusEngine):
 
     def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
         fields = [] if new_fields_only else super().create_fields()
-
+        self.embeddings_name = embeddings_name
         fields.append(
             FieldSchema(name=embeddings_name, dtype=DataType.SPARSE_FLOAT_VECTOR)
         )

@@ -298,3 +298,29 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     tk.clear()
     tk.close()
     return list(d[i] for i in range(num_items))
+
+def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes') -> str:
+    """
+    ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default='yes')
+
+    Prompts the user with a given text and waits for an answer from a list of possible answers.
+    If the user provides no input, a default answer is returned.
+
+    Parameters:
+        text (str): The message text to display to the user.
+        answers (list of str): A list of acceptable answers. Default is ['yes', 'no', 'skip'].
+        default (str): The default answer to return if the user provides no input. Default is 'yes'.
+
+    Returns:
+        str: The user's response or the default answer if no input is provided.
+    """
+    display_answers = ", ".join(a.title() if a==default else a for a in answers)
+    print(text)
+    while True:
+        r = input(f"Say: {display_answers}, <enter>={default}:").strip()
+        if r=="":
+            return default
+        elif r in answers:
+            return r
+        else:
+            print(f"Please type one of {answers}, not {r}!")

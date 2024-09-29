@@ -11,14 +11,18 @@ from copy import deepcopy
 
 from triton.language.extra.cuda import num_threads
 
-from docuverse.utils import get_param, get_config_dir, open_stream, file_is_of_type, parallel_process
+from docuverse.utils import (
+    open_stream,
+    file_is_of_type,
+    parallel_process,
+    ask_for_confirmation
+)
 from docuverse.engines import SearchData
 
 from docuverse.engines.search_engine_config_params import DocUVerseConfig, SearchEngineConfig
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
-from docuverse.utils.elastic.elastic_ingestion import cache_dir
 from docuverse.utils.evaluation_output import EvaluationOutput
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.engines.reranking.reranker import Reranker
@@ -98,6 +102,11 @@ class SearchEngine:
             base_cache_file = os.path.basename(self.config.output_file.replace(".json", extension))
             cache_file = os.path.join(self.config.cache_dir, base_cache_file)
             if os.path.exists(cache_file):
+                r = ask_for_confirmation(f"File {cache_file} exists, read?",
+                                         answers=['yes', 'no'],
+                                         default='no')
+                if r=='no':
+                    return None, None
                 print(f"Reading cached search results from {cache_file}")
                 try:
                     answers = self.read_output(cache_file)

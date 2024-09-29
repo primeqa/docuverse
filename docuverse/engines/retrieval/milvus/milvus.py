@@ -65,6 +65,7 @@ class MilvusEngine(RetrievalEngine):
         super().__init__(config_params=config_params, **kwargs)
         self.client = None
         self.index = None
+        self.embeddings_name = None
         self.milvus_defaults = read_config_file("config/milvus_default_config.yaml")
         self.load_model_config(config_params=config_params)
         self.servers = self.read_servers()
@@ -127,6 +128,10 @@ class MilvusEngine(RetrievalEngine):
         if index_name is None:
             index_name = self.config.index_name
         self.check_client()
+        index_params = self._create_collection(fields, fmt)
+        return index_params
+
+    def _create_collection(self, fields, fmt):
         schema = CollectionSchema(fields, self.config.index_name)
         if fmt:
             print(fmt.format(f"Create collection `{self.config.index_name}`"))
@@ -171,7 +176,7 @@ class MilvusEngine(RetrievalEngine):
     def _insert_data(self, data):
         for i in tqdm(range(0, len(data), self.ingest_batch_size), desc="Ingesting documents"):
             self.client.insert(collection_name=self.config.index_name, data=data[i:i + self.ingest_batch_size])
-        self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
+        # self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
 
     def _create_data(self, corpus, texts):
         passage_vectors = self.encode_data(texts, self.ingest_batch_size)
@@ -179,8 +184,8 @@ class MilvusEngine(RetrievalEngine):
         for i, item in enumerate(corpus):
             if isinstance(passage_vectors[i], spmatrix) and passage_vectors[i].getnnz() == 0:
                 continue
-            dt = {key: item[key] for key in ['id', 'text', 'title']}
-            dt['embeddings'] = passage_vectors[i]
+            dt = {key: item[key] for key in ['text', 'title']}
+            dt[self.embeddings_name] = passage_vectors[i]
             for f in self.config.data_template.extra_fields:
                 dt[f] = str(item[f])
             data.append(dt)
@@ -216,11 +221,11 @@ class MilvusEngine(RetrievalEngine):
         search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'
         query_vector = self.encode_query(question)
-        vals = query_vector.todense()
-        non_zero = len(vals.nonzero()[1])
-        if non_zero == 0:
-            print(f"Query \"{question.text}\" has 0 length representation.")
-            return SearchResult(question=question, data=[])
+        if isinstance(query_vector, spmatrix):
+            non_zero = query_vector.getnnz()
+            if non_zero == 0:
+                print(f"Query \"{question.text}\" has 0 length representation.")
+                return SearchResult(question=question, data=[])
         group_by = get_param(kwargs, 'group_by', None)
         extra = {}
         if group_by is not None:
@@ -230,7 +235,7 @@ class MilvusEngine(RetrievalEngine):
         res = self.client.search(
             collection_name=self.config.index_name,
             data=[query_vector],
-            search_params=search_params,
+            # search_params=search_params,
             limit=self.config.top_k,
             # limit=1000,
             output_fields=self.output_fields,

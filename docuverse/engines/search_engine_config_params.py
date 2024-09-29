@@ -655,13 +655,12 @@ class DocUVerseConfig(GenericArguments):
         self.update = None
         self.ingest = None
         self.params = HfArgumentParser((RetrievalArguments, RerankerArguments, EvaluationArguments, EngineArguments))
+        self.reranker_config: RerankerConfig | None = None
+        self.eval_config: EvaluationConfig | None = None
+        self.retriever_config: SearchEngineConfig | None = None
+        self.run_config: RunConfig | None = None
         if isinstance(config, str | dict):
             self.read_configs(config)
-        else:
-            self.reranker_config: RerankerConfig | None = None
-            self.eval_config: EvaluationConfig | None = None
-            self.retriever_config: SearchEngineConfig | None = None
-            self.run_config: RunConfig | None = None
 
     def read_dict(self, kwargs):
         self._process_params(self.params.parse_dict, kwargs, allow_extra_keys=True)
