@@ -35,7 +35,7 @@ questions = [
 def test_search(vectors, vector_for_query=None, metric="IP", reingest=False, milvus_server_addr="test.db",
                 use_connections=False, ingest_batch_size=-1):
     truncate_dim = 384
-    collection_name = "test1"
+    collection_name = "test2"
     vector_field_name = "qembedding"
     if ingest_batch_size < 0:
         ingest_batch_size = len(vectors)
@@ -50,7 +50,6 @@ def test_search(vectors, vector_for_query=None, metric="IP", reingest=False, mil
         else:
             test = vector_for_query
 
-    tm = timer()
     if use_connections:
         from pymilvus import connections
         client = connections
@@ -84,19 +83,20 @@ def test_search(vectors, vector_for_query=None, metric="IP", reingest=False, mil
         client.create_collection(
             collection_name=collection_name, schema=schema, index_params=index_params
         )
-        for i in range(1, len(vectors), ingest_batch_size):
+        for i in range(0, len(vectors), ingest_batch_size):
             client.insert(collection_name=collection_name, data=entities[i:i + ingest_batch_size])
         # insert_result = client.insert(collection_name=collection_name, data=entities)
         # print({k: v for k, v in insert_result.items() if k != 'ids'})
         client.load_collection(collection_name=collection_name)
         ingested_items = 0
-        tm.mark()
-        while ingested_items!=len(vectors):
+        tm = timer()
+        start = time.time()
+        while ingested_items < len(vectors)-1:
             res = client.get_collection_stats(collection_name=collection_name)
             ingested_items = res["row_count"]
-            print(f"Currently ingested items: {ingested_items}")
+            print(f"{tm.time_since_beginning()}: Currently ingested items: {ingested_items}")
             time.sleep(10)
-        print(f"Ingested in {tm.time_since_last_mark()} seconds.")
+        print(f"Ingested in {tm.time_since_beginning()} seconds.")
         print(client.list_indexes(collection_name=collection_name))
         print(client.describe_index(collection_name=collection_name, index_name=vector_field_name))
 
