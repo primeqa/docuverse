@@ -178,6 +178,10 @@ class MilvusEngine(RetrievalEngine):
     def _insert_data(self, data):
         for i in tqdm(range(0, len(data), self.ingest_batch_size), desc="Ingesting documents"):
             self.client.insert(collection_name=self.config.index_name, data=data[i:i + self.ingest_batch_size])
+        self.wait_for_ingestion(data)
+        # self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
+
+    def wait_for_ingestion(self, data):
         tm = timer()
         import time
         ingested_items = 0
@@ -186,7 +190,6 @@ class MilvusEngine(RetrievalEngine):
             ingested_items = res["row_count"]
             print(f"{tm.time_since_beginning()}: Currently ingested items: {ingested_items}")
             time.sleep(10)
-        # self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
 
     def _create_data(self, corpus, texts):
         passage_vectors = self.encode_data(texts, self.ingest_batch_size)

@@ -170,6 +170,7 @@ class MilvusHybridEngine(MilvusEngine):
     def _insert_data(self, data):
         for i in tqdm(range(0, len(data), self.ingest_batch_size), desc="Ingesting documents"):
             self.collection.insert(data[i:i+self.ingest_batch_size])
+        self.wait_for_ingestion()
 
     def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
         fields = super().create_fields()
