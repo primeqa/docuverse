@@ -6,12 +6,14 @@ from docuverse.utils import open_stream
 from docuverse.utils.embeddings.dense_embedding_function import DenseEmbeddingFunction
 from pymilvus import (
     MilvusClient,
-    DataType
+    DataType,
+    connections,
+    utility
 )
 
 cache_file = "/home/raduf/.local/share/elastic_ingestion/benchmark__beir_dev__quora____en__corpus.small.jsonl_512_100_True_all_gte-small.pickle.xz"
 MODEL = "/home/raduf/sandbox2/docuverse/models/slate.30m.english.rtrvr-20240719T181101"
-num_examples = 100
+num_examples = -1
 
 data = pickle.load(open_stream(cache_file))[:num_examples]
 
@@ -35,7 +37,7 @@ questions = [
 def test_search(vectors, vector_for_query=None, metric="IP", reingest=False, milvus_server_addr="test.db",
                 use_connections=False, ingest_batch_size=-1):
     truncate_dim = 384
-    collection_name = "test2"
+    collection_name = "test3"
     vector_field_name = "qembedding"
     if ingest_batch_size < 0:
         ingest_batch_size = len(vectors)
@@ -51,7 +53,6 @@ def test_search(vectors, vector_for_query=None, metric="IP", reingest=False, mil
             test = vector_for_query
 
     if use_connections:
-        from pymilvus import connections
         client = connections
         init, host, port = milvus_server_addr.split(":")
         host = host.replace("//", "")
@@ -89,6 +90,11 @@ def test_search(vectors, vector_for_query=None, metric="IP", reingest=False, mil
         # print({k: v for k, v in insert_result.items() if k != 'ids'})
         client.load_collection(collection_name=collection_name)
         ingested_items = 0
+        connections.connect(host="localhost", port=19530)
+        utility.wait_for_index_building_complete(collection_name=collection_name, index_name=vector_field_name)
+        # print(
+        #     client.count_entities(collection_name=collection_name)
+        # )
         tm = timer()
         start = time.time()
         while ingested_items < len(vectors)-1:

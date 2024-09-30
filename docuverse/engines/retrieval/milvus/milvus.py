@@ -2,12 +2,14 @@ from typing import Union
 
 from onnx.reference.custom_element_types import bfloat16
 from scipy.sparse import spmatrix
+from scipy.stats import invgamma_gen
 from tqdm import tqdm
 
 from docuverse import SearchCorpus
 from docuverse.engines.retrieval.retrieval_servers import RetrievalServers
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines import SearchData, RetrievalEngine
+from docuverse.utils.timer import timer
 
 try:
     from pymilvus import (
@@ -176,6 +178,14 @@ class MilvusEngine(RetrievalEngine):
     def _insert_data(self, data):
         for i in tqdm(range(0, len(data), self.ingest_batch_size), desc="Ingesting documents"):
             self.client.insert(collection_name=self.config.index_name, data=data[i:i + self.ingest_batch_size])
+        tm = timer()
+        import time
+        ingested_items = 0
+        while ingested_items < len(data):
+            res = self.client.get_collection_stats(collection_name=self.config.index_name)
+            ingested_items = res["row_count"]
+            print(f"{tm.time_since_beginning()}: Currently ingested items: {ingested_items}")
+            time.sleep(10)
         # self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
 
     def _create_data(self, corpus, texts):
