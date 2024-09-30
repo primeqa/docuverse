@@ -46,9 +46,10 @@ class MilvusDenseEngine(MilvusEngine):
         )
         index_params.add_index(
             field_name=embeddings_name,
-            index_type="IVF_FLAT",
+            index_type="HNSW",
             metric_type="IP",
-            params={"nlist": 128}
+            params={"nlist": 128,
+                    }
         )
         return index_params
 
@@ -65,10 +66,10 @@ class MilvusDenseEngine(MilvusEngine):
             self.client.create_collection(self.config.index_name,
                                           dimension=self.hidden_dim,
                                           auto_id=True,  # Enable auto id
-                                          enable_dynamic_field=True,  # Enable dynamic fields
                                           vector_field_name=self.embeddings_name,
-                                          # Map vector field name and embedding column in dataset
-                                          consistency_level="Strong",  # To enable search with latest data
+                                          consistency_level="Eventually"
+                                          # enable_dynamic_field=False,  # Enable dynamic fields
+                                          # consistency_level="Strong",  # To enable search with latest data
                                           )
 
     def get_search_params(self):
