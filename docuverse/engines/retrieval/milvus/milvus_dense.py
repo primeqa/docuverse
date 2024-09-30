@@ -41,7 +41,7 @@ class MilvusDenseEngine(MilvusEngine):
     def prepare_index_params(self, embeddings_name="embeddings"):
         index_params = self.client.prepare_index_params(embeddings_name)
         index_params.add_index(
-            field_name="_id",
+            field_name="id",
             index_type="STL_SORT"
         )
         index_params.add_index(
@@ -49,7 +49,8 @@ class MilvusDenseEngine(MilvusEngine):
             index_type="HNSW",
             metric_type="IP",
             params={"nlist": 128,
-                    }
+                    "M": 16,
+                    "efConstruction": 16}
         )
         return index_params
 
@@ -65,7 +66,7 @@ class MilvusDenseEngine(MilvusEngine):
         self.collection = \
             self.client.create_collection(self.config.index_name,
                                           dimension=self.hidden_dim,
-                                          auto_id=True,  # Enable auto id
+                                          # xauto_id=True,  # Enable auto id
                                           vector_field_name=self.embeddings_name,
                                           consistency_level="Eventually"
                                           # enable_dynamic_field=False,  # Enable dynamic fields

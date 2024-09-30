@@ -183,7 +183,7 @@ class MilvusEngine(RetrievalEngine):
     def wait_for_ingestion(self, data):
         tm = timer()
         import time
-        ingested_items = 0
+        ingested_items = len(data)
         while ingested_items < len(data):
             res = self.client.get_collection_stats(collection_name=self.config.index_name)
             ingested_items = res["row_count"]
@@ -196,10 +196,11 @@ class MilvusEngine(RetrievalEngine):
         for i, item in enumerate(corpus):
             if isinstance(passage_vectors[i], spmatrix) and passage_vectors[i].getnnz() == 0:
                 continue
-            dt = {key: item[key] for key in ['text', 'title']}
+            dt = {key: item[key] for key in ['text', 'title', 'id']}
             dt[self.embeddings_name] = passage_vectors[i]
             for f in self.config.data_template.extra_fields:
                 dt[f] = str(item[f])
+            dt['_id'] = i
             data.append(dt)
         return data
 
@@ -211,8 +212,8 @@ class MilvusEngine(RetrievalEngine):
 
     def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
         fields = [
-            FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID", auto_id=True),
-            FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=False, max_length=1000, auto_id=False),
+            FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID"),
+            FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=False, max_length=1000),
             FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=10000),
             FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=10000),
         ]
