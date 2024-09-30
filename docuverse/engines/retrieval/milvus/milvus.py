@@ -2,7 +2,6 @@ from typing import Union
 
 from onnx.reference.custom_element_types import bfloat16
 from scipy.sparse import spmatrix
-from scipy.stats import invgamma_gen
 from tqdm import tqdm
 
 from docuverse import SearchCorpus
