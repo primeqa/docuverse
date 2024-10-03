@@ -7,6 +7,7 @@ from typing import Union, List
 
 from docuverse.utils import get_param, get_config_dir
 from docuverse.utils.embeddings.embedding_function import EmbeddingFunction
+import simple_colors
 
 
 class DenseEmbeddingFunction(EmbeddingFunction):
@@ -21,6 +22,8 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             self.num_devices = 0
         else:
             self.num_devices = torch.cuda.device_count()
+            print("Running on the gpus: ",
+                  simple_colors.red([torch.cuda.get_device_name(i) for i in range(self.num_devices)], ['bold']))
         self.pqa = False
         self.emb_pool = None
         # if os.path.exists(name):
@@ -92,13 +95,14 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                 if self.emb_pool is None:
                     self.start_pool()
                 embs = self.model.encode_multi_process(pool=self.emb_pool,
-                                                       sentences=texts,
+                                                       sentences=stexts,
                                                        batch_size=_batch_size)
                 embs = self.normalize(embs)
             else:
-                embs = self.model.encode(texts,
+                embs = self.model.encode(stexts,
                                          show_progress_bar=show_progress_bar,
-                                         normalize_embeddings=True
+                                         normalize_embeddings=True,
+                                         batch_size=_batch_size
                                          ).tolist()
             tmp_embs = [None] * len(texts)
             for i in range(len(texts)):

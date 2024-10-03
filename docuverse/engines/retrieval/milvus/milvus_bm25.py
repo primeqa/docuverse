@@ -69,7 +69,7 @@ class MilvusBM25Engine(MilvusEngine):
         self.bm25_ef.fit(texts)
         # print("Computing embeddings for the input.")
         embeddings = []
-        t=tqdm(desc="Encoding documents", total=len(texts), disable=not show_progress)
+        t=tqdm(desc="Encoding documents (BM25)", total=len(texts), disable=not show_progress)
         for i in range(0, len(texts), batch_size):
             last = min(i + batch_size, len(texts))
             encs = self.bm25_ef.encode_documents(texts[i:last])

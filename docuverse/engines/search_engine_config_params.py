@@ -75,6 +75,13 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    hybrid_submodules: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "The submodules to hybrid to use (useful for Milvus hybrid if you only want to run some of the modules for search)."
+        }
+    )
+
     top_k: Optional[str] = field(
         default=10,
         metadata={
@@ -388,7 +395,6 @@ class RetrievalArguments(GenericArguments):
             self.filter_on = res
         if self.hybrid == "":
             self.hybrid = {}
-
 
 @dataclass
 class EngineArguments(GenericArguments):
@@ -746,5 +752,5 @@ class DocUVerseConfig(GenericArguments):
             config = config1
             config.ingest_params()
         if config.retriever_config.num_preprocessor_threads > 1:
-            os.environ['TOKENIZERS_PARALLELISM'] = "true"
+            os.environ['TOKENIZERS_PARALLELISM'] = "false"
         return config

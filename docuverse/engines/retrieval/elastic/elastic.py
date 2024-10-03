@@ -2,13 +2,15 @@ import copy
 import json
 from typing import Union, Tuple, List
 
+from elastic_transport import SerializationError
+
 from docuverse.engines.retrieval.retrieval_servers import RetrievalServers
 from docuverse.utils import get_config_dir
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines import SearchData, RetrievalEngine
 
 try:
-    from elasticsearch import Elasticsearch
+    from elasticsearch import Elasticsearch, RequestError, NotFoundError
 except:
     print(f"You need to install elasticsearch to be using ElasticSearch functionality!")
     raise RuntimeError("fYou need to install elasticsearch to be using ElasticSearch functionality!")
@@ -350,15 +352,33 @@ class ElasticEngine(RetrievalEngine):
             self.add_fields(actions, bulk_batch, corpus, k, num_passages)
             try:
                 bulk(self.client, actions=actions, pipeline=self.pipeline_name)
+            except RequestError as e:
+                if e.status_code == 400:
+                    print("Bad request:", e.info)
+                else:
+                    print("Request error:", e)
+            except NotFoundError as e:
+                print("Index not found:", e)
+            except SerializationError as e:
+                print("Serialization error:", e)
             except Exception as e:
-                print(f"Got an error in indexing: {e}")
+                print("Unexpected error:", e)
             t.update(bulk_batch)
         t.close()
         if len(actions) > 0:
             try:
                 bulk(client=self.client, actions=actions, pipeline=self.pipeline_name)
+            except RequestError as e:
+                if e.status_code == 400:
+                    print("Bad request:", e.info)
+                else:
+                    print("Request error:", e)
+            except NotFoundError as e:
+                print("Index not found:", e)
+            except SerializationError as e:
+                print("Serialization error:", e)
             except Exception as e:
-                print(f"Got an error in indexing: {e}, {len(actions)}")
+                print("Unexpected error:", e)
 
     def add_fields(self, actions: List[dict], bulk_batch: int, corpus: SearchData, k: int, num_passages: int):
         """

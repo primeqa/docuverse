@@ -252,6 +252,7 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
 
     if num_threads <= 1:
         return [apply_funcs(dt) for dt in tqdm(data, desc=msg)]
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     num_items = len(data)
 

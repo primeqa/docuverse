@@ -16,7 +16,9 @@ cache_file = "/home/raduf/.local/share/elastic_ingestion/benchmark__beir_dev__qu
 MODEL = "/home/raduf/sandbox2/docuverse/models/slate.30m.english.rtrvr"
 num_examples = -1
 
-data = pickle.load(open_stream(cache_file))[:num_examples]
+data = pickle.load(open_stream(cache_file))
+if num_examples>=0:
+    data = data[:num_examples]
 
 model = DenseEmbeddingFunction(MODEL)
 
@@ -298,7 +300,7 @@ def test_setup(milvus_server_addr="test.db", questions=None, **kwargs):
                     print_answer(q, res)
         else:
             print_answer(q, res)
-    print(f"Score: {score * 1.0 / total:.2f}")
+    print(f"Score: {score * 1.0 / total:.2f} ({score} out of {total})")
 
 online_milvus = "http://localhost:19530"
 file_milvus = "test.db"

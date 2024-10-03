@@ -2,6 +2,7 @@ import os
 
 from pandas.conftest import spmatrix
 from pydantic.v1 import NoneBytes
+from pymilvus.client.constants import ConsistencyLevel
 from tqdm import tqdm
 from transformers.models.cvt.convert_cvt_original_pytorch_checkpoint_to_pytorch import embeddings
 from scipy.sparse._csr import csr_array
@@ -89,6 +90,10 @@ class MilvusHybridEngine(MilvusEngine):
 
     def init_model(self, kwargs):
         self.model_names = list(self.config.hybrid['models'].keys())
+        if self.config.hybrid_submodules:
+            submodules = self.config.hybrid_submodules.split(",")
+            self.model_names = [m for m in self.model_names if m in submodules]
+
 
         common_config = {k:v for k, v in self.config.hybrid.items() if k!='models'}
         self.configs = {}
@@ -114,17 +119,6 @@ class MilvusHybridEngine(MilvusEngine):
         self.reranker = RRFRanker()
 
     def init_client(self): #override the parent functionality
-        # if self.server is None:
-        #     print("MilvusEngine server is not initialized - it's OK if this in a hybrid combination!")
-        #
-        # else: # the client here will be None - since we need to use connections for the search
-        #     self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
-        #                                user=get_param(self.server, "user", ""),
-        #                                password=get_param(self.server, "password", ""),
-        #                                server_name=get_param(self.server, "server_name", ""),
-        #                                secure=get_param(self.server, "secure", False),
-        #                                server_pem_path = get_param(self.server, "server_pem_path", None)
-        #                                )
         super().init_client()
         connections.connect(host=self.server.host, port=self.server.port,
                             secure=get_param(self.server, "secure", False),
@@ -170,7 +164,7 @@ class MilvusHybridEngine(MilvusEngine):
     def _insert_data(self, data):
         for i in tqdm(range(0, len(data), self.ingest_batch_size), desc="Ingesting documents"):
             self.collection.insert(data[i:i+self.ingest_batch_size])
-        self.wait_for_ingestion()
+        self.wait_for_ingestion(data)
 
     def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
         fields = super().create_fields()
@@ -184,7 +178,7 @@ class MilvusHybridEngine(MilvusEngine):
         if index_name is None:
             index_name = self.config.index_name
 
-        schema = CollectionSchema(fields, index_name)
+        schema = CollectionSchema(fields, index_name, consistency=ConsistencyLevel.Eventually)
         self.collection = Collection(name=index_name, schema=schema)
         for m, emb_name in zip(self.models, self.embedding_names):
             index_params = m.prepare_index_params()
@@ -206,9 +200,16 @@ class MilvusHybridEngine(MilvusEngine):
         return True
 
     def delete_index(self, index_name: str|None=None, fmt=None, **kwargs):
-        utility.drop_collection(self.config.index_name)
+        self.client.drop_collection(self.config.index_name)
         # for m in self.models:
         #     m.delete_index(index_name=None, fmt=fmt, **kwargs)
+
+    def ingest(self, corpus: SearchCorpus, update: bool = False):
+        data_ingested = super().ingest(corpus=corpus, update=update)
+        if data_ingested:
+            for m in self.models:
+                if isinstance(m, MilvusBM25Engine):
+                    m.save_idf_index()
 
     def get_search_params(self):
         raise NotImplementedError

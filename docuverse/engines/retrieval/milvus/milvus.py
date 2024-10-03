@@ -138,7 +138,8 @@ class MilvusEngine(RetrievalEngine):
             print(fmt.format(f"Create collection `{self.config.index_name}`"))
         index_params = self.prepare_index_params()
         # self.index = Collection(self.config.index_name, schema, consistency_level="Strong", index_file_size=128)
-        self.client.create_collection(self.config.index_name, schema=schema, index_params=index_params)
+        self.client.create_collection(self.config.index_name, schema=schema, index_params=index_params,
+                                      consistency_level="Eventually")
         return index_params
 
     def check_client(self):
@@ -200,7 +201,7 @@ class MilvusEngine(RetrievalEngine):
             dt[self.embeddings_name] = passage_vectors[i]
             for f in self.config.data_template.extra_fields:
                 dt[f] = str(item[f])
-            dt['_id'] = i
+            # dt['_id'] = i
             data.append(dt)
         return data
 
@@ -212,7 +213,7 @@ class MilvusEngine(RetrievalEngine):
 
     def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
         fields = [
-            FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID"),
+            FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID", auto_id=True),
             FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=False, max_length=1000),
             FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=10000),
             FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=10000),

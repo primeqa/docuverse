@@ -39,9 +39,9 @@ class MilvusDenseEngine(MilvusEngine):
         self.normalize_embs = get_param(kwargs, 'normalize_embs', False)
 
     def prepare_index_params(self, embeddings_name="embeddings"):
-        index_params = self.client.prepare_index_params(embeddings_name)
+        index_params = self.client.prepare_index_params()
         index_params.add_index(
-            field_name="id",
+            field_name="_id",
             index_type="STL_SORT"
         )
         index_params.add_index(
@@ -67,6 +67,8 @@ class MilvusDenseEngine(MilvusEngine):
             self.client.create_collection(self.config.index_name,
                                           dimension=self.hidden_dim,
                                           # xauto_id=True,  # Enable auto id
+                                          schema=CollectionSchema(fields, self.config.index_name),
+                                          index_params=self.prepare_index_params(embeddings_name=self.embeddings_name),
                                           vector_field_name=self.embeddings_name,
                                           consistency_level="Eventually"
                                           # enable_dynamic_field=False,  # Enable dynamic fields
