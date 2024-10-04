@@ -3,6 +3,7 @@ import os
 from docuverse import SearchCorpus, SearchQueries
 from docuverse.engines import SearchData
 from docuverse.engines.retrieval.milvus.milvus import MilvusEngine
+from docuverse.utils.timer import timer
 
 try:
     from pymilvus import (
@@ -65,8 +66,10 @@ class MilvusBM25Engine(MilvusEngine):
         return search_params
 
     def encode_data(self, texts, batch_size, show_progress=True):
-        print(f"Computing IDF - will might a while.")
+        tm = timer()
+        print(f"Computing IDF - will might a while.", end="")
         self.bm25_ef.fit(texts)
+        print(f" done in {tm.time_since_beginning()}.")
         # print("Computing embeddings for the input.")
         embeddings = []
         t=tqdm(desc="Encoding documents (BM25)", total=len(texts), disable=not show_progress)

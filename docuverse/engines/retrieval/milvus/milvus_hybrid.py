@@ -162,8 +162,19 @@ class MilvusHybridEngine(MilvusEngine):
         return isinstance(val, csr_array) and val.getnnz() == 0
 
     def _insert_data(self, data):
-        for i in tqdm(range(0, len(data), self.ingest_batch_size), desc="Ingesting documents"):
-            self.collection.insert(data[i:i+self.ingest_batch_size])
+        num_tries = 0
+        for i in tqdm(range(0, len(data), 10*self.ingest_batch_size), desc="Ingesting documents"):
+            num_tries = 0
+            while num_tries < 10:
+                try:
+                    self.collection.insert(data[i:i+self.ingest_batch_size])
+                    break # exit the while loop
+                except Exception as e:
+                    num_tries += 1
+                    if num_tries > 5:
+                        print(f"Ingestion stopped after {i} items.")
+                        raise e
+                    self.init_client()
         self.wait_for_ingestion(data)
 
     def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
