@@ -17,7 +17,7 @@ except:
     print(f"You need to install pymilvus to be using Milvus functionality!")
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
 from docuverse.engines.search_engine_config_params import SearchEngineConfig
-from docuverse.utils import get_param
+from docuverse.utils import get_param, ask_for_confirmation
 from tqdm import tqdm
 
 from docuverse.utils.embeddings.sparse_embedding_function import SparseEmbeddingFunction
@@ -65,19 +65,30 @@ class MilvusBM25Engine(MilvusEngine):
 
         return search_params
 
-    def encode_data(self, texts, batch_size, show_progress=True):
+    def _analyze_data(self, texts):
         tm = timer()
-        print(f"Computing IDF - will might a while.", end="")
+        if os.path.exists(self.config.milvus_idf_file):
+            ans=ask_for_confirmation(text=f"The file {self.config.milvus_idf_file} exists - recreate? (yes/No)",
+                                 default="no")
+            if ans == 'no':
+                return
+        print(f"Computing IDF - will might a while.", end="", flush=True)
         self.bm25_ef.fit(texts)
-        print(f" done in {tm.time_since_beginning()}.")
+        print(f" done in {tm.time_since_beginning()}.", flush=True)
+        self.save_idf_index()
+
+    def encode_data(self, texts, batch_size, show_progress_bar=True, tqdm_instance=None):
         # print("Computing embeddings for the input.")
         embeddings = []
-        t=tqdm(desc="Encoding documents (BM25)", total=len(texts), disable=not show_progress)
+        if tqdm_instance is None:
+            t=tqdm(desc="Encoding documents (BM25)", total=len(texts), disable=not show_progress_bar)
+        else:
+            t=tqdm_instance
         for i in range(0, len(texts), batch_size):
             last = min(i + batch_size, len(texts))
             encs = self.bm25_ef.encode_documents(texts[i:last])
             embeddings.extend(list(encs))
-            t.update(last - i)
+            t.update(last-i)
         #embeddings = self.bm25_ef.encode_documents(texts)
         return embeddings
 

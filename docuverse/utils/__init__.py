@@ -1,16 +1,16 @@
+import copy
 import itertools
-import re
+import json
 import os
+import queue
+import re
 import time
 from multiprocessing import Queue, Manager, Process
 from typing import List, Union
+from jinja2 import Template, Undefined
 
 # from .embedding_function import DenseEmbeddingFunction
 import yaml
-import json
-import copy
-import queue
-
 from tqdm.auto import tqdm
 
 
@@ -80,7 +80,35 @@ def get_config_dir(config_path: str | None = None) -> str:
         return config_path
     return config_dir
 
+class NullUndefined(Undefined):
+  def __getattr__(self, key):
+    return ''
 
+# def read_config_file(config_file):
+#     if not os.path.exists(config_file):
+#         config_file = os.path.join(get_config_dir(os.path.dirname(config_file)), os.path.basename(config_file))
+#     config = {}
+#     if config_file.endswith(".yml") or config_file.endswith(".yaml"):
+#         with open(config_file, "r") as f:
+#             config = yaml.safe_load(f)
+#     elif config_file.endswith(".json"):
+#         with open(config_file, "r") as f:
+#             config = json.load(f)
+#     else:
+#         raise RuntimeError(f"Config file type not supported: {config_file}")
+#     # Hack to resolve variables
+#     not_done = True
+#     num_iters=0
+#     config = Template(config, undefined=NullUndefined).render()
+#     # while not_done:
+#     #     tconfig = copy.deepcopy(config)
+#     #     not_done = replace(local_dict=config, global_dict=config, parent_key="")
+#     #     num_iters += 1
+#     #     if tconfig==config:
+#     #         break
+#     #     if num_iters > 10:
+#     #         raise RuntimeError(f"Could not resolve the variables in {config_file}")
+#     return config
 
 
 def read_config_file(config_file):
@@ -108,13 +136,14 @@ def read_config_file(config_file):
             if isinstance(val, str):
                 m = re.search(patt, val)
                 while m:
-                    rr = get_value_recursive(global_dict, m.group(1), parent_key)
+                    rr = get_value_recursive(global_dict, m.group(1).replace(" ",""), parent_key)
                     start="{{"
                     end="}}"
                     if not isinstance(rr, str) or rr.find("{{") < 0:
                         val = val.replace(f"{start}{m.group(1)}{end}", str(rr))
                     else:
                         not_done = True
+
                     m=re.search(patt, val)
                 local_dict[key] = val
             elif isinstance(val, dict):
@@ -122,7 +151,6 @@ def read_config_file(config_file):
                 not_done |= replace(local_dict=val, global_dict=global_dict,
                                     parent_key=f"{parent_key}.{key}" if parent_key != "" else key)
         return not_done
-
 
     config = {}
     if config_file.endswith(".yml") or config_file.endswith(".yaml"):

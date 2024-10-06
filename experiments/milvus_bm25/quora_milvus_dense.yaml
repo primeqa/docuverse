@@ -10,10 +10,13 @@ retriever:
     data_format: config/beir_data_format.yml
     doc_based: True
     verbose: True
-    date: 08292024
+    date: 10062024
     server: localhost
     top_k: 100
-    model_name: thenlper/gte-small # /home/raduf/mnlp-models-rag/06302024/slate.30m.english.rtrvr
+#    model_name: /home/raduf/mnlp-models-rag/06302024/slate.30m.english.rtrvr
+#    short_model_name: slate30m
+    model_name: thenlper/gte-small
+    short_model_name: gte-small
     title_handling: all
     num_preprocessor_threads: 10
     num_search_threads: -1
@@ -21,8 +24,8 @@ retriever:
     bulk_batch: 128
     max_doc_length: 512
     stride: 100
-    index_name: "beir-{{corpus}}-new-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
-    output_file: "output/beir-{{corpus}}-{{db_engine}}-bm25-{{max_doc_length}}-{{stride}}.json"
+    index_name: "beir-{{corpus}}-{{short_model_name}}-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
+    output_file: output/{{index_name}}.json
     # max_num_documents: 100
 reranker: null
 evaluate:

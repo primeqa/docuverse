@@ -66,13 +66,10 @@ class MilvusDenseEngine(MilvusEngine):
         self.collection = \
             self.client.create_collection(self.config.index_name,
                                           dimension=self.hidden_dim,
-                                          # xauto_id=True,  # Enable auto id
                                           schema=CollectionSchema(fields, self.config.index_name),
                                           index_params=self.prepare_index_params(embeddings_name=self.embeddings_name),
                                           vector_field_name=self.embeddings_name,
                                           consistency_level="Eventually"
-                                          # enable_dynamic_field=False,  # Enable dynamic fields
-                                          # consistency_level="Strong",  # To enable search with latest data
                                           )
 
     def get_search_params(self):
@@ -80,8 +77,8 @@ class MilvusDenseEngine(MilvusEngine):
                                   self.milvus_defaults['search_params']["HNSW"])
         return search_params
 
-    def encode_data(self, texts, batch_size):
-        passage_vectors = super().encode_data(texts=texts, batch_size=batch_size)
+    def encode_data(self, texts, batch_size, **kwargs):
+        passage_vectors = super().encode_data(texts=texts, batch_size=batch_size, **kwargs)
         if self.storage_size != "fp32":
             passage_vectors = [np.array(p, dtype=self.storage_rep[1]) for p in passage_vectors]
         return passage_vectors

@@ -109,7 +109,7 @@ class RetrievalEngine:
                 return self.check_index_rebuild()
         else:
             if do_update:
-                print("You are trying to update an index that does not exist "
+                print(f"You are trying to update an index ({self.config.index_name}) that does not exist "
                       "- will ignore your command and create the index.")
         if not self.has_index(index_name=self.config.index_name):
             self.create_index(self.config.index_name, **kwargs)

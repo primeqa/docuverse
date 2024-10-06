@@ -1,6 +1,6 @@
 from typing import Union
 
-from onnx.reference.custom_element_types import bfloat16
+# from onnx.reference.custom_element_types importp; bfloat16
 from scipy.sparse import spmatrix
 from tqdm import tqdm
 
@@ -175,8 +175,11 @@ class MilvusEngine(RetrievalEngine):
         self._insert_data(data)
         return True
 
-    def _insert_data(self, data):
-        for i in tqdm(range(0, len(data), self.ingest_batch_size), desc="Ingesting documents"):
+    def _analyze_data(self, corpus):
+        pass
+
+    def _insert_data(self, data, show_progress_bar=True):
+        for i in tqdm(range(0, len(data), self.ingest_batch_size), desc="Ingesting documents", disable=not show_progress_bar):
             self.client.insert(collection_name=self.config.index_name, data=data[i:i + self.ingest_batch_size])
         self.wait_for_ingestion(data)
         # self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
@@ -205,9 +208,10 @@ class MilvusEngine(RetrievalEngine):
             data.append(dt)
         return data
 
-    def encode_data(self, texts, batch_size):
+    def encode_data(self, texts, batch_size, **kwargs):
         passage_vectors = self.model.encode(texts,
-                                            _batch_size=batch_size, show_progress_bar=len(texts)>1)
+                                            _batch_size=batch_size,
+                                            **kwargs)
         # create embeddings
         return passage_vectors
 
