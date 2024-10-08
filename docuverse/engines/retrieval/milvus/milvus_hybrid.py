@@ -18,7 +18,7 @@ except:
     print(f"You need to install pymilvus to be using Milvus functionality!")
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
 from docuverse.engines.search_engine_config_params import DocUVerseConfig, RetrievalArguments
-from docuverse.utils import get_param
+from docuverse.utils import get_param, ask_for_confirmation
 
 
 class MilvusHybridEngine(MilvusEngine):
@@ -205,7 +205,7 @@ class MilvusHybridEngine(MilvusEngine):
         return isinstance(val, csr_array) and val.getnnz() == 0
 
     def _insert_data(self, data, show_progress_bar=True):
-        tbatch_size = 10*self.ingest_batch_size
+        tbatch_size = self.ingest_batch_size
         for i in tqdm(range(0, len(data), tbatch_size),
                       desc="Ingesting documents", disable=not show_progress_bar):
             num_tries = 0
@@ -215,6 +215,8 @@ class MilvusHybridEngine(MilvusEngine):
                     break # exit the while loop
                 except Exception as e:
                     num_tries += 1
+                    print(f"Problem while ingesting index {i}")
+                    ask_for_confirmation("Server is down - restart it, then press <Enter>", default="yes")
                     if num_tries > 5:
                         print(f"Ingestion stopped after {i} items.")
                         raise e
@@ -248,7 +250,7 @@ class MilvusHybridEngine(MilvusEngine):
     # def ingest(self, corpus: SearchCorpus, update: bool = False):
 
 
-    def ingest(self, corpus: SearchCorpus, update: bool = False):
+    def ingest(self, corpus: SearchCorpus, update: bool = False, skip=0, **kwargs):
         # data_ingested = super().ingest(corpus=corpus, update=update)
         texts = self._check_index_creation_and_get_text(corpus, update)
 
@@ -257,12 +259,15 @@ class MilvusHybridEngine(MilvusEngine):
 
         if texts is None:
             return False
-        main_tqdm = tqdm(desc="Processing documents:", total=len(texts))
+        main_tqdm = tqdm(desc="Processing documents:", total=len(texts), smoothing=0.9)
         tqdms = []
         for m, name in zip(self.models, self.model_names):
-            tqdms.append(tqdm(desc=f"Encoding {name}", total=len(texts), leave=False))
+            tqdms.append(tqdm(desc=f"Encoding {name}", total=len(texts), leave=False, smoothing=0.9))
+        main_tqdm.update(skip)
+        for tq in tqdms:
+            tq.update(skip)
         tbatch_size = 5*self.ingest_batch_size
-        for bi in range(0, len(texts), tbatch_size):
+        for bi in range(skip, len(texts), tbatch_size):
             data = self._create_data(corpus[bi: bi+tbatch_size], texts[bi:bi+tbatch_size],
                                      show_progress_bar=False,
                                      tqdms=tqdms)

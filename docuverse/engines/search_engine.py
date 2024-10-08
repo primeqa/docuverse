@@ -61,8 +61,8 @@ class SearchEngine:
         from docuverse.utils.retrievers import create_reranker_engine
         return create_reranker_engine(self.config.reranker_config)
 
-    def ingest(self, corpus: SearchCorpus|list[SearchCorpus], update: bool = False):
-        self.retriever.ingest(corpus=corpus, update=update)
+    def ingest(self, corpus: SearchCorpus|list[SearchCorpus], **kwargs):
+        self.retriever.ingest(corpus=corpus, **kwargs)
 
     def has_index(self, index_name):
         return self.retriever.has_index(index_name=index_name)

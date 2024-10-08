@@ -20,7 +20,7 @@ if __name__ == '__main__':
     tm.add_timing("initialize")
     if config.ingest or config.update:
         corpus = engine.read_data(config.input_passages)
-        engine.ingest(corpus, update=config.update)
+        engine.ingest(corpus, update=config.update, skip=config.skip)
         tm.add_timing("ingest")
 
     output = None
