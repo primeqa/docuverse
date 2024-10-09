@@ -74,6 +74,18 @@ class Server:
         }
     )
 
+    type: Optional[str] = field(
+        default="http",
+        metadata={
+            "help": "The type of the server (can be either http or file)."
+        }
+    )
+
+    def __post_init__(self):
+        if self.host.find("file:") >= 0:
+            self.type="file"
+            self.server_name = self.host.replace("file:", "")
+
     def get(self, key:str, default:str|None=None):
         return getattr(self, key, default)
 

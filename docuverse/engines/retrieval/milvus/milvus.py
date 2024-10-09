@@ -5,7 +5,7 @@ from scipy.sparse import spmatrix
 from tqdm import tqdm
 
 from docuverse import SearchCorpus
-from docuverse.engines.retrieval.retrieval_servers import RetrievalServers
+from docuverse.engines.retrieval.retrieval_servers import RetrievalServers, Server
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines import SearchData, RetrievalEngine
 from docuverse.utils.timer import timer
@@ -72,7 +72,10 @@ class MilvusEngine(RetrievalEngine):
         self.servers = self.read_servers()
         self.server = None
         if get_param(self.config, 'server', None):
-            self.server = self.servers[self.config.server]
+            if self.config.server.find("file:") >= 0:
+                self.server = Server(host=self.config.server)
+            else:
+                self.server = self.servers[self.config.server]
         self.model = None
         self.init_model(kwargs)
         # Milvus does not accept '-', only letters, numbers, and "_"
@@ -114,13 +117,16 @@ class MilvusEngine(RetrievalEngine):
             print("MilvusEngine server is not initialized - it's OK if this in a hybrid combination!")
             # raise RuntimeError("MilvusEngine server is not initialized!")
         else:
-            self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
-                                       user=get_param(self.server, "user", ""),
-                                       password=get_param(self.server, "password", ""),
-                                       server_name=get_param(self.server, "server_name", ""),
-                                       secure=get_param(self.server, "secure", False),
-                                       server_pem_path = get_param(self.server, "server_pem_path", None)
-                                       )
+            if self.server.type == "file":
+                self.client = MilvusClient(uri=self.server.server_name)
+            else:
+                self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
+                                           user=get_param(self.server, "user", ""),
+                                           password=get_param(self.server, "password", ""),
+                                           server_name=get_param(self.server, "server_name", ""),
+                                           secure=get_param(self.server, "secure", False),
+                                           server_pem_path = get_param(self.server, "server_pem_path", None)
+                                           )
 
     def has_index(self, index_name: str):
         return self.client.has_collection(self.config.index_name) if self.client else False
