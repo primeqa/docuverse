@@ -3,7 +3,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
-from jupyter_lsp.specs import yaml
+# from jupyter_lsp.specs import yaml
+import yaml
 
 from docuverse.utils import get_config_dir
 from docuverse.utils import read_config_file

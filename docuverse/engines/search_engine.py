@@ -11,18 +11,14 @@ from copy import deepcopy
 
 from triton.language.extra.cuda import num_threads
 
-from docuverse.utils import (
-    open_stream,
-    file_is_of_type,
-    parallel_process,
-    ask_for_confirmation
-)
+from docuverse.utils import get_param, get_config_dir, open_stream, file_is_of_type, parallel_process
 from docuverse.engines import SearchData
 
 from docuverse.engines.search_engine_config_params import DocUVerseConfig, SearchEngineConfig
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
+
 from docuverse.utils.evaluation_output import EvaluationOutput
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.engines.reranking.reranker import Reranker
@@ -61,7 +57,7 @@ class SearchEngine:
         from docuverse.utils.retrievers import create_reranker_engine
         return create_reranker_engine(self.config.reranker_config)
 
-    def ingest(self, corpus: SearchCorpus|list[SearchCorpus], update: bool = False):
+    def ingest(self, corpus: SearchCorpus, update: bool = False):
         self.retriever.ingest(corpus=corpus, update=update)
 
     def has_index(self, index_name):
@@ -102,11 +98,6 @@ class SearchEngine:
             base_cache_file = os.path.basename(self.config.output_file.replace(".json", extension))
             cache_file = os.path.join(self.config.cache_dir, base_cache_file)
             if os.path.exists(cache_file):
-                r = ask_for_confirmation(f"File {cache_file} exists, read?",
-                                         answers=['yes', 'no'],
-                                         default='no')
-                if r=='no':
-                    return None, None
                 print(f"Reading cached search results from {cache_file}")
                 try:
                     answers = self.read_output(cache_file)
@@ -170,35 +161,11 @@ class SearchEngine:
         pass
 
     def read_data(self, file, no_cache: bool | None = None):
-        if self.config.db_engine in ['milvus-hybrid', 'milvus_hybrid']:
-            if not self.config.hybrid['shared_tokenizer']:
-                data = []
-                for m in self.retriever.models:
-                    tiler = self.create_tiler(m.config.retriever_config)
-                    data.append(self._read_data(file, no_cache=no_cache,
-                                                tiler=tiler,
-                                                retriever_config=m.config.retriever_config)
-                                )
-            else: # Use the first hybrid model
-                return self._read_data(file, no_cache=no_cache,
-                                       retriever_config=self.retriever.models[0].config)
-        else:
-            return self._read_data(file, no_cache=no_cache)
-        return data
-
-    def _read_data(self, file, no_cache: bool | None = None, tiler=None, retriever_config=None):
-        if retriever_config is None:
-            retriever_config = self.config.retriever_config
         if no_cache is not None:
             retriever_config = deepcopy(self.config.retriever_config)
             retriever_config.no_cache = no_cache
-
-        tiler = self.tiler if self.tiler is not None else self.create_tiler(retriever_config)
-        return SearchData.read_data(input_files=file,
-                                    tiler=tiler,
-                                    **vars(retriever_config))
-
-    def create_tiler(self, retriever_config):
+        else:
+            retriever_config = self.config.retriever_config
         if self.tiler is None:
             tokenizer = None
             if getattr(self.retriever, 'model', None) is not None:
@@ -207,13 +174,14 @@ class SearchEngine:
                 tokenizer = retriever_config.model_name
                 if tokenizer == "" or tokenizer.startswith("."):
                     tokenizer = "sentence-transformers/all-MiniLM-L6-v2"
-            return TextTiler(max_doc_size=retriever_config.max_doc_length,
+            self.tiler = TextTiler(max_doc_size=retriever_config.max_doc_length,
                                    stride=retriever_config.stride,
                                    tokenizer=tokenizer,
                                    aligned_on_sentences=retriever_config.aligned_on_sentences,
                                    count_type=retriever_config.count_type)
-        else:
-            return self.tiler
+        return SearchData.read_data(input_files=file,
+                                    tiler=self.tiler,
+                                    **vars(retriever_config))
 
     def read_questions(self, file):
         return SearchQueries.read(file, **vars(self.config.retriever_config))
