@@ -75,7 +75,7 @@ class RetrievalEngine:
         import sys
         while True:
             r = ask_for_confirmation(text=f"Are you sure you want to recreate the index {self.config.index_name}? It might take a long time!!",
-                                     answers=['yes', 'no', 'skip'],
+                                     answers=['yes', 'no', 'skip', 'update'],
                                      default='skip')
             if r == 'no':
                 print("OK - exiting. Run with '--actions r'")
@@ -85,6 +85,8 @@ class RetrievalEngine:
             elif r == 'skip':
                 print("Skipping ingestion.")
                 return False
+            elif r == 'update':
+                return "update"
         # return True
 
     def create_update_index(self, do_update:bool=True, **kwargs) -> bool:
@@ -101,9 +103,10 @@ class RetrievalEngine:
         if self.has_index(index_name=self.config.index_name):
             if do_update:
                 do_index = self.check_index_rebuild()
-                if not do_index:
+                if do_index == False:
                     return False
-                self.delete_index(index_name=self.config.index_name, **kwargs)
+                if do_index != "update": # skip if self.update==True
+                    self.delete_index(index_name=self.config.index_name, **kwargs)
             else:
                 print(f"This will overwrite your existent index {self.config.index_name} - use --actions 'u' instead.")
                 return self.check_index_rebuild()

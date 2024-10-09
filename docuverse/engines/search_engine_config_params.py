@@ -436,6 +436,13 @@ class EngineArguments(GenericArguments):
         }
     )
 
+    skip: Optional[int] = field(
+        default=0,
+        metadata={
+            "help": "If provided, it will skip <skip> documents from indexing. Useful if milvus crashes."
+        }
+    )
+
     action_flags = {
         "i": "ingest",
         "u": "update",

@@ -166,12 +166,12 @@ class MilvusEngine(RetrievalEngine):
         texts = [row['text'] for row in corpus]
         return texts
 
-    def ingest(self, corpus: SearchCorpus, update: bool = False):
+    def ingest(self, corpus: SearchCorpus, update: bool = False, **kwargs):
         texts = self._check_index_creation_and_get_text(corpus, update)
 
         if texts is None:
             return False
-        data = self._create_data(corpus, texts)
+        data = self._create_data(corpus, texts, **kwargs)
         self._insert_data(data)
         return True
 
@@ -219,7 +219,7 @@ class MilvusEngine(RetrievalEngine):
         fields = [
             FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID", auto_id=True),
             FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=False, max_length=1000),
-            FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=10000),
+            FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=20000),
             FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=10000),
         ]
         if self.config.data_template.extra_fields is not None:
