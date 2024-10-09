@@ -194,7 +194,7 @@ class MilvusEngine(RetrievalEngine):
             print(f"{tm.time_since_beginning()}: Currently ingested items: {ingested_items}")
             time.sleep(10)
 
-    def _create_data(self, corpus, texts):
+    def _create_data(self, corpus, texts, **kwargs):
         passage_vectors = self.encode_data(texts, self.ingest_batch_size)
         data = []
         for i, item in enumerate(corpus):
