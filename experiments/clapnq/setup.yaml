@@ -1,20 +1,21 @@
 retriever:
     input_queries: "benchmark/clapnq/question_dev_answerable.tsv"
     input_passages: "benchmark/clapnq/passages.tsv"
-    db_engine: "es-dense"
-    model_name: "models/slate.125m.english.rtrvr"
+    db_engine: "milvus-dense"
+    model_name: "models/slate.30m.english.rtrvr"
     top_k: 40
-    actions: "re"
+    actions: "ire"
     max_doc_length: 512
     stride: 100
     index_name: "clapnq-slate125-512-100-06122024"
-    server: "resconvai"
-    doc_based: True
+    server: "localhost"
+    doc_based: 1
+    aligned_on_sentences: false
     title_handling: "all"
     output_file: "output/clapnq-slate125.json"
     data_format: "config/clapnq_data_format.yml"
     num_preprocessor_threads: 16
-    max_num_documents: 1000
+    verbose: 1
 reranker: null
 evaluate:
     eval_measure: "match,mrr,ndcg"
