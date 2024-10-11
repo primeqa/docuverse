@@ -28,10 +28,12 @@ retriever:
         combination: rrf
         models:
             bm25-model:
+                weight: 1
                 top_k: 100
                 db_engine: milvus_bm25
                 milvus_idf_file: "{{project_dir}}/{{index_name}}.idf"
             slate-dense-model:
+                weight: 9
                 top_k: 100
                 storage_size: fp32
                 db_engine: milvus_dense

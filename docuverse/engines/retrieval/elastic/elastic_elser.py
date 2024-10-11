@@ -33,7 +33,8 @@ class ElasticElserEngine(ElasticEngine):
                 }
             }}
             _query = {"sub_searches": [{"query":_query}, {"query":_query1}]}
-            if self.version >= "8.15.0":
+            (major, minor, patch) = self.version.split(".")
+            if int(major) >= 8 and int(minor) >= 15:
                 _rank = {"rrf": {"rank_window_size": 200}}
             else:
                 _rank = {"rrf": {"window_size": 200}}

@@ -46,6 +46,7 @@ if __name__ == '__main__':
         print(f"Results:\n{results}")
         with open(metrics_file, "w") as out:
             out.write(str(results))
+            out.write(f"\n#Command: python {' '.join(sys.argv)}\n")
         tm.add_timing("evaluate")
 
     timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0, sorted_by="%", reverse=True)

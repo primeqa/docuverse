@@ -150,18 +150,22 @@ class SearchEngine:
             with open_stream(output_file, write=True, binary=True) as outfile:
                 pickle.dump(output, outfile)
 
-    def read_output(self, filename):
+    @staticmethod
+    def read_output_(filename: str, query_template) -> List[SearchResult]:
         output = None
         import orjson
         res = []
         if file_is_of_type(filename, ".json"):
             with open(filename, "r") as inp:
                 output = orjson.loads("".join(inp.readlines()))
-                res = [SearchResult(SearchQueries.Query(template=self.config.query_template, **o['question']),
+                res = [SearchResult(SearchQueries.Query(template=query_template, **o['question']),
                                     o['retrieved_passages']) for o in output]
         elif file_is_of_type(filename, ".pkl"):
             res = pickle.load(open_stream(filename, binary=True))
         return res
+
+    def read_output(self, filename):
+        return SearchEngine.read_output_(filename, self.config.query_template)
 
     def set_index(self, index=None):
         pass

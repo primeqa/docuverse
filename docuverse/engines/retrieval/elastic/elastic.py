@@ -203,18 +203,18 @@ class ElasticEngine(RetrievalEngine):
             #                                 type=filter.type,
             #                                 field=filter.document_field,
             #                                 terms=vals)
-
+        index_name = self.index_name.replace("_","-")
         if 'sub_searches' in query:
             query.update(size=self.config.top_k,
                          _source={("excludes" if self.version>="8.15.0" else "exclude"): ["vector", "ml.predicted_value", "ml.tokens"]},
                          rank=rank)
             res = self.client.search(
-                index=self.index_name,
+                index=index_name,
                 body=json.dumps(query),
             )
         else:
             res = self.client.search(
-                index=self.index_name,
+                index=index_name,
                 knn=knn,
                 query=query,
                 rank=rank,
