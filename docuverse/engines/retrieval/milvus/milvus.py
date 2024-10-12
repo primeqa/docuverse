@@ -66,7 +66,7 @@ class MilvusEngine(RetrievalEngine):
         super().__init__(config_params=config_params, **kwargs)
         self.client = None
         self.index = None
-        self.embeddings_name = None
+        self.embeddings_name = "embeddings"
         self.milvus_defaults = read_config_file("config/milvus_default_config.yaml")
         self.load_model_config(config_params=config_params)
         self.servers = self.read_servers()
@@ -187,6 +187,7 @@ class MilvusEngine(RetrievalEngine):
     def _insert_data(self, data, show_progress_bar=True):
         for i in tqdm(range(0, len(data), self.ingest_batch_size), desc="Ingesting documents", disable=not show_progress_bar):
             self.client.insert(collection_name=self.config.index_name, data=data[i:i + self.ingest_batch_size])
+        # self.client.flush()
         self.wait_for_ingestion(data)
         # self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
 
@@ -210,7 +211,6 @@ class MilvusEngine(RetrievalEngine):
             dt[self.embeddings_name] = passage_vectors[i]
             for f in self.config.data_template.extra_fields:
                 dt[f] = str(item[f])
-            # dt['_id'] = i
             data.append(dt)
         return data
 
@@ -271,7 +271,17 @@ class MilvusEngine(RetrievalEngine):
         return result
 
     def encode_query(self, question):
-        query_vector = self.model.encode(question.text, show_progress_bar=False)
+        """
+        Encodes a question text using the model's encode function. By default, it uses the usual encoding mechanism,
+        but it can be overridden if necessary.
+
+        Args:
+            question (Question): The question object containing the text to be encoded.
+
+        Returns:
+            list: The encoded representation of the question text.
+        """
+        return self.model.encode(question.text, show_progress_bar=False)
 
     def get_search_params(self):
         pass

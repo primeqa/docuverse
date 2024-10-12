@@ -1,0 +1,33 @@
+retriever:
+    corpus: quora
+    project_dir: /home/raduf/sandbox2/docuverse/experiments/milvus_splade
+    input_passages: "benchmark/beir_dev/{{corpus}}//en/corpus.small.jsonl"
+    input_queries: "benchmark/beir_dev/{{corpus}}/queries_conf.small.json"
+    cache_dir: "{{project_dir}}/cache"
+    db_engine: milvus-splade
+    storage_size: fp32
+    actions: ire
+    data_format: config/beir_data_format.yml
+    doc_based: True
+    verbose: True
+    date: 10062024
+    server: localhost
+    top_k: 100
+    # model_name: naver/splade-cocondenser-selfdistil
+    model_name: models/en-splade-wb-s0+s1-alp0.5_LR_3e-5_BS-150_l_1e-4_S_200000_T_1
+    short_model_name: ibm-splade
+    title_handling: all
+    num_preprocessor_threads: -1
+    num_search_threads: -1
+    ignore_empty_questions: 1
+    bulk_batch: 128
+    max_doc_length: 512
+    stride: 100
+    index_name: "beir-{{corpus}}-small-{{short_model_name}}-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
+    output_file: "output/{{index}}.json"
+    # max_num_documents: 100
+reranker: null
+evaluate:
+    eval_measure: match,mrr,ndcg
+    ranks: 1,5,10,100
+

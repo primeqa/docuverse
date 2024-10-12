@@ -18,7 +18,7 @@ from tqdm import tqdm
 from docuverse.utils.timer import timer
 
 
-class SpladeSentenceTransformer:
+class SparseSentenceTransformer:
     def __init__(self, model_name_or_path, device:str= 'cpu', max_terms=500):
         self.model = AutoModelForMaskedLM.from_pretrained(model_name_or_path)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
@@ -126,7 +126,7 @@ class SparseEmbeddingFunction(EmbeddingFunction):
         print('=== done initializing model')
 
     def create_model(self, model_or_directory_name:str=None, device:str="cpu"):
-        self.model = SpladeSentenceTransformer(model_or_directory_name, device)
+        self.model = SparseSentenceTransformer(model_or_directory_name, device)
 
     def __call__(self, texts: Union[List[str], str], **kwargs) -> \
             Union[Dict[str, float|int], List[Dict[str, float|int]]]:
