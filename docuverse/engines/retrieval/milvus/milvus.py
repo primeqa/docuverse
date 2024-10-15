@@ -208,7 +208,7 @@ class MilvusEngine(RetrievalEngine):
         data = []
         for i, (item, vector) in enumerate(zip(corpus, passage_vectors)):
             # if isinstance(vector, spmatrix) and vector.getnnz() == 0:
-            if getattr(vector, 'getnnz', None) is not None and vector.getnnz()==0:
+            if getattr(vector, 'count_nonzero', None) is not None and vector.count_nonzero()==0:
                 continue
             dt = {key: item[key] for key in ['text', 'title', 'id']}
             dt[self.embeddings_name] = vector
@@ -248,8 +248,8 @@ class MilvusEngine(RetrievalEngine):
         search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'
         query_vector = self.encode_query(question)
-        if isinstance(query_vector, spmatrix):
-            non_zero = query_vector.getnnz()
+        if getattr(query_vector, 'count_nonzero', None) is not None:
+            non_zero = query_vector.count_nonzero()
             if non_zero == 0:
                 print(f"Query \"{question.text}\" has 0 length representation.")
                 return SearchResult(question=question, data=[])

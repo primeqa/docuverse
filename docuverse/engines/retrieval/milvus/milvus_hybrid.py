@@ -202,7 +202,7 @@ class MilvusHybridEngine(MilvusEngine):
 
     @staticmethod
     def _check_zero_size_sparse_vector(val):
-        return isinstance(val, csr_array) and val.getnnz() == 0
+        return isinstance(val, csr_array) and val.count_nonzero() == 0
 
     def _insert_data(self, data, show_progress_bar=True):
         tbatch_size = self.ingest_batch_size

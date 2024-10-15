@@ -90,13 +90,14 @@ class MilvusBM25Engine(MilvusEngine):
             last = min(i + batch_size, len(texts))
             encs = self.bm25_ef.encode_documents(texts[i:last])
             # embeddings.extend([v for v in list(encs) if v.getnnz()>0])
-            embeddings.extend(list(encs))
+            # embeddings.extend(list(encs))
+            embeddings.extend(encs[[i], :] for i in range(last-i))
             t.update(last-i)
         #embeddings = self.bm25_ef.encode_documents(texts)
         return embeddings
 
     def encode_query(self, question):
-        return list(self.bm25_ef.encode_queries([question.text]))[0]
+        return self.bm25_ef.encode_queries([question.text])[[0],:]
 
     def get_search_request(self, text):
         data = self.encode_data([text], batch_size=1, show_progress=False)
