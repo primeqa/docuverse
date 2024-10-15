@@ -36,10 +36,11 @@ class MilvusBM25Engine(MilvusEngine):
 
     def prepare_index_params(self, embeddings_name="embeddings"):
         index_params = self.client.prepare_index_params()
-        index_params.add_index(
-            field_name="_id",
-            index_type="STL_SORT"
-        )
+        if self.server.type != "file":
+            index_params.add_index(
+                field_name="_id",
+                index_type="STL_SORT"
+            )
         index_params.add_index(field_name=embeddings_name,
                                index_name="sparse_inverted_index",
                                index_type="SPARSE_INVERTED_INDEX",
@@ -100,8 +101,8 @@ class MilvusBM25Engine(MilvusEngine):
         data = self.encode_data([text], batch_size=1, show_progress=False)
         search_params = self.get_search_params()
 
-    def ingest(self, corpus: SearchCorpus, update: bool = False):
-        index_created = super().ingest(corpus, update)
+    def ingest(self, corpus: SearchCorpus, update: bool = False, **kwargs):
+        index_created = super().ingest(corpus, update, **kwargs)
         if index_created:
             self.save_idf_index()
 
