@@ -395,6 +395,8 @@ class RetrievalArguments(GenericArguments):
             self.filter_on = res
         if self.hybrid == "":
             self.hybrid = {}
+        if self.db_engine in ['milvus-bm25', 'milvus_bm25'] and self.milvus_idf_file is None:
+            self.milvus_idf_file = os.path.join(self.project_dir, f"{self.index_name}.idf")
 
 @dataclass
 class EngineArguments(GenericArguments):
@@ -498,8 +500,8 @@ class RerankerArguments(GenericArguments):
         }
     )
 
-    reranker_combination_type: Literal['rrf', 'weight'] = field(
-        default="rrf",
+    reranker_combination_type: Literal['none', 'rrf', 'weight'] = field(
+        default="none",
         metadata={
             "help": "The combination type to use for reranking."
         }

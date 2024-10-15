@@ -175,6 +175,8 @@ class MilvusEngine(RetrievalEngine):
     def ingest(self, corpus: SearchCorpus, update: bool = False, **kwargs):
         texts = self._check_index_creation_and_get_text(corpus, update)
 
+        self._analyze_data(texts)
+
         if texts is None:
             return False
         data = self._create_data(corpus, texts, **kwargs)
@@ -204,11 +206,12 @@ class MilvusEngine(RetrievalEngine):
     def _create_data(self, corpus, texts, **kwargs):
         passage_vectors = self.encode_data(texts, self.ingest_batch_size)
         data = []
-        for i, item in enumerate(corpus):
-            if isinstance(passage_vectors[i], spmatrix) and passage_vectors[i].getnnz() == 0:
+        for i, (item, vector) in enumerate(zip(corpus, passage_vectors)):
+            # if isinstance(vector, spmatrix) and vector.getnnz() == 0:
+            if getattr(vector, 'getnnz', None) is not None and vector.getnnz()==0:
                 continue
             dt = {key: item[key] for key in ['text', 'title', 'id']}
-            dt[self.embeddings_name] = passage_vectors[i]
+            dt[self.embeddings_name] = vector
             for f in self.config.data_template.extra_fields:
                 dt[f] = str(item[f])
             data.append(dt)

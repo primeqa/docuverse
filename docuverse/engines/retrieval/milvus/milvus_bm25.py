@@ -89,6 +89,7 @@ class MilvusBM25Engine(MilvusEngine):
         for i in range(0, len(texts), batch_size):
             last = min(i + batch_size, len(texts))
             encs = self.bm25_ef.encode_documents(texts[i:last])
+            # embeddings.extend([v for v in list(encs) if v.getnnz()>0])
             embeddings.extend(list(encs))
             t.update(last-i)
         #embeddings = self.bm25_ef.encode_documents(texts)
@@ -109,7 +110,7 @@ class MilvusBM25Engine(MilvusEngine):
     def save_idf_index(self):
         idf_file = self.config.milvus_idf_file
         if idf_file is None:
-            idf_file = os.path.join(self.config.project_name, f"{self.config.index_name}.idf")
+            idf_file = os.path.join(self.config.project_dir, f"{self.config.index_name}.idf")
         if not os.path.exists(os.path.dirname(idf_file)):
             os.makedirs(os.path.dirname(idf_file))
         self.bm25_ef.save(idf_file)
