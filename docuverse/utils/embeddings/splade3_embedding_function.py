@@ -1,6 +1,5 @@
 from typing import Union, Dict, List
 
-from splade.models.transformer_rep import Splade
 from transformers import AutoTokenizer
 
 from docuverse.utils import get_param
