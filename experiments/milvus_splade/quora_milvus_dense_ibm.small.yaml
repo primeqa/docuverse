@@ -24,7 +24,7 @@ retriever:
     max_doc_length: 512
     stride: 100
     index_name: "beir-{{corpus}}-small-{{short_model_name}}-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
-    output_file: "output/{{index}}.json"
+    output_file: "output/{{index_name}}.json"
     # max_num_documents: 100
 reranker: null
 evaluate:
