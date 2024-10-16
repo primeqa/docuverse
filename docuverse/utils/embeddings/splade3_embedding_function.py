@@ -85,7 +85,8 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
     def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None, **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
         # return [self.model.encode_documents(t) for t in texts] if type(texts) is list else self.model.encode_documents(texts)
-         return list(self.model.encode_documents(texts))
+        embs = self.model.encode_documents(texts)
+        return [embs[[i], :] for i, _ in enumerate(embs)]
 
     def encode_query(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None, **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
