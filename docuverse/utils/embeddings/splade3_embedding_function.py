@@ -2,7 +2,7 @@ from typing import Union, Dict, List
 
 from transformers import AutoTokenizer
 
-from docuverse.utils import get_param
+from docuverse.utils import get_param, convert_to_single_vectors
 from docuverse.utils.embeddings.embedding_function import EmbeddingFunction
 import torch
 try:
@@ -85,9 +85,8 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
     def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None, **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
         # return [self.model.encode_documents(t) for t in texts] if type(texts) is list else self.model.encode_documents(texts)
-        embs = self.model.encode_documents(texts)
-        return [embs[[i], :] for i, _ in enumerate(embs)]
+        return convert_to_single_vectors(self.model.encode_documents(texts))
 
     def encode_query(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None, **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
-        return self.model.encode_queries(texts)
+        return convert_to_single_vectors(self.model.encode_queries(texts))

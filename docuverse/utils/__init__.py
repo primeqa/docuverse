@@ -353,3 +353,7 @@ def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes')
             return r
         else:
             print(f"Please type one of {answers}, not {r}!")
+
+def convert_to_single_vectors(embs):
+    return [embs[[i], :] for i, _ in enumerate(embs)]
+

@@ -17,10 +17,9 @@ except:
     print(f"You need to install pymilvus to be using Milvus functionality!")
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
 from docuverse.engines.search_engine_config_params import SearchEngineConfig
-from docuverse.utils import get_param, ask_for_confirmation
+from docuverse.utils import get_param, ask_for_confirmation, convert_to_single_vectors
 from tqdm import tqdm
 
-from docuverse.utils.embeddings.sparse_embedding_function import SparseEmbeddingFunction
 
 class MilvusBM25Engine(MilvusEngine):
     def __init__(self, config: SearchEngineConfig|dict, **kwargs) -> None:
@@ -91,7 +90,7 @@ class MilvusBM25Engine(MilvusEngine):
             encs = self.bm25_ef.encode_documents(texts[i:last])
             # embeddings.extend([v for v in list(encs) if v.getnnz()>0])
             # embeddings.extend(list(encs))
-            embeddings.extend(encs[[i], :] for i in range(last-i))
+            embeddings.extend(convert_to_single_vectors(encs))
             t.update(last-i)
         #embeddings = self.bm25_ef.encode_documents(texts)
         return embeddings
