@@ -26,10 +26,11 @@ class MilvusSpladeEngine(MilvusEngine):
 
     def prepare_index_params(self, embeddings_name="embeddings"):
         index_params = self.client.prepare_index_params()
-        index_params.add_index(
-            field_name="_id",
-            index_type="STL_SORT"
-        )
+        if self.server.type != "file":
+            index_params.add_index(
+                field_name="_id",
+                index_type="STL_SORT"
+            )
         index_params.add_index(field_name=embeddings_name,
                                index_name="sparse_inverted_index",
                                index_type="SPARSE_INVERTED_INDEX",
