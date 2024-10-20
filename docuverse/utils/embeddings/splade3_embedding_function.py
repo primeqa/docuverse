@@ -1,5 +1,6 @@
 from typing import Union, Dict, List
 
+from tqdm import tqdm
 from transformers import AutoTokenizer
 
 from docuverse.utils import get_param, convert_to_single_vectors
@@ -35,7 +36,6 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
             self.create_model(model_or_directory_name=model_or_directory_name, device=device, **kwargs)
         except Exception as e:
             # Try once more, from dmf
-            print(e)
             if not dmf_loaded:
                 model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
                 self.create_model(model_or_directory_name=model_or_directory_name, device=device)
@@ -54,7 +54,7 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
 
     def __call__(self, texts: Union[List[str], str], **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
-        return self.encode(texts)
+        return self.encode(texts, **kwargs)
 
     # def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None, **kwargs) -> \
     #         Union[Dict[str, float | int], List[Dict[str, float | int]]]:
@@ -86,11 +86,33 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
     #
     #     return res
 
-    def encode(self, texts: Union[str, List[str]], _batch_size: int = -1,
-               show_progress_bar=None, **kwargs) -> \
-            Union[Dict[str, float | int], List[Dict[str, float | int]]]:
-        return convert_to_single_vectors(self.model.encode_documents(texts))
+    @staticmethod
+    def _encode_data(self, method, _batch_size, show_progress_bar, texts, tqdm_instance):
+        embs = []
+        if tqdm_instance is not None:
+            tq = tqdm_instance
+        else:
+            tq = tqdm(desc=f"Encoding texts w/ SPLADE", total=len(texts),
+                      show_progress_bar=False if show_progress_bar is None else show_progress_bar)
+        if _batch_size == -1:
+            _batch_size = len(texts)/10
+        for i in range(0, len(texts), _batch_size):
+            last = min(len(texts), i + _batch_size)
+            embs.extend(convert_to_single_vectors(method(texts[i:i + _batch_size])))
+            tq.update(last - i)
+        return embs
 
-    def encode_query(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None, **kwargs) -> \
+    def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None,
+               tqdm_instance=None, **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
-        return convert_to_single_vectors(self.model.encode_queries(texts))
+        return self._encode_data(self.model.encode_documents,
+                                 _batch_size, show_progress_bar, texts, tqdm_instance)
+        # return [self.model.encode_documents(t) for t in texts] if type(texts) is list else self.model.encode_documents(texts)
+
+
+    def encode_query(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None,
+                     tqdm_instance=None, **kwargs) -> \
+            Union[Dict[str, float | int], List[Dict[str, float | int]]]:
+        return self._encode_data(self.model.encode_queries,
+                                 _batch_size, show_progress_bar, texts, tqdm_instance)
+        # return convert_to_single_vectors(self.model.encode_queries(texts))

@@ -44,16 +44,25 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
             dmf_loaded = True
 
+        model_loaded = False
         try:
             self.create_model(model_or_directory_name, device)
+            model_loaded = True
         except Exception as e:
-            # Try once more, from dmf
-            if not dmf_loaded:
+            raise e
+
+        if dmf_loaded and not model_loaded:
+            print(f"Model not found in DMF: {model_or_directory_name}")
+            raise RuntimeError(f"Model not found in DMF: {model_or_directory_name}")
+
+        if not model_loaded:
+            try:
                 model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
                 self.create_model(model_or_directory_name, device)
-            else:
+            except Exception as e:
                 print(f"Model not found: {model_or_directory_name}")
                 raise RuntimeError(f"Model not found: {model_or_directory_name}")
+
         print('=== done initializing model')
 
     def __call__(self, texts: Union[List[str], str], **kwargs) -> \
@@ -145,3 +154,4 @@ class DenseEmbeddingFunction(EmbeddingFunction):
     @staticmethod
     def normalize(passage_vectors):
         return [v / np.linalg.norm(v) for v in passage_vectors if np.linalg.norm(v) > 0]
+
