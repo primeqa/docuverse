@@ -31,7 +31,7 @@ class EmbeddingFunction:
     def __del__(self):
         pass
 
-    def create_model(self, model_or_directory_name:str=None, device: str='cpu'):
+    def create_model(self, model_or_directory_name:str=None, device: str='cpu', **kwargs):
         pass
 
     def tokenizer(self):

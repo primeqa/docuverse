@@ -26,7 +26,7 @@ class MilvusBM25Engine(MilvusEngine):
         super().__init__(config, **kwargs)
 
 
-    def init_model(self, kwargs):
+    def init_model(self, **kwargs):
         self.analyzer = build_default_analyzer(get_param(kwargs, 'language', "en"))
         self.bm25_ef = BM25EmbeddingFunction(self.analyzer)
         idf_file = self.config.milvus_idf_file

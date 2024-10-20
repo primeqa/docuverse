@@ -33,7 +33,7 @@ class MilvusDenseEngine(MilvusEngine):
         self.storage_size = get_param([config, kwargs], 'storage_size', "fp16")
         self.storage_rep = self.STORAGE_MAP[self.storage_size]
 
-    def init_model(self, kwargs):
+    def init_model(self, **kwargs):
         self.model = DenseEmbeddingFunction(self.config.model_name)
         self.hidden_dim = len(self.model.encode(['text'], show_progress_bar=False)[0])
         self.normalize_embs = get_param(kwargs, 'normalize_embs', False)

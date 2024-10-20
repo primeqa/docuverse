@@ -20,8 +20,11 @@ class MilvusSparseEngine(MilvusEngine):
     def __init__(self, config: SearchEngineConfig|dict, **kwargs) -> None:
         super().__init__(config, **kwargs)
 
-    def init_model(self, kwargs):
-        self.model = SparseEmbeddingFunction(self.config.model_name, batch_size=self.config.bulk_batch)
+    def init_model(self, **kwargs):
+        self.model = SparseEmbeddingFunction(self.config.model_name, batch_size=self.config.bulk_batch,
+                                             doc_max_tokens=get_param(self.config, 'doc_max_tokens', None),
+                                             query_max_tokens=get_param(self.config, 'query_max_tokens', None),
+                                             )
 
     def prepare_index_params(self, embeddings_name="embeddings"):
         index_params = self.client.prepare_index_params()
@@ -39,8 +42,9 @@ class MilvusSparseEngine(MilvusEngine):
 
     def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
         fields = [] if new_fields_only else super().create_fields()
+        self.embeddings_name = embeddings_name
         fields.append(
-            FieldSchema(name="embeddings", dtype=DataType.SPARSE_FLOAT_VECTOR)
+            FieldSchema(name=embeddings_name, dtype=DataType.SPARSE_FLOAT_VECTOR)
         )
         return fields
 
@@ -49,6 +53,10 @@ class MilvusSparseEngine(MilvusEngine):
                                   self.milvus_defaults['search_params']["SPLADE"])
 
         return search_params
+
+    def encode_query(self, question):
+        query_vector = self.model.encode_query(question.text)
+        return query_vector
 
     @classmethod
     def test(cls):

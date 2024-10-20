@@ -77,7 +77,7 @@ class MilvusEngine(RetrievalEngine):
             else:
                 self.server = self.servers[self.config.server]
         self.model = None
-        self.init_model(kwargs)
+        self.init_model(**kwargs)
         # Milvus does not accept '-', only letters, numbers, and "_"
         self.init_client()
         self.output_fields = ["id", "text", 'title']
@@ -88,7 +88,7 @@ class MilvusEngine(RetrievalEngine):
         if extra is not None and len(extra) > 0:
             self.output_fields += extra
 
-    def init_model(self, kwargs):
+    def init_model(self, **kwargs):
         pass
 
     def load_model_config(self, config_params: Union[dict, SearchEngineConfig]):

@@ -21,8 +21,12 @@ class MilvusSpladeEngine(MilvusEngine):
         super().__init__(config, **kwargs)
         self.embeddings_name = "embeddings"
 
-    def init_model(self, kwargs):
-        self.model = SpladeEmbeddingFunction(self.config.model_name, batch_size=self.config.bulk_batch)
+    def init_model(self, **kwargs):
+        self.model = SpladeEmbeddingFunction(self.config.model_name,
+                                             batch_size=self.config.bulk_batch,
+                                             doc_max_tokens=get_param(self.config, 'doc_max_tokens', None),
+                                             query_max_tokens=get_param(self.config, 'query_max_tokens', None),
+                                             **kwargs)
 
     def prepare_index_params(self, embeddings_name="embeddings"):
         index_params = self.client.prepare_index_params()
@@ -39,8 +43,9 @@ class MilvusSpladeEngine(MilvusEngine):
 
     def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
         fields = [] if new_fields_only else super().create_fields()
+        self.embeddings_name = embeddings_name
         fields.append(
-            FieldSchema(name="embeddings", dtype=DataType.SPARSE_FLOAT_VECTOR)
+            FieldSchema(name=embeddings_name, dtype=DataType.SPARSE_FLOAT_VECTOR)
         )
         return fields
 

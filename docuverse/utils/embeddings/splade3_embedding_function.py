@@ -32,9 +32,10 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
 
         # from sentence_transformers import SentenceTransformer
         try:
-            self.create_model(model_or_directory_name=model_or_directory_name, device=device)
+            self.create_model(model_or_directory_name=model_or_directory_name, device=device, **kwargs)
         except Exception as e:
             # Try once more, from dmf
+            print(e)
             if not dmf_loaded:
                 model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
                 self.create_model(model_or_directory_name=model_or_directory_name, device=device)
@@ -43,9 +44,12 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
                 raise RuntimeError(f"Model not found: {model_or_directory_name}")
         print('=== done initializing model')
 
-    def create_model(self, model_or_directory_name: str = None, device: str = "cpu"):
-        # self.model = Splade(model_or_directory_name)
-        self.model = model.sparse.SpladeEmbeddingFunction(model_name=model_or_directory_name, device=device)
+    def create_model(self, model_or_directory_name: str = None, device: str = "cpu", **kwargs):
+        self.model = model.sparse.SpladeEmbeddingFunction(model_name=model_or_directory_name,
+                                                          device=device,
+                                                          k_tokens_query=get_param(kwargs, 'query_max_tokens', None),
+                                                          k_tokens_document = get_param(kwargs, 'doc_max_tokens', None)
+        )
         self.tokenizer = AutoTokenizer.from_pretrained(model_or_directory_name)
 
     def __call__(self, texts: Union[List[str], str], **kwargs) -> \
@@ -82,9 +86,9 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
     #
     #     return res
 
-    def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None, **kwargs) -> \
+    def encode(self, texts: Union[str, List[str]], _batch_size: int = -1,
+               show_progress_bar=None, **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
-        # return [self.model.encode_documents(t) for t in texts] if type(texts) is list else self.model.encode_documents(texts)
         return convert_to_single_vectors(self.model.encode_documents(texts))
 
     def encode_query(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None, **kwargs) -> \

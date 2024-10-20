@@ -4,6 +4,7 @@ from pymilvus.client.constants import ConsistencyLevel
 from tqdm import tqdm
 from scipy.sparse._csr import csr_array
 from docuverse import SearchCorpus, SearchQueries, SearchResult
+from docuverse.engines.retrieval.milvus import MilvusSpladeEngine
 from docuverse.engines.retrieval.milvus.milvus import MilvusEngine
 from docuverse.engines.retrieval.milvus.milvus_dense import MilvusDenseEngine
 from docuverse.engines.retrieval.milvus.milvus_bm25 import MilvusBM25Engine
@@ -124,7 +125,7 @@ class MilvusHybridEngine(MilvusEngine):
 
         super().__init__(config, **kwargs)
 
-    def init_model(self, kwargs):
+    def init_model(self, **kwargs):
         self.model_names = list(self.config.hybrid['models'].keys())
         if self.config.hybrid_submodules:
             submodules = self.config.hybrid_submodules.split(",")
@@ -137,6 +138,8 @@ class MilvusHybridEngine(MilvusEngine):
                         'milvus-dense': MilvusDenseEngine,
                         'milvus_sparse': MilvusSparseEngine,
                         'milvus-sparse': MilvusSparseEngine,
+                        'milvus_splade': MilvusSpladeEngine,
+                        'milvus-splade': MilvusSpladeEngine,
                         'milvus_bm25': MilvusBM25Engine,
                         'milvus-bm25': MilvusBM25Engine}
         for m in self.model_names:
@@ -226,9 +229,9 @@ class MilvusHybridEngine(MilvusEngine):
     def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
         fields = super().create_fields()
 
-        for i, (m, name) in enumerate(zip(self.models, self.model_names)):
-            self.embedding_names.append(f"{name}_embeddings".replace("-", "_"))
-            fields.extend(m.create_fields(embeddings_name=self.embedding_names[i], new_fields_only=True))
+        for m, emb_name in zip(self.models, self.embedding_names):
+            fields.extend(m.create_fields(embeddings_name=emb_name,
+                                          new_fields_only=True))
         return fields
 
     def create_index(self, index_name: str=None, fields=None, fmt=None, **kwargs):

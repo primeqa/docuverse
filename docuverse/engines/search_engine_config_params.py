@@ -360,6 +360,20 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    doc_max_tokens: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "The maximum number of non-zero token expansion to use for the documents (for SPLADE models)."
+        }
+    )
+
+    query_max_tokens: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "The maximum number of non-zero token expansion to use for the queries (for SPLADE models)."
+        }
+    )
+
     query_template: DataTemplate = default_query_template
     data_template: DataTemplate = default_data_template
 
