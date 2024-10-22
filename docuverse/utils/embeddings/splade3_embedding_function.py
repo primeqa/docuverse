@@ -17,6 +17,7 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
         super().__init__(model_or_directory_name=model_or_directory_name, batch_size=batch_size, **kwargs)
         self.tokenizer = None
         self.model = None
+        self.batch_size = batch_size
         import torch
         device = 'cuda' if torch.cuda.is_available() else 'cpu'  # "mps" if torch.backends.mps.is_available() else 'cpu'
         if device == 'cpu':
@@ -33,7 +34,7 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
 
         # from sentence_transformers import SentenceTransformer
         try:
-            self.create_model(model_or_directory_name=model_or_directory_name, device=device, **kwargs)
+            self.create_model(model_or_directory_name=model_or_directory_name, device=device, batch_size=batch_size, **kwargs)
         except Exception as e:
             # Try once more, from dmf
             if not dmf_loaded:
@@ -44,9 +45,10 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
                 raise RuntimeError(f"Model not found: {model_or_directory_name}")
         print('=== done initializing model')
 
-    def create_model(self, model_or_directory_name: str = None, device: str = "cpu", **kwargs):
+    def create_model(self, model_or_directory_name: str = None, device: str = "cpu", batch_size=128, **kwargs):
         self.model = model.sparse.SpladeEmbeddingFunction(model_name=model_or_directory_name,
                                                           device=device,
+                                                          batch_size=batch_size,
                                                           k_tokens_query=get_param(kwargs, 'query_max_tokens', None),
                                                           k_tokens_document = get_param(kwargs, 'doc_max_tokens', None)
         )
@@ -87,32 +89,37 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
     #     return res
 
     @staticmethod
-    def _encode_data(self, method, _batch_size, show_progress_bar, texts, tqdm_instance):
+    def _encode_data(method, texts, _batch_size, show_progress_bar= None, tqdm_instance=None):
         embs = []
+        # print (texts)
+        # print (method)
         if tqdm_instance is not None:
             tq = tqdm_instance
         else:
-            tq = tqdm(desc=f"Encoding texts w/ SPLADE", total=len(texts),
-                      show_progress_bar=False if show_progress_bar is None else show_progress_bar)
-        if _batch_size == -1:
-            _batch_size = len(texts)/10
-        for i in range(0, len(texts), _batch_size):
-            last = min(len(texts), i + _batch_size)
-            embs.extend(convert_to_single_vectors(method(texts[i:i + _batch_size])))
-            tq.update(last - i)
+            tq = tqdm(desc=f"Encoding texts w/ SPLADE", total=len(texts))
+                    #   ,show_progress_bar=False if show_progress_bar in [None, False] else show_progress_bar)
+        # if _batch_size == -1:
+        #     _batch_size = len(texts)/10
+        # for i in range(0, len(texts), _batch_size):
+        #     last = min(len(texts), i + _batch_size)
+        #     # embs.extend(convert_to_single_vectors(method(texts[i:i + _batch_size])))
+        #     embs.extend(method(texts[i:i + _batch_size]))
+        #     tq.update(last - i)
+        embs = method(texts)
         return embs
 
     def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None,
                tqdm_instance=None, **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
-        return self._encode_data(self.model.encode_documents,
-                                 _batch_size, show_progress_bar, texts, tqdm_instance)
+        # print (texts)
+        return self._encode_data(self.model.encode_documents, texts,
+                                 _batch_size, show_progress_bar, tqdm_instance)
         # return [self.model.encode_documents(t) for t in texts] if type(texts) is list else self.model.encode_documents(texts)
 
 
     def encode_query(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None,
                      tqdm_instance=None, **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
-        return self._encode_data(self.model.encode_queries,
-                                 _batch_size, show_progress_bar, texts, tqdm_instance)
+        return self._encode_data(self.model.encode_queries, texts,
+                                 _batch_size, show_progress_bar, tqdm_instance)
         # return convert_to_single_vectors(self.model.encode_queries(texts))

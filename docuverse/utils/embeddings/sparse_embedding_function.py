@@ -80,16 +80,15 @@ class SparseSentenceTransformer:
             maxdim1 = torch.max(maxarg * input_mask_expanded, dim=1).values  # bs * voc
             tm.add_timing("attention_mask_filter")
             # get topk high weights
-            topk = torch.topk(maxdim1, k=self.doc_max_tokens) # (weight - (bs * max_terms), index - (bs * max_terms))
-            # stack [index, weight] for each active token
-            topk_i_w = torch.stack(topk, dim=2).flip(2) # bs * max_terms * 2
+
+
+            topk, indices = torch.topk(maxdim1, k=self.doc_max_tokens) # (weight - (bs * max_terms), index - (bs * max_terms))
             tm.add_timing("get_topk_weights")
-            expansion = [ elem[elem[:,1] > 0] for elem in topk_i_w.cpu().unbind(dim=0)] # [ [expansion_for_doc * 2] * bs]
+            embeddings = torch.zeros_like(maxdim1)
+            embeddings = embeddings.scatter(1, indices, topk)
+            embeddings = embeddings.to_sparse_csr().unbind(dim=0)
             tm.add_timing("expansion::create_expansion")
-            vocab_size = len(maxdim1[0])
-            arrays = [csr_array(([float(ee[1]) for ee in e], ([0]*len(e),[int(ee[0]) for ee in e])), shape=(1,vocab_size)) for e in expansion]
-            expansions.extend(arrays)
-            # expansions.extend(expansion)
+            expansions.extend(embeddings)
             tm.add_timing("expansion::add_expansion")
             if tk:
                 tk.update(min(_batch_size, num_sents-b))
@@ -98,7 +97,9 @@ class SparseSentenceTransformer:
 
         for i, e in enumerate(expansions):
             unsorted_expansions[sorted_sents_inds[i]] = e
+
         return unsorted_expansions
+
 
     @staticmethod
     def make_vector_from_expansions(expansion, scale):
