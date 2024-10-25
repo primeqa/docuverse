@@ -303,7 +303,8 @@ class RetrievalArguments(GenericArguments):
         default=None,
         metadata={
             "help": "Defines the strategy for removing duplicates (default: don't remove). It can be 'rouge' (based on "
-                    "rouge similarity) or 'exact' (exact match)"
+                    "rouge similarity), 'exact' (exact match), or 'key:<field>' - where it keeps only one of the entries"
+                    "with that field (e.g., only one entry with a given url"
         }
     )
 

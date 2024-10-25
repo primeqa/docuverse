@@ -9,6 +9,7 @@
 Author: Radu Florian
 raduf@us.ibm.com )'''
 from datetime import datetime
+import sys
 
 msec = 1
 sec = 1000
@@ -238,7 +239,7 @@ class timer(object):
         return res
 
     @staticmethod
-    def display_timing(totalms, level=0, stat_list=None, num_words=0, num_chars=0, sorted_by:str|None=None, reverse=False):
+    def display_timing(totalms, level=0, stat_list=None, num_words=0, num_chars=0, sorted_by:str|None=None, reverse=False, output_stream=None):
         '''Static method that will print the hierarchical times for the labeled times.
         The speeds computed are in kilo-words/sec and kilo-chars/sec.
         Arguments:
@@ -248,6 +249,8 @@ class timer(object):
             - num_words - the number of processed words; needed for words/s speed calculation
             - num_chars - the number of processed characters; needed for kc/s speed calculation
             '''
+        if output_stream is None:
+            output_stream = sys.stdout
         def _display_tree(node, level, num_words=1, num_chars=1):
             ms = max(100, node["time"])
             secs = max(0.1, ms/1000.0)
@@ -256,7 +259,8 @@ class timer(object):
 
             print("{:<40s}{:>10.1f}s {:>10.1f}% {:10.1f}%{:10.1f}{:10.1f}".
                   format(okey, secs, perc, ms*100 / totalms, num_words * 1.0 / ms,
-                         num_chars * 1.0 / ms))
+                         num_chars * 1.0 / ms),
+                  file=output_stream)
             if sorted_by == "%":
                 node["children"] = sorted(node["children"], key=lambda val: val["percent"], reverse=reverse)
             elif sorted_by == "name":
@@ -286,7 +290,7 @@ class timer(object):
             range='k'
 
         print("{:<40s}{:>10s}{:>11s}{:>11s}{:>11s}{:>11s}".
-              format("Name", "Time (s)", "Rel %", "Abs %", f'Spd({range}w/s)', f'Spd({range}c/s)'))
+              format("Name", "Time (s)", "Rel %", "Abs %", f'Spd({range}w/s)', f'Spd({range}c/s)'), file=output_stream)
 
         _display_tree(tree, level, num_words, num_chars)
 

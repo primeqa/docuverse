@@ -2,6 +2,7 @@ import json
 from typing import List, Dict, Union
 
 from docuverse.engines.search_queries import SearchQueries
+from docuverse.utils import get_param
 
 
 class SearchResult:
@@ -14,7 +15,15 @@ class SearchResult:
         def __init__(self, data: Dict[str,str], **kwargs):
             self.__dict__.update(data)
             self.__dict__.update(kwargs)
-
+            for k, v in self.__dict__.items():
+                # Milvus will convert deep json trees into strings,
+                # so we're # undoing that here
+                if isinstance(v, str):
+                    try:
+                        r = json.loads(v)
+                        setattr(self, k, r)
+                    except ValueError as e:
+                        pass
         def __getitem__(self, key, default=None):
             if key in self.__dict__:
                 return self.__dict__[key]
@@ -96,10 +105,16 @@ class SearchResult:
         elif duplicate_removal.startswith("key:"):
             key = duplicate_removal.replace("key:","")
             seen = set()
-            for r in self.retrieved_passages:
-                if r[key] not in seen:
-                    seen.add(r[key])
-                    keep_passages.append(r)
+            for i, r in enumerate(self.retrieved_passages):
+                try:
+                    # print(f"it={i}")
+                    val = get_param(r, key, None)
+                    # print(f"val={val}")
+                    if val and val not in seen:
+                        seen.add(val)
+                        keep_passages.append(r)
+                except Exception as e:
+                    print(f"Error on {r.metadata}: {e}")
         self.retrieved_passages = keep_passages
 
     def __getitem__(self, i: int) -> SearchDatum:

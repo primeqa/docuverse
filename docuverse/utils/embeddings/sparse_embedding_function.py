@@ -142,6 +142,11 @@ class SparseEmbeddingFunction(EmbeddingFunction):
                 raise RuntimeError(f"Model not found: {model_or_directory_name}")
         print('=== done initializing model')
 
+    @property
+    def tokenizer(self):
+        return self.model.tokenizer
+
+
     def create_model(self, model_or_directory_name:str=None, device:str="cpu", **kwargs):
         self.model = SparseSentenceTransformer(model_or_directory_name, device, **kwargs)
 

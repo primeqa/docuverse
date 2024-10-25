@@ -168,6 +168,10 @@ class MilvusHybridEngine(MilvusEngine):
 
     def init_client(self): #override the parent functionality
         super().init_client()
+        if self.server.type == "file":
+            print("Hybrid search doesn't work on files databases, only on the server, for now.")
+            raise NotImplemented()
+
         connections.connect(host=self.server.host, port=self.server.port,
                             secure=get_param(self.server, "secure", False),
                             server_pem_path=get_param(self.server, "server_pem_path", None))

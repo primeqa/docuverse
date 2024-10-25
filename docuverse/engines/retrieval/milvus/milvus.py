@@ -1,3 +1,4 @@
+import json
 from typing import Union
 
 # from onnx.reference.custom_element_types importp; bfloat16
@@ -213,7 +214,10 @@ class MilvusEngine(RetrievalEngine):
             dt = {key: item[key] for key in ['text', 'title', 'id']}
             dt[self.embeddings_name] = vector
             for f in self.config.data_template.extra_fields:
-                dt[f] = str(item[f])
+                if isinstance(item[f], dict|list):
+                    dt[f] = json.dumps(item[f])
+                else:
+                    dt[f] = str(item[f])
             data.append(dt)
         return data
 

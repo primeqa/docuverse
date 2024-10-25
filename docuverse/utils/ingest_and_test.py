@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 import os
 import sys
+import io
 from docuverse.utils.timer import timer
 
 from docuverse import SearchEngine
@@ -43,10 +44,17 @@ if __name__ == '__main__':
             output = engine.read_output(config.output_file)
         results = scorer.compute_score(queries, output, model_name=engine.get_output_name())
         metrics_file = config.output_file.replace(".json", ".metrics")
+        tm.add_timing("evaluate")
+        ostring = io.StringIO()
+        timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0, sorted_by="%",
+                             reverse=True, output_stream=ostring)
         print(f"Results:\n{results}")
         with open(metrics_file, "w") as out:
             out.write(str(results))
             out.write(f"\n#Command: python {' '.join(sys.argv)}\n")
-        tm.add_timing("evaluate")
+            out.write(f"Timing:\n")
+            out.write(ostring.getvalue()+"\n")
+    else:
+        timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0, sorted_by="%",
+                             reverse=True)
 
-    timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0, sorted_by="%", reverse=True)

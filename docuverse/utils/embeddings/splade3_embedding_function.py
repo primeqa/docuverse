@@ -89,37 +89,19 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
     #     return res
 
     @staticmethod
-    def _encode_data(method, texts, _batch_size, show_progress_bar= None, tqdm_instance=None):
-        embs = []
-        # print (texts)
-        # print (method)
+    def _encode_data(method, texts, tqdm_instance=None, **kwargs):
         if tqdm_instance is not None:
             tq = tqdm_instance
         else:
             tq = tqdm(desc=f"Encoding texts w/ SPLADE", total=len(texts))
-                    #   ,show_progress_bar=False if show_progress_bar in [None, False] else show_progress_bar)
-        # if _batch_size == -1:
-        #     _batch_size = len(texts)/10
-        # for i in range(0, len(texts), _batch_size):
-        #     last = min(len(texts), i + _batch_size)
-        #     # embs.extend(convert_to_single_vectors(method(texts[i:i + _batch_size])))
-        #     embs.extend(method(texts[i:i + _batch_size]))
-        #     tq.update(last - i)
+
         embs = method(texts)
         return embs
 
-    def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None,
-               tqdm_instance=None, **kwargs) -> \
+    def encode(self, texts: Union[str, List[str]], **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
-        # print (texts)
-        return self._encode_data(self.model.encode_documents, texts,
-                                 _batch_size, show_progress_bar, tqdm_instance)
-        # return [self.model.encode_documents(t) for t in texts] if type(texts) is list else self.model.encode_documents(texts)
+        return self._encode_data(method=self.model.encode_documents, texts=texts, **kwargs)
 
-
-    def encode_query(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None,
-                     tqdm_instance=None, **kwargs) -> \
+    def encode_query(self, texts: Union[str, List[str]], **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
-        return self._encode_data(self.model.encode_queries, texts,
-                                 _batch_size, show_progress_bar, tqdm_instance)
-        # return convert_to_single_vectors(self.model.encode_queries(texts))
+        return self._encode_data(method=self.model.encode_queries, texts=texts, **kwargs)
