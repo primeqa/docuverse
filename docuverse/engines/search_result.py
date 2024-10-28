@@ -142,6 +142,7 @@ class SearchResult:
                 return []
             elif isinstance(data[0], dict):
                 if 'entity' in data[0]:
+                    data = sorted(data, key=lambda k: (k['distance'], k['entity']['id']))
                     for r in data:
                         self.retrieved_passages.append(SearchResult.SearchDatum(r['entity'], score=r['distance']))
                 else:

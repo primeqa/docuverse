@@ -3,7 +3,7 @@ from typing import Union
 
 # from onnx.reference.custom_element_types importp; bfloat16
 from scipy.sparse import spmatrix
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 from docuverse import SearchCorpus
 from docuverse.engines.retrieval.retrieval_servers import RetrievalServers, Server
@@ -84,7 +84,7 @@ class MilvusEngine(RetrievalEngine):
         self.output_fields = ["id", "text", 'title']
         # self.output_fields = [self.config.data_template.get(f"{t}_header", t) for t in ["id", "text", 'title']]
         extra = get_param(self.config.data_template, 'extra_fields', None)
-        self.ingest_batch_size = get_param(self.config, 'bulk_batch', 40)
+        self.ingestion_batch_size = get_param(self.config, 'bulk_batch', 40)
 
         if extra is not None and len(extra) > 0:
             self.output_fields += extra
@@ -180,16 +180,27 @@ class MilvusEngine(RetrievalEngine):
 
         if texts is None:
             return False
-        data = self._create_data(corpus, texts, **kwargs)
-        self._insert_data(data)
+        tq = tqdm(desc="Creating data", total=len(texts), leave=True)
+        tq1 = tqdm(desc="  * Encoding data", total=len(texts), leave=False)
+        tq2 = tqdm(desc="  * Milvusing data", total=len(texts), leave=False)
+        ingestion_batch = 5*self.ingestion_batch_size
+        for i in range(0, len(texts), ingestion_batch):
+            last = min(i+ingestion_batch, len(texts))
+            data = self._create_data(corpus[i:last], texts[i:last], tq_instance=tq1, **kwargs)
+            self._insert_data(data, tq_instance=tq2)
+            tq.update(last-i)
         return True
 
     def _analyze_data(self, corpus):
         pass
 
-    def _insert_data(self, data, show_progress_bar=True):
-        for i in tqdm(range(0, len(data), self.ingest_batch_size), desc="Ingesting documents", disable=not show_progress_bar):
-            self.client.insert(collection_name=self.config.index_name, data=data[i:i + self.ingest_batch_size])
+    def _insert_data(self, data, show_progress_bar=True, tq_instance=None, **kwargs):
+        if tq_instance is None:
+            tq_instance = tqdm(total=len(data), desc="Ingesting documents", leave=False, disable=not show_progress_bar)
+        for i in range(0, len(data), self.ingestion_batch_size):
+            last = min(i+self.ingestion_batch_size, len(data))
+            self.client.insert(collection_name=self.config.index_name, data=data[i:last])
+            tq_instance.update(last-i)
         # self.client.flush()
         self.wait_for_ingestion(data)
         # self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
@@ -204,8 +215,10 @@ class MilvusEngine(RetrievalEngine):
             print(f"{tm.time_since_beginning()}: Currently ingested items: {ingested_items}")
             time.sleep(10)
 
-    def _create_data(self, corpus, texts, **kwargs):
-        passage_vectors = self.encode_data(texts, self.ingest_batch_size)
+    def _create_data(self, corpus, texts, tq_instance=None, **kwargs):
+        if tq_instance is not None:
+            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=False)
+            tq_instance.update(len(texts))
         data = []
         for i, (item, vector) in enumerate(zip(corpus, passage_vectors)):
             # if isinstance(vector, spmatrix) and vector.getnnz() == 0:
