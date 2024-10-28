@@ -49,9 +49,9 @@ class MilvusDenseEngine(MilvusEngine):
             field_name=embeddings_name,
             index_type="HNSW",
             metric_type="IP",
-            params={"nlist": 128,
-                    "M": 16,
-                    "efConstruction": 16}
+            params={"nlist": 1024,
+                    "M": 128,
+                    "efConstruction": 128}
         )
         return index_params
 

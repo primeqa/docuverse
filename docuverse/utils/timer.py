@@ -239,7 +239,8 @@ class timer(object):
         return res
 
     @staticmethod
-    def display_timing(totalms, level=0, stat_list=None, num_words=0, num_chars=0, sorted_by:str|None=None, reverse=False, output_stream=None):
+    def display_timing(totalms, level=0, stat_list=None, num_words=0, num_chars=0, sorted_by:str|None=None,
+                       reverse=False, output_stream=None):
         '''Static method that will print the hierarchical times for the labeled times.
         The speeds computed are in kilo-words/sec and kilo-chars/sec.
         Arguments:

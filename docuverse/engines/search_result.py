@@ -143,7 +143,7 @@ class SearchResult:
             elif isinstance(data[0], dict):
                 if 'entity' in data[0]:
                     for r in data:
-                        self.retrieved_passages.append(SearchResult.SearchDatum(r['entity']))
+                        self.retrieved_passages.append(SearchResult.SearchDatum(r['entity'], score=r['distance']))
                 else:
                     for r in data:
                         self.retrieved_passages.append(SearchResult.SearchDatum(r))

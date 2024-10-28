@@ -46,14 +46,20 @@ if __name__ == '__main__':
         metrics_file = config.output_file.replace(".json", ".metrics")
         tm.add_timing("evaluate")
         ostring = io.StringIO()
+        print(timer.display_timing)
         timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0, sorted_by="%",
                              reverse=True, output_stream=ostring)
+        # timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0, sorted_by="%",
+        #                      reverse=True)
         print(f"Results:\n{results}")
         with open(metrics_file, "w") as out:
             out.write(str(results))
             out.write(f"\n#Command: python {' '.join(sys.argv)}\n")
             out.write(f"Timing:\n")
             out.write(ostring.getvalue()+"\n")
+        print(f"Timing:\n")
+        print(ostring.getvalue()+"\n")
+
     else:
         timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0, sorted_by="%",
                              reverse=True)
