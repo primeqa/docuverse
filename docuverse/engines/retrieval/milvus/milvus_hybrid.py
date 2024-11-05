@@ -158,7 +158,8 @@ class MilvusHybridEngine(MilvusEngine):
             self.reranker = RRFRanker()
         elif combination_config.find("weighted") >= 0:
             try:
-                weights = [float(self.config.hybrid['models'][m]['weight']) for m in self.model_names]
+                # was self.config.hybrid['models'][m]['weight']
+                weights = [float(get_param(self.config.hybrid, f"models.{m}.weight")) for m in self.model_names]
                 _sum = sum(weights)
                 weights = [w/_sum for w in weights]
             except:
@@ -185,7 +186,7 @@ class MilvusHybridEngine(MilvusEngine):
         if tqdms is None:
             tqdms = [None] * len(self.models)
         for m, tq in zip(self.models, tqdms):
-            data.append(m.encode_data(texts, self.ingest_batch_size,
+            data.append(m.encode_data(texts, self.ingestion_batch_size,
                                       show_progress_bar=show_progress_bar,
                                       tqdm_instance=tq)
                         )
@@ -211,8 +212,8 @@ class MilvusHybridEngine(MilvusEngine):
     def _check_zero_size_sparse_vector(val):
         return isinstance(val, csr_array) and val.count_nonzero() == 0
 
-    def _insert_data(self, data, show_progress_bar=True):
-        tbatch_size = self.ingest_batch_size
+    def _insert_data(self, data, show_progress_bar=True, tq_instance=None, **kwargs):
+        tbatch_size = self.ingestion_batch_size
         for i in tqdm(range(0, len(data), tbatch_size),
                       desc="Ingesting documents", disable=not show_progress_bar):
             num_tries = 0
@@ -273,7 +274,7 @@ class MilvusHybridEngine(MilvusEngine):
         main_tqdm.update(skip)
         for tq in tqdms:
             tq.update(skip)
-        tbatch_size = 5*self.ingest_batch_size
+        tbatch_size = 5*self.ingestion_batch_size
         for bi in range(skip, len(texts), tbatch_size):
             data = self._create_data(corpus[bi: bi+tbatch_size], texts[bi:bi+tbatch_size],
                                      show_progress_bar=False,
@@ -303,7 +304,12 @@ class MilvusHybridEngine(MilvusEngine):
 
         if len(requests)==0:
             return SearchResult(question=question, data=[])
-        res = self.collection.hybrid_search(requests, self.reranker, limit=self.config.top_k, output_fields=self.output_fields)
+        # reranker = self.reranker if len(requests)>1 else None
+        if len(requests)==1: # The hybrid call requires the same number of arguments in all calls,
+            # so we're duplicating the first request.
+            requests.append(requests[0])
+        res = self.collection.hybrid_search(requests, self.reranker,
+                                            limit=self.config.top_k, output_fields=self.output_fields)
         res_as_dict = [hit.to_dict() for hit in res[0]]
         result = SearchResult(question=question, data=res_as_dict)
         result.remove_duplicates(self.config.duplicate_removal,
