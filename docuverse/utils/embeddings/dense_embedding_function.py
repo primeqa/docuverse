@@ -73,6 +73,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
     def __del__(self):
         if self.emb_pool is not None:
             self.stop_pool()
+            self.emb_pool = None
 
     def create_model(self, model_or_directory_name: str=None, device: str='cpu'):
         from sentence_transformers import SentenceTransformer
