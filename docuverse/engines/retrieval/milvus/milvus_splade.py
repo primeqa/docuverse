@@ -13,18 +13,20 @@ except:
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
 from docuverse.engines.search_engine_config_params import SearchEngineConfig
 from docuverse.utils import get_param
-from docuverse.utils.embeddings.sparse_embedding_function import SparseEmbeddingFunction
+from docuverse.utils.embeddings.splade3_embedding_function import SpladeEmbeddingFunction
 
 
-class MilvusSparseEngine(MilvusEngine):
+class MilvusSpladeEngine(MilvusEngine):
     def __init__(self, config: SearchEngineConfig|dict, **kwargs) -> None:
         super().__init__(config, **kwargs)
+        self.embeddings_name = "embeddings"
 
     def init_model(self, **kwargs):
-        self.model = SparseEmbeddingFunction(self.config.model_name, batch_size=self.config.bulk_batch,
+        self.model = SpladeEmbeddingFunction(self.config.model_name,
+                                             batch_size=self.config.bulk_batch,
                                              doc_max_tokens=get_param(self.config, 'doc_max_tokens', None),
                                              query_max_tokens=get_param(self.config, 'query_max_tokens', None),
-                                             )
+                                             **kwargs)
 
     def prepare_index_params(self, embeddings_name="embeddings"):
         index_params = self.client.prepare_index_params()
@@ -55,12 +57,12 @@ class MilvusSparseEngine(MilvusEngine):
         return search_params
 
     def encode_query(self, question):
-        query_vector = self.model.encode_query(question.text)
-        return query_vector
+        query_vector = self.model.encode_query([question.text], show_progress_bar=False)
+        return list(query_vector)[0]
 
     @classmethod
     def test(cls):
-        collection_name = "hello_sparse"
+        collection_name = "hello_splade"
         docs = [
             "Artificial intelligence was founded as an academic discipline in 1956.",
             "Alan Turing was the first person to conduct substantial research in AI.",

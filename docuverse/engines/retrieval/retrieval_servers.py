@@ -3,7 +3,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
-from jupyter_lsp.specs import yaml
+# from jupyter_lsp.specs import yaml
+import yaml
 
 from docuverse.utils import get_config_dir
 from docuverse.utils import read_config_file
@@ -72,6 +73,18 @@ class Server:
             "help": "The name of the server (used for Milvus)."
         }
     )
+
+    type: Optional[str] = field(
+        default="http",
+        metadata={
+            "help": "The type of the server (can be either http or file)."
+        }
+    )
+
+    def __post_init__(self):
+        if self.host.find("file:") >= 0:
+            self.type="file"
+            self.server_name = self.host.replace("file:", "")
 
     def get(self, key:str, default:str|None=None):
         return getattr(self, key, default)

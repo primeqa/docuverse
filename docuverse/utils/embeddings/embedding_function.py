@@ -26,12 +26,12 @@ class EmbeddingFunction:
 
     def __call__(self, texts:Union[List[str], str], **kwargs) -> \
         Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
-        return self.encode(texts)
+        return self.encode(texts, **kwargs)
 
     def __del__(self):
         pass
 
-    def create_model(self, model_or_directory_name:str=None, device: str='cpu'):
+    def create_model(self, model_or_directory_name:str=None, device: str='cpu', **kwargs):
         pass
 
     def tokenizer(self):
@@ -43,7 +43,8 @@ class EmbeddingFunction:
     def stop_pool(self):
         pass
 
-    def encode(self, texts:Union[List[str], str], _batch_size:int=-1, show_progress_bar=False, **kwargs):
+    def encode(self, texts:Union[List[str], str], _batch_size:int=-1,
+               show_progress_bar=False, tqdm_instance=None, **kwargs):
         return []
 
     @property

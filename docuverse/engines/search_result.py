@@ -2,6 +2,7 @@ import json
 from typing import List, Dict, Union
 
 from docuverse.engines.search_queries import SearchQueries
+from docuverse.utils import get_param
 
 
 class SearchResult:
@@ -14,7 +15,15 @@ class SearchResult:
         def __init__(self, data: Dict[str,str], **kwargs):
             self.__dict__.update(data)
             self.__dict__.update(kwargs)
-
+            for k, v in self.__dict__.items():
+                # Milvus will convert deep json trees into strings,
+                # so we're # undoing that here
+                if isinstance(v, str):
+                    try:
+                        r = json.loads(v)
+                        setattr(self, k, r)
+                    except ValueError as e:
+                        pass
         def __getitem__(self, key, default=None):
             if key in self.__dict__:
                 return self.__dict__[key]
@@ -24,6 +33,8 @@ class SearchResult:
         def get_text(self):
             if '_text' in self.__dict__:
                 return self._text
+            elif 'text' in self.__dict__:
+                return self.text
             elif '_source' in self.__dict__:
                 return self._source['text']
             else:
@@ -79,7 +90,7 @@ class SearchResult:
         elif duplicate_removal == "rouge":
             from rouge_score.rouge_scorer import RougeScorer
             if self.rouge_scorer is None:
-                self.rouge_scorer = RougeScorer(['rouge1', 'rougeL'],
+                self.rouge_scorer = RougeScorer(['rouge1'],
                                                 use_stemmer=True)
 
             for r in self.retrieved_passages[1:]:
@@ -87,7 +98,7 @@ class SearchResult:
                 text_ = r.get_text()
                 for c in keep_passages:
                     scr = self.rouge_scorer.score(c.get_text(), text_)
-                    if scr['rougeL'].fmeasure >= rouge_duplicate_threshold:
+                    if scr['rouge1'].fmeasure >= rouge_duplicate_threshold:
                         found = True
                         break
                 if not found:
@@ -96,10 +107,16 @@ class SearchResult:
         elif duplicate_removal.startswith("key:"):
             key = duplicate_removal.replace("key:","")
             seen = set()
-            for r in self.retrieved_passages:
-                if r[key] not in seen:
-                    seen.add(r[key])
-                    keep_passages.append(r)
+            for i, r in enumerate(self.retrieved_passages):
+                try:
+                    # print(f"it={i}")
+                    val = get_param(r, key, None)
+                    # print(f"val={val}")
+                    if val and val not in seen:
+                        seen.add(val)
+                        keep_passages.append(r)
+                except Exception as e:
+                    print(f"Error on {r.metadata}: {e}")
         self.retrieved_passages = keep_passages
 
     def __getitem__(self, i: int) -> SearchDatum:
@@ -127,8 +144,9 @@ class SearchResult:
                 return []
             elif isinstance(data[0], dict):
                 if 'entity' in data[0]:
+                    data = sorted(data, key=lambda k: (k['distance'], k['entity']['id']), reverse=True)
                     for r in data:
-                        self.retrieved_passages.append(SearchResult.SearchDatum(r['entity']))
+                        self.retrieved_passages.append(SearchResult.SearchDatum(r['entity'], score=r['distance']))
                 else:
                     for r in data:
                         self.retrieved_passages.append(SearchResult.SearchDatum(r))

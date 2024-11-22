@@ -34,7 +34,10 @@ class BM25EmbeddingFunction(EmbeddingFunction):
     def tokenizer(self):
         return None
 
-    def encode(self, texts: Union[str, List[str]], _batch_size: int = -1, show_progress_bar=None, **kwargs) -> \
+    def encode(self, texts: Union[str, List[str]], _batch_size: int = -1,
+               show_progress_bar=None,
+               tqdm_instance=None,
+               **kwargs) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
         embs = []
         if _batch_size == -1:
@@ -45,6 +48,13 @@ class BM25EmbeddingFunction(EmbeddingFunction):
         if isinstance(texts, str):
             embs = self.analyzer(texts)
         elif isinstance(texts, list):
-            embs = [self.analyzer(text) for text in tqdm(texts, desc='Tokenizing texts', disable=not show_progress_bar)]
+            if tqdm_instance is not None:
+                for i in range(0, len(texts), _batch_size):
+                    i_end = min(i + _batch_size, len(texts))
+                    tems = self.analyzer(texts[i:i_end])
+                    embs.extend(tems)
+                    tqdm_instance.update(i_end - i)
+            else:
+                embs = [self.analyzer(text) for text in tqdm(texts, desc='Tokenizing texts', disable=not show_progress_bar)]
 
         return embs

@@ -3,6 +3,7 @@ import os
 from docuverse import SearchCorpus, SearchQueries
 from docuverse.engines import SearchData
 from docuverse.engines.retrieval.milvus.milvus import MilvusEngine
+from docuverse.utils.timer import timer
 
 try:
     from pymilvus import (
@@ -16,40 +17,41 @@ except:
     print(f"You need to install pymilvus to be using Milvus functionality!")
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
 from docuverse.engines.search_engine_config_params import SearchEngineConfig
-from docuverse.utils import get_param
+from docuverse.utils import get_param, ask_for_confirmation, convert_to_single_vectors
 from tqdm import tqdm
 
-from docuverse.utils.embeddings.sparse_embedding_function import SparseEmbeddingFunction
 
 class MilvusBM25Engine(MilvusEngine):
     def __init__(self, config: SearchEngineConfig|dict, **kwargs) -> None:
         super().__init__(config, **kwargs)
 
 
-    def init_model(self, kwargs):
+    def init_model(self, **kwargs):
         self.analyzer = build_default_analyzer(get_param(kwargs, 'language', "en"))
         self.bm25_ef = BM25EmbeddingFunction(self.analyzer)
         idf_file = self.config.milvus_idf_file
         if idf_file is not None and os.path.exists(idf_file):
             self.bm25_ef.load(idf_file)
 
-    def prepare_index_params(self):
+    def prepare_index_params(self, embeddings_name="embeddings"):
         index_params = self.client.prepare_index_params()
-        index_params.add_index(
-            field_name="_id",
-            index_type="STL_SORT"
-        )
-        index_params.add_index(field_name="embeddings",
+        if self.server.type != "file":
+            index_params.add_index(
+                field_name="_id",
+                index_type="STL_SORT"
+            )
+        index_params.add_index(field_name=embeddings_name,
                                index_name="sparse_inverted_index",
                                index_type="SPARSE_INVERTED_INDEX",
                                metric_type="IP",
                                params={"drop_ratio_build": 0.2})
         return index_params
 
-    def create_fields(self):
-        fields = super().create_fields()
+    def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
+        fields = [] if new_fields_only else super().create_fields()
+        self.embeddings_name = embeddings_name
         fields.append(
-            FieldSchema(name="embeddings", dtype=DataType.SPARSE_FLOAT_VECTOR)
+            FieldSchema(name=embeddings_name, dtype=DataType.SPARSE_FLOAT_VECTOR)
         )
         return fields
 
@@ -63,36 +65,52 @@ class MilvusBM25Engine(MilvusEngine):
 
         return search_params
 
-    def encode_data(self, texts, batch_size, show_progress=True):
-        print(f"Computing IDF - will might a while.")
+    def _analyze_data(self, texts):
+        tm = timer()
+        if os.path.exists(self.config.milvus_idf_file):
+            ans=ask_for_confirmation(text=f"The file {self.config.milvus_idf_file} exists - recreate? (yes/No)",
+                                 default="no")
+            if ans == 'no':
+                return
+        print(f"Computing IDF - will might a while.", end="", flush=True)
+        os.environ["TOKENIZERS_PARALLELISM"] = "false" # Prevent the system from complaining that we forked the tokenizer.
         self.bm25_ef.fit(texts)
+        print(f" done in {tm.time_since_beginning()}.", flush=True)
+        self.save_idf_index()
+
+    def encode_data(self, texts, batch_size, show_progress_bar=True, tqdm_instance=None):
         # print("Computing embeddings for the input.")
         embeddings = []
-        t=tqdm(desc="Encoding documents", total=len(texts), disable=not show_progress)
+        if tqdm_instance is None:
+            t=tqdm(desc="Encoding documents (BM25)", total=len(texts), disable=not show_progress_bar)
+        else:
+            t=tqdm_instance
         for i in range(0, len(texts), batch_size):
             last = min(i + batch_size, len(texts))
             encs = self.bm25_ef.encode_documents(texts[i:last])
-            embeddings.extend(list(encs))
-            t.update(last - i)
+            # embeddings.extend([v for v in list(encs) if v.getnnz()>0])
+            # embeddings.extend(list(encs))
+            embeddings.extend(convert_to_single_vectors(encs))
+            t.update(last-i)
         #embeddings = self.bm25_ef.encode_documents(texts)
         return embeddings
 
     def encode_query(self, question):
-        return list(self.bm25_ef.encode_queries([question.text]))[0]
+        return self.bm25_ef.encode_queries([question.text])[[0],:]
 
     def get_search_request(self, text):
         data = self.encode_data([text], batch_size=1, show_progress=False)
         search_params = self.get_search_params()
 
-    def ingest(self, corpus: SearchCorpus, update: bool = False):
-        index_created = super().ingest(corpus, update)
+    def ingest(self, corpus: SearchCorpus, update: bool = False, **kwargs):
+        index_created = super().ingest(corpus, update, **kwargs)
         if index_created:
             self.save_idf_index()
 
     def save_idf_index(self):
         idf_file = self.config.milvus_idf_file
         if idf_file is None:
-            idf_file = os.path.join(self.config.project_name, f"{self.config.index_name}.idf")
+            idf_file = os.path.join(self.config.project_dir, f"{self.config.index_name}.idf")
         if not os.path.exists(os.path.dirname(idf_file)):
             os.makedirs(os.path.dirname(idf_file))
         self.bm25_ef.save(idf_file)

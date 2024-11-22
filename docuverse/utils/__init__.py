@@ -1,27 +1,27 @@
+import copy
 import itertools
-import re
+import json
 import os
+import queue
+import re
 import time
 from multiprocessing import Queue, Manager, Process
 from typing import List, Union
+from jinja2 import Template, Undefined
 
 # from .embedding_function import DenseEmbeddingFunction
 import yaml
-import json
-import copy
-import queue
-
 from tqdm.auto import tqdm
 
 
-def get_param(dictionary, key: str, default: str | None | bool = None):
+def get_param(dictionary: dict|list[dict]|object, key: str, default: str | None | bool = None):
     def recursive_get(_dictionary, key, default):
         if _dictionary is None:
             return default
         if key.find(".") >= 0:
             keys = key.split(".")
             res = default
-            if isinstance(dictionary, dict):
+            if isinstance(_dictionary, dict):
                 dd = _dictionary
             else:
                 dd = _dictionary.__dict__
@@ -32,12 +32,12 @@ def get_param(dictionary, key: str, default: str | None | bool = None):
                     return res
             return dd
         else:
-            return dictionary.get(key, default)
+            return _dictionary.get(key, default)
 
+    weird_value = ":+:+"
     if key is None:
         return default
     elif key.find("|") > 0:
-        weird_value = ":+:+"
         keys = key.split("|")
         for k in keys:
             k = recursive_get(dictionary, k, weird_value)
@@ -45,7 +45,14 @@ def get_param(dictionary, key: str, default: str | None | bool = None):
                 return k
         return default
     else:
-        return recursive_get(dictionary, key, default)
+        if isinstance(dictionary, list):
+            for dct in dictionary:
+                val = recursive_get(dct, key, weird_value)
+                if val != weird_value:
+                    return val
+            return default
+        else:
+            return recursive_get(dictionary, key, default)
 
 def get_config_dir(config_path: str | None = None) -> str:
     def find_docuverse_base(path: str, basename="docuverse"):
@@ -73,7 +80,35 @@ def get_config_dir(config_path: str | None = None) -> str:
         return config_path
     return config_dir
 
+class NullUndefined(Undefined):
+  def __getattr__(self, key):
+    return ''
 
+# def read_config_file(config_file):
+#     if not os.path.exists(config_file):
+#         config_file = os.path.join(get_config_dir(os.path.dirname(config_file)), os.path.basename(config_file))
+#     config = {}
+#     if config_file.endswith(".yml") or config_file.endswith(".yaml"):
+#         with open(config_file, "r") as f:
+#             config = yaml.safe_load(f)
+#     elif config_file.endswith(".json"):
+#         with open(config_file, "r") as f:
+#             config = json.load(f)
+#     else:
+#         raise RuntimeError(f"Config file type not supported: {config_file}")
+#     # Hack to resolve variables
+#     not_done = True
+#     num_iters=0
+#     config = Template(config, undefined=NullUndefined).render()
+#     # while not_done:
+#     #     tconfig = copy.deepcopy(config)
+#     #     not_done = replace(local_dict=config, global_dict=config, parent_key="")
+#     #     num_iters += 1
+#     #     if tconfig==config:
+#     #         break
+#     #     if num_iters > 10:
+#     #         raise RuntimeError(f"Could not resolve the variables in {config_file}")
+#     return config
 
 
 def read_config_file(config_file):
@@ -81,19 +116,34 @@ def read_config_file(config_file):
     if not os.path.exists(config_file):
         config_file = os.path.join(get_config_dir(os.path.dirname(config_file)), os.path.basename(config_file))
     def replace(local_dict:dict, global_dict:dict, parent_key: str=""):
+        def get_value_recursive(global_dict, val, parent_key):
+            parents = parent_key.split(".")
+            rr = None
+            while rr is None:
+                if len(parents) > 0:
+                    skey = f"{'.'.join(parents)}.{val}"
+                else:
+                    skey = val
+                rr = get_param(global_dict, skey)
+                if rr is not None:
+                    return rr
+                if len(parents) == 0:
+                    return "None"
+                parents = parents[:-1]
+
         not_done = False
         for key, val in local_dict.items():
             if isinstance(val, str):
                 m = re.search(patt, val)
                 while m:
-                    skey = f"{parent_key}.{m.group(1)}" if parent_key != "" else m.group(1)
-                    rr = get_param(global_dict, skey)
+                    rr = get_value_recursive(global_dict, m.group(1).replace(" ",""), parent_key)
                     start="{{"
                     end="}}"
                     if not isinstance(rr, str) or rr.find("{{") < 0:
                         val = val.replace(f"{start}{m.group(1)}{end}", str(rr))
                     else:
                         not_done = True
+
                     m=re.search(patt, val)
                 local_dict[key] = val
             elif isinstance(val, dict):
@@ -230,6 +280,7 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
 
     if num_threads <= 1:
         return [apply_funcs(dt) for dt in tqdm(data, desc=msg)]
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     num_items = len(data)
 
@@ -276,3 +327,33 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     tk.clear()
     tk.close()
     return list(d[i] for i in range(num_items))
+
+def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes') -> str:
+    """
+    ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default='yes')
+
+    Prompts the user with a given text and waits for an answer from a list of possible answers.
+    If the user provides no input, a default answer is returned.
+
+    Parameters:
+        text (str): The message text to display to the user.
+        answers (list of str): A list of acceptable answers. Default is ['yes', 'no', 'skip'].
+        default (str): The default answer to return if the user provides no input. Default is 'yes'.
+
+    Returns:
+        str: The user's response or the default answer if no input is provided.
+    """
+    display_answers = ", ".join(a.title() if a==default else a for a in answers)
+    print(text)
+    while True:
+        r = input(f"Say: {display_answers}, <enter>={default}:").strip()
+        if r=="":
+            return default
+        elif r in answers:
+            return r
+        else:
+            print(f"Please type one of {answers}, not {r}!")
+
+def convert_to_single_vectors(embs):
+    return [embs[[i], :] for i, _ in enumerate(embs)]
+

@@ -77,17 +77,21 @@ class EvaluationOutput:
             doc_map = get_zeros(max_rank)
             rank_first = -1
             found = False
+            _mrr = 0
+            _dcg = 0
             for i in range(0, min(len(relevant), self.ranks[-1])):
                 if not found and relevant[i]:
                     rank_first = i+1
+                    _mrr = 1.0/rank_first
+                    _dcg = 1.0/math.log2(rank_first+1)
                     found = True
                 doc_match[i+1] = relevant[i]
-                doc_dcg[i+1] = relevant[i]/math.log2(i+2)
-                doc_mrr[i+1] = 1.0/rank_first if rank_first>0 else 0
+                doc_dcg[i+1] = _dcg # relevant[i]/math.log2(i+2)
+                doc_mrr[i+1] = _mrr # 1.0/rank_first if rank_first>0 else 0
 
             doc_map = list(itertools.accumulate(doc_match, operator.add))
             doc_match = list(itertools.accumulate(doc_match, max))
-            doc_dcg = list(itertools.accumulate(doc_dcg, operator.add))
+            # doc_dcg = list(itertools.accumulate(doc_dcg, operator.add))
             last_rank = self.ranks[0]
             j = 0
             while j < len(self.ranks) and self.ranks[j] <= len(relevant):

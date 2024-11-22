@@ -1,0 +1,43 @@
+retriever:
+    corpus: quora
+    project_dir: /home/raduf/sandbox2/docuverse/experiments/milvus_bm25
+    input_passages: "benchmark/beir_dev/{{ corpus }}/en/corpus.small.jsonl"
+    input_queries: "benchmark/beir_dev/{{ corpus }}/queries_conf.small.json"
+    cache_dir: "{{ project_dir }}/cache"
+    db_engine: milvus-hybrid
+    actions: ire
+    data_format: config/beir_data_format.yml
+    doc_based: True
+    verbose: True
+    date: 10062024
+    server: localhost
+    top_k: 100
+    num_search_threads: -1
+    ignore_empty_questions: 1
+    bulk_batch: 128
+    max_doc_length: 512
+    stride: 100
+    hybrid:
+        shared_tokenizer: true
+        model_name: /home/raduf/mnlp-models-rag/06302024/slate.30m.english.rtrvr
+        short_model_name: slate30m
+        title_handling: all
+        num_preprocessor_threads: 10
+        combination: rrf
+        models:
+            bm25-model:
+                top_k: 100
+                db_engine: milvus_bm25
+                milvus_idf_file: "{{project_dir}}/{{index_name}}.idf"
+            slate-dense-model:
+                top_k: 100
+                storage_size: fp32
+                db_engine: milvus_dense
+    index_name: "beir-{{ corpus }}-{{ hybrid.short_model_name }}-{{ db_engine }}-{{ max_doc_length }}-{{ stride }}-{{ date }}"
+
+    output_file: "output/{{index_name}}.json"
+    # max_num_documents: 1000
+reranker: null
+evaluate:
+    eval_measure: match,mrr,ndcg
+    ranks: 1,5,10,100

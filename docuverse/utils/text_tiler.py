@@ -169,7 +169,7 @@ class TextTiler:
 
     def split_text(self, text: str, tokenizer, title: str = "",
                    max_length: int = -1, stride: int = -1,
-                   language_code='en', title_handling: str = 'any',
+                   language_code='en', title_handling: str = 'all',
                    title_in_text=False) \
             -> tuple[list[str], list[list[int | Any]], list[bool]]:
         """
@@ -273,7 +273,7 @@ class TextTiler:
                             tsizes.append(slen)
                             begins.append(sent.begin)
                             ends.append(end)
-                    first_length = 0
+                    first_length = max_length
                     if title_handling in ['all', 'first']:
                         first_length = max_length - title_length if not title_in_text else max_length
                     elif title_handling in ['none']:

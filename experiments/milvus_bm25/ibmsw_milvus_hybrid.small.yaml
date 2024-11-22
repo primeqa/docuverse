@@ -1,0 +1,48 @@
+retriever:
+    corpus: ibmsw
+    project_dir: /home/raduf/sandbox2/docuverse/experiments/milvus_bm25
+    # input_passages: "benchmark/ibm_search/selected_docs.jsonl.bz2"
+    input_passages: "benchmark/ibm_search/selected_docs.jsonl"
+    input_queries: "benchmark/ibm_search/filtered_questions_combined_labels_with_dccs.csv"
+    cache_dir: "{{project_dir}}/cache"
+    db_engine: milvus-hybrid
+    top_k: 100
+    actions: ire
+    max_doc_length: 512
+    stride: 100
+    date: 10062024
+    server: localhost
+    doc_based: True
+    verbose: True
+    hybrid:
+        shared_tokenizer: true
+        model_name: /home/raduf/mnlp-models-rag/06302024/slate.30m.english.rtrvr
+        short_model_name: slate30-weighted
+        index_name: "{{corpus}}-{{db_engine}}-{{short_model_name}}-{{max_doc_length}}-{{stride}}-{{date}}"
+        title_handling: all
+        num_preprocessor_threads: -1
+        combination: weighted
+        models:
+            bm25-model:
+                weight: 0.1
+                top_k: 100
+                db_engine: milvus_bm25
+                milvus_idf_file: "{{project_dir}}/{{corpus}}-{{db_engine}}-{{retriever.hybrid.short_model_name}}.idf"
+            slate-dense-model:
+                weight: 9
+                top_k: 100
+                storage_size: fp32
+                db_engine: milvus_dense
+
+    index_name: "{{hybrid.index_name}}"
+    output_file: "output/{{index_name}}.json"
+    data_format: config/ibm_search_data.yml
+    bulk_batch: 128
+    num_search_threads: -1
+    ignore_empty_questions: 1
+    # max_num_documents: 1000
+reranker: null
+evaluate:
+    eval_measure: match,mrr,ndcg
+    ranks: 1,5,10,100
+

@@ -41,7 +41,7 @@ class EvaluationEngine:
             from rouge_score.rouge_scorer import RougeScorer
             self.rouge_scorer = RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
 
-    def compute_score(self, input_queries: SearchQueries, system: List[SearchResult],
+    def compute_score(self, input_queries: SearchQueries|List[SearchQueries.Query], system: List[SearchResult],
                       model_name="model", **kwargs) -> EvaluationOutput:
         data_id_header = 'id'
         # if 'data_template'in kwargs:

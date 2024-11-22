@@ -66,11 +66,19 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
-    hybrid: Optional[str] = field(
-        default="none",
+    hybrid: Optional[str|dict] = field(
+        # default="none",
+        default="",
         metadata={
-            "choices": ["rrf", "none"],
+            # "choices": ["rrf", "none"],
             "help": "The type of hybrid combination to use (default is RRF)."
+        }
+    )
+
+    hybrid_submodules: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "The submodules to hybrid to use (useful for Milvus hybrid if you only want to run some of the modules for search)."
         }
     )
 
@@ -284,11 +292,19 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    storage_size: Optional[str] = field(
+        default="fp32",
+        metadata={
+            "help": "Defines the storage size of the document vectors (default: fp32)."
+        }
+    )
+
     duplicate_removal: Optional[bool]|None = field(
         default=None,
         metadata={
             "help": "Defines the strategy for removing duplicates (default: don't remove). It can be 'rouge' (based on "
-                    "rouge similarity) or 'exact' (exact match)"
+                    "rouge similarity), 'exact' (exact match), or 'key:<field>' - where it keeps only one of the entries"
+                    "with that field (e.g., only one entry with a given url"
         }
     )
 
@@ -345,6 +361,20 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    doc_max_tokens: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "The maximum number of non-zero token expansion to use for the documents (for SPLADE models)."
+        }
+    )
+
+    query_max_tokens: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "The maximum number of non-zero token expansion to use for the queries (for SPLADE models)."
+        }
+    )
+
     query_template: DataTemplate = default_query_template
     data_template: DataTemplate = default_data_template
 
@@ -378,7 +408,10 @@ class RetrievalArguments(GenericArguments):
                     self.data_template.extra_fields.append(f.document_field)
                 res.append(f)
             self.filter_on = res
-
+        if self.hybrid == "":
+            self.hybrid = {}
+        if self.db_engine in ['milvus-bm25', 'milvus_bm25'] and self.milvus_idf_file is None:
+            self.milvus_idf_file = os.path.join(self.project_dir, f"{self.index_name}.idf")
 
 @dataclass
 class EngineArguments(GenericArguments):
@@ -417,6 +450,13 @@ class EngineArguments(GenericArguments):
         default=None,
         metadata={
             "help": "The output name to use for the metrics."
+        }
+    )
+
+    skip: Optional[int] = field(
+        default=0,
+        metadata={
+            "help": "If provided, it will skip <skip> documents from indexing. Useful if milvus crashes."
         }
     )
 
@@ -475,8 +515,8 @@ class RerankerArguments(GenericArguments):
         }
     )
 
-    reranker_combination_type: Literal['rrf', 'weight'] = field(
-        default="rrf",
+    reranker_combination_type: Literal['none', 'rrf', 'weight'] = field(
+        default="none",
         metadata={
             "help": "The combination type to use for reranking."
         }
@@ -645,13 +685,12 @@ class DocUVerseConfig(GenericArguments):
         self.update = None
         self.ingest = None
         self.params = HfArgumentParser((RetrievalArguments, RerankerArguments, EvaluationArguments, EngineArguments))
+        self.reranker_config: RerankerConfig | None = None
+        self.eval_config: EvaluationConfig | None = None
+        self.retriever_config: SearchEngineConfig | None = None
+        self.run_config: RunConfig | None = None
         if isinstance(config, str | dict):
             self.read_configs(config)
-        else:
-            self.reranker_config: RerankerConfig | None = None
-            self.eval_config: EvaluationConfig | None = None
-            self.retriever_config: SearchEngineConfig | None = None
-            self.run_config: RunConfig | None = None
 
     def read_dict(self, kwargs):
         self._process_params(self.params.parse_dict, kwargs, allow_extra_keys=True)
@@ -737,5 +776,5 @@ class DocUVerseConfig(GenericArguments):
             config = config1
             config.ingest_params()
         if config.retriever_config.num_preprocessor_threads > 1:
-            os.environ['TOKENIZERS_PARALLELISM'] = "true"
+            os.environ['TOKENIZERS_PARALLELISM'] = "false"
         return config

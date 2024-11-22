@@ -1,9 +1,10 @@
+import inspect
 from datetime import datetime
 from typing import Tuple, Dict, Union
 
 from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_engine_config_params import SearchEngineConfig, RetrievalArguments
-from docuverse.utils import get_param
+from docuverse.utils import get_param, ask_for_confirmation
 
 
 class RetrievalEngine:
@@ -63,16 +64,19 @@ class RetrievalEngine:
 
     def check_index_rebuild(self, **kwargs) -> bool:
         """
-        Checks if the user wants to recreate the index.
+        check_index_rebuild(**kwargs) -> bool
 
-        :return: True if the user wants to recreate the index, False otherwise.
+        Prompts the user to confirm if they want to recreate the index. This method will ask for confirmation using a prompt and wait for the user's response. Depending on the user's input, the method will return True, False, or exit the program.
+        Parameters:
+          **kwargs: Additional keyword arguments (not used in this function).
+        Returns:
+          bool: Returns True if the user confirms to recreate the index, False if the user chooses to skip the operation.
         """
-        index_name = self.config.index_name
         import sys
         while True:
-            r = input(
-                f"Are you sure you want to recreate the index {index_name}? It might take a long time!!"
-                f" Say 'yes', 'no', or 'skip':").strip()
+            r = ask_for_confirmation(text=f"Are you sure you want to recreate the index {self.config.index_name}? It might take a long time!!",
+                                     answers=['yes', 'no', 'skip', 'update'],
+                                     default='skip')
             if r == 'no':
                 print("OK - exiting. Run with '--actions r'")
                 sys.exit(0)
@@ -81,8 +85,8 @@ class RetrievalEngine:
             elif r == 'skip':
                 print("Skipping ingestion.")
                 return False
-            else:
-                print(f"Please type 'yes' or 'no', not {r}!")
+            elif r == 'update':
+                return "update"
         # return True
 
     def create_update_index(self, do_update:bool=True, **kwargs) -> bool:
@@ -99,15 +103,16 @@ class RetrievalEngine:
         if self.has_index(index_name=self.config.index_name):
             if do_update:
                 do_index = self.check_index_rebuild()
-                if not do_index:
+                if do_index == False:
                     return False
-                self.delete_index(index_name=self.config.index_name, **kwargs)
+                if do_index != "update": # skip if self.update==True
+                    self.delete_index(index_name=self.config.index_name, **kwargs)
             else:
                 print(f"This will overwrite your existent index {self.config.index_name} - use --actions 'u' instead.")
                 return self.check_index_rebuild()
         else:
             if do_update:
-                print("You are trying to update an index that does not exist "
+                print(f"You are trying to update an index ({self.config.index_name}) that does not exist "
                       "- will ignore your command and create the index.")
         if not self.has_index(index_name=self.config.index_name):
             self.create_index(self.config.index_name, **kwargs)
@@ -134,7 +139,9 @@ class RetrievalEngine:
     def load_model_config(self, config_params: Union[dict, SearchEngineConfig]):
         if isinstance(config_params, dict):
             # config_params = SearchEngineConfig(config=config_params)
-            config_params = RetrievalArguments(**config_params)
+            members = inspect.getmembers(RetrievalArguments)
+            fields =[x.name for x in list(filter(lambda x: x[0] == '__dataclass_fields__', members))[0][1].values()]
+            config_params = RetrievalArguments(**{k:v for k,v in config_params.items() if k in fields})
 
         _param_names = ["index_name", "title_field", "text_field", "n_docs", "filters", "duplicate_removal",
                        "rouge_duplicate_threshold"]
