@@ -297,13 +297,11 @@ class TextTiler:
                                              return_offsets_mapping=True)
                         texts = []
                         positions = []
-                        end = re.compile(f' {re.escape(tokenizer.sep_token)}$')
+                        end_token = re.compile(f' ?{re.escape(tokenizer.sep_token)}$')
+                        start_token = re.compile(f'{re.escape(tokenizer.cls_token)} ?')
                         # init_pos = 0
                         for split_passage, offsets in zip(res['input_ids'], res['offset_mapping']):
-                            tt = end.sub(
-                                "",
-                                tokenizer.decode(split_passage).replace(f"{tokenizer.cls_token} ", "")
-                            )
+                            tt = self.remove_start_end_tokens(tokenizer, split_passage, start_token, end_token)
                             texts.append(tt)
                             id = 0
                             while split_passage[id] == tokenizer.cls_token_id:
@@ -351,6 +349,16 @@ class TextTiler:
                                 raise RuntimeError(f"Data too big: {idx} fragments.")
 
                 return texts, positions, added_titles
+
+    @staticmethod
+    def remove_start_end_tokens(tokenizer, split_passage, start_token, end_token):
+        tt = end_token.sub(
+            "",
+            start_token.sub("",
+                            tokenizer.decode(split_passage)
+                            )
+        )
+        return tt
 
     MAX_TRIED = 10000
 
