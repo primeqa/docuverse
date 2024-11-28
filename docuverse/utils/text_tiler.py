@@ -167,7 +167,7 @@ class TextTiler:
             else:
                 return -1
 
-    def split_text(self, text: str, tokenizer, title: str = "",
+    def split_text(self, text: str, title: str = "",
                    max_length: int = -1, stride: int = -1,
                    language_code='en', title_handling: str = 'all',
                    title_in_text=False) \
@@ -297,18 +297,18 @@ class TextTiler:
                                              return_offsets_mapping=True)
                         texts = []
                         positions = []
-                        end_token = re.compile(f' ?{re.escape(tokenizer.sep_token)}$')
-                        start_token = re.compile(f'{re.escape(tokenizer.cls_token)} ?')
+                        end_token = re.compile(f' ?{re.escape(self.tokenizer.sep_token)}$')
+                        start_token = re.compile(f'{re.escape(self.tokenizer.cls_token)} ?')
                         # init_pos = 0
                         for split_passage, offsets in zip(res['input_ids'], res['offset_mapping']):
-                            tt = self.remove_start_end_tokens(tokenizer, split_passage, start_token, end_token)
+                            tt = self.remove_start_end_tokens(self.tokenizer, split_passage, start_token, end_token)
                             texts.append(tt)
                             id = 0
-                            while split_passage[id] == tokenizer.cls_token_id:
+                            while split_passage[id] == self.tokenizer.cls_token_id:
                                 id += 1
                             init_pos = offsets[id][0]
                             id = -1
-                            while split_passage[id] == tokenizer.sep_token_id:
+                            while split_passage[id] == self.tokenizer.sep_token_id:
                                 id -= 1
                             end_pos = offsets[id][1]
                             positions.append([init_pos, end_pos])
