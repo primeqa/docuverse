@@ -2,7 +2,6 @@ from copy import deepcopy
 from tqdm import tqdm
 
 from docuverse.engines.search_result import SearchResult
-from docuverse.utils import parallel_process
 from docuverse.utils.timer import timer
 import torch
 
