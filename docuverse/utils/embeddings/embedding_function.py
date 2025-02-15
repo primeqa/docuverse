@@ -47,6 +47,9 @@ class EmbeddingFunction:
                show_progress_bar=False, tqdm_instance=None, **kwargs):
         return []
 
+    def encode_query(self, texts: Union[List[str], str], prompt_name:str|None=None, **kwargs):
+        return []
+
     @property
     def vocab_size(self):
         return self.model.tokenizer.vocab_size
