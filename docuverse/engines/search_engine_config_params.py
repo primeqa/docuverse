@@ -375,6 +375,20 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    document_prompt_name: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Defines the name of the document prompt (default: None)."
+        }
+    )
+
+    query_prompt_name: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Defines the name of the query prompt (default: None)."
+        }
+    )
+
     query_template: DataTemplate = default_query_template
     data_template: DataTemplate = default_data_template
 

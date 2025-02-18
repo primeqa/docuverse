@@ -84,7 +84,7 @@ class MilvusDenseEngine(MilvusEngine):
             passage_vectors = [np.array(p, dtype=self.storage_rep[1]) for p in passage_vectors]
         return passage_vectors
 
-    def encode_query(self, question):
-        return  self.encode_data([question.text], batch_size=1)[0]
+    def encode_query(self, question, query_prompt_name=None):
+        return  self.encode_data([question.text], batch_size=1, query_prompt_name=query_prompt_name)[0]
 
 

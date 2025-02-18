@@ -301,7 +301,7 @@ class MilvusEngine(RetrievalEngine):
         Returns:
             list: The encoded representation of the question text.
         """
-        return self.model.encode(question.text, show_progress_bar=False)
+        return self.model.encode(question.text, show_progress_bar=False, prompt_name=self.config.query_prompt_name)
 
     def get_search_params(self):
         pass
