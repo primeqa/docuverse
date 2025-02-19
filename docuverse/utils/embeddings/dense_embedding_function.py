@@ -109,10 +109,8 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                 # stexts = tqdm_instance(stexts, desc="Encoding texts", disable=not show_progress_bar)
                 for i in range(0, len(texts), _batch_size):
                     i_end = min(i + _batch_size, len(texts))
-                    tems = self._encode_data(texts=stexts[i:i_end],
-                                             _batch_size=_batch_size,
-                                             show_progress_bar=False,
-                                             prompt_name=prompt_name)
+                    tems = self._encode_data(texts=stexts[i:i_end], _batch_size=_batch_size,
+                                             show_progress_bar=False)
                     embs.extend(tems)
                     tqdm_instance.update(i_end - i)
             else:
@@ -140,7 +138,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             #     embs = self.queries_to_vectors(self.tokenizer, self.model, texts, max_query_length=500).tolist()
         return embs
 
-    def _encode_data(self, texts, _batch_size, show_progress_bar, prompt_name=None, ):
+    def _encode_data(self, texts, _batch_size, show_progress_bar, prompt_name=None):
         if isinstance(texts, list) and len(texts) > 30 and self.num_devices > 1:
             if self.emb_pool is None:
                 self.start_pool()
