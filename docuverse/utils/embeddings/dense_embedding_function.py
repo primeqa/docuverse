@@ -77,7 +77,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
 
     def create_model(self, model_or_directory_name: str=None, device: str='cpu'):
         from sentence_transformers import SentenceTransformer
-        self.model = SentenceTransformer(model_or_directory_name, device=device)
+        self.model = SentenceTransformer(model_or_directory_name, device=device, trust_remote_code=True)
 
     @property
     def tokenizer(self):
