@@ -396,7 +396,12 @@ class SearchData:
             return id
         index = id.rfind("-", 0, id.rfind("-"))
         if index >= 0:
-            return id[:index]
+            return SearchData.get_orig_docid(id[:index])
+            # new_id = id[:index]
+            # if new_id.rfind("-") > 0:
+            #     index = new_id.rfind("-", 0, new_id.rfind("-"))
+            #     new_id = id[:index]
+            # return new_id
         else:
             return id
 
@@ -730,7 +735,7 @@ class SearchData:
             return [
                 vector[min_idx],
                 vector[max_idx],
-                1.0 * vector[avg_idx] / char_based[total_idx]
+                1.0 * vector[avg_idx] / max(char_based[total_idx], 1)
             ]
 
         tq = tqdm(desc="Computing statistics", total=len(corpus))

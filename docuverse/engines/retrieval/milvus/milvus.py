@@ -1,6 +1,8 @@
 import json
+import sys
 from typing import Union
 
+from pymilvus.exceptions import CollectionNotExistException, IndexNotExistException, ConnectionNotExistException
 # from onnx.reference.custom_element_types importp; bfloat16
 from scipy.sparse import spmatrix
 from tqdm import tqdm, trange
@@ -13,12 +15,12 @@ from docuverse.utils.timer import timer
 
 try:
     from pymilvus import (
-        # connections,
+    # connections,
         MilvusClient,
         utility,
         FieldSchema, CollectionSchema, DataType,
-        Collection,
-    )
+        Collection, MilvusException,
+)
 except:
     print(f"You need to install pymilvus to be using Milvus functionality!")
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
@@ -276,15 +278,30 @@ class MilvusEngine(RetrievalEngine):
             search_params['params']['group_by_field'] = group_by
             extra = {'group_by_field': group_by}
 
-        res = self.client.search(
-            collection_name=self.config.index_name,
-            data=[query_vector],
-            # search_params=search_params,
-            limit=self.config.top_k,
-            # limit=1000,
-            output_fields=self.output_fields,
-            **extra
-        )
+        try:
+            res = self.client.search(
+                collection_name=self.config.index_name,
+                data=[query_vector],
+                # search_params=search_params,
+                limit=self.config.top_k,
+                # limit=1000,
+                output_fields=self.output_fields,
+                **extra
+            )
+        except ConnectionNotExistException as e:
+            print(f"Connection to Milvus not found - probably server is down.")
+            sys.exit(10)
+        except CollectionNotExistException as e:
+            print(f"Collection \"{self.config.index_name}\" does not exist.")
+            sys.exit(12)
+        except IndexNotExistException as e:
+            print(f"Index for the collection \"{self.config.index_name}\" does not exist.")
+            sys.exit(14)
+        except MilvusException as e:
+            print(f"Error running the search: {e}")
+            sys.exit(11)
+        except Exception as e:
+            raise e
         result = SearchResult(question=question, data=res[0])
         result.remove_duplicates(self.config.duplicate_removal,
                                  self.config.rouge_duplicate_threshold)
@@ -301,7 +318,7 @@ class MilvusEngine(RetrievalEngine):
         Returns:
             list: The encoded representation of the question text.
         """
-        return self.model.encode(question.text, show_progress_bar=False)
+        return self.model.encode(question.text, show_progress_bar=False, prompt_name=self.config.query_prompt_name)
 
     def get_search_params(self):
         pass

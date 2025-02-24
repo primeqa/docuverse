@@ -9,11 +9,11 @@ from docuverse.utils.timer import timer
 from docuverse import SearchEngine
 from docuverse.engines.search_engine_config_params import DocUVerseConfig
 from docuverse.utils.evaluator import EvaluationEngine
+from docuverse.utils import save_command_line
+
 
 if __name__ == '__main__':
-    with open("logfile", "a") as cmdlog:
-        cmdlog.write(f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')} - {os.getenv('USER')} - "
-                     f"{' '.join(sys.argv)}\n")
+    save_command_line(args=sys.argv)
     tm = timer("ingest_and_test")
     config = DocUVerseConfig.get_stdargs_config()
 #    config = DocUVerseConfig("experiments/clapnq/setup.yaml")

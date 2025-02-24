@@ -34,7 +34,7 @@ class SparseSentenceTransformer:
 
     @torch.no_grad()
     def encode(self, sentences: List[str], _batch_size=16, show_progress_bar=False,
-               tqdm_instance=None, **kwargs):
+               tqdm_instance=None, prompt_name=None, **kwargs):
         # input_dict=self.tokenizer(sentences, max_length=512,padding='max_length',return_tensors='pt')
         tm = timer("reranking::encode")
         expansions = []
@@ -174,7 +174,8 @@ class SparseEmbeddingFunction(EmbeddingFunction):
 
         return res
 
-    def encode_query(self, query: str):
+    def encode_query(self, query: str, prompt_name=None):
         # return self.encode(query, max_terms=self.model.query_max_tokens)
-        return self.model.encode([query], max_terms=self.model.query_max_tokens, show_progress_bar=False)[0]
+        return self.model.encode([query], max_terms=self.model.query_max_tokens,
+                                 show_progress_bar=False, prompt_name=prompt_name)[0]
 

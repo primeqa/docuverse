@@ -2,7 +2,6 @@ import math
 from copy import deepcopy
 
 import torch
-from transformers.models.deta.image_processing_deta import max_across_indices
 
 from docuverse import SearchResult
 from docuverse.utils.embeddings.dense_embedding_function import DenseEmbeddingFunction

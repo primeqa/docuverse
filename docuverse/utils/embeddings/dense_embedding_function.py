@@ -67,7 +67,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
 
     def __call__(self, texts: Union[List[str], str], **kwargs) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
-        return self.encode(texts)
+        return self.encode(texts, **kwargs)
 
 
     def __del__(self):
@@ -77,7 +77,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
 
     def create_model(self, model_or_directory_name: str=None, device: str='cpu'):
         from sentence_transformers import SentenceTransformer
-        self.model = SentenceTransformer(model_or_directory_name, device=device)
+        self.model = SentenceTransformer(model_or_directory_name, device=device, trust_remote_code=True)
 
     @property
     def tokenizer(self):
@@ -93,6 +93,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
     def encode(self, texts: Union[str, List[str]], _batch_size: int = -1,
                show_progress_bar=None,
                tqdm_instance=None,
+               prompt_name=None,
                **kwargs) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
         embs = []
@@ -114,7 +115,8 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                     tqdm_instance.update(i_end - i)
             else:
                 embs = self._encode_data(texts=stexts, _batch_size=_batch_size,
-                                         show_progress_bar=show_progress_bar)
+                                         show_progress_bar=show_progress_bar,
+                                         prompt_name=prompt_name)
             tmp_embs = [None] * len(texts)
             for i in range(len(texts)):
                 tmp_embs[sorted_inds[i]] = embs[i]
@@ -136,19 +138,21 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             #     embs = self.queries_to_vectors(self.tokenizer, self.model, texts, max_query_length=500).tolist()
         return embs
 
-    def _encode_data(self, texts, _batch_size, show_progress_bar):
+    def _encode_data(self, texts, _batch_size, show_progress_bar, prompt_name=None):
         if isinstance(texts, list) and len(texts) > 30 and self.num_devices > 1:
             if self.emb_pool is None:
                 self.start_pool()
             embs = self.model.encode_multi_process(pool=self.emb_pool,
                                                    sentences=texts,
-                                                   batch_size=_batch_size)
+                                                   batch_size=_batch_size,
+                                                   prompt_name=prompt_name)
             embs = self.normalize(embs)
         else:
             embs = self.model.encode(texts,
                                      show_progress_bar=show_progress_bar,
                                      normalize_embeddings=True,
-                                     batch_size=_batch_size
+                                     batch_size=_batch_size,
+                                     prompt_name=prompt_name
                                      ).tolist()
         return embs
 
