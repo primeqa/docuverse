@@ -51,7 +51,7 @@ class SearchQueries(SearchData):
     def __getitem__(self, i: int):
         return self.queries[i]
 
-    _ms = re.compile("'\s+'")
+    _ms = re.compile("'\\s+'")
 
     def __iadd__(self, q: Query):
         self.queries.append(q)

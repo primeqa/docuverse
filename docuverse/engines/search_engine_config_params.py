@@ -2,7 +2,7 @@ import json
 import os
 from typing import Optional, List, Literal
 
-from optimum.utils.runs import RunConfig, Run
+# from optimum.utils.runs import RunConfig, Run
 
 from docuverse.utils import read_config_file
 from docuverse.engines.retrieval.search_filter import SearchFilter
@@ -375,8 +375,9 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
-    query_template: DataTemplate = default_query_template
-    data_template: DataTemplate = default_data_template
+    query_template: DataTemplate = None
+
+    data_template: DataTemplate = None
 
     def __post_init__(self):
         # parse the query_header_template
@@ -395,9 +396,14 @@ class RetrievalArguments(GenericArguments):
 
             if self.query_header_format is not None:
                 self.query_template = create_template(self.query_header_format)
+            if self.query_template is None:
+                self.query_template = default_query_template
 
             if self.data_header_format is not None:
                 self.data_template = create_template(self.data_header_format)
+            if self.data_template is None:
+                self.data_template = default_data_template
+
         if self.filter_on is not None:
             res = []
             for name, _filter in self.filter_on.items():
@@ -676,6 +682,11 @@ class DocUVerseConfig(GenericArguments):
 
         """
 
+    default_retriever_config = RetrievalArguments()
+    default_reranker_config = RerankerArguments()
+    default_eval_config = EvaluationArguments()
+    default_run_config = EngineArguments()
+
     def __init__(self, config: dict | str = None):
         self.evaluate = None
         self.output_file = None
@@ -755,10 +766,6 @@ class DocUVerseConfig(GenericArguments):
                 if value != default.__dict__[key]:
                     output_class.__dict__[key] = value
 
-    default_retriever_config = RetrievalArguments()
-    default_reranker_config = RerankerArguments()
-    default_eval_config = EvaluationArguments()
-    default_run_config = EngineArguments()
 
     @staticmethod
     def get_stdargs_config():
