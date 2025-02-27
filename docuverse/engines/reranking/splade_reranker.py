@@ -2,11 +2,7 @@ import math
 from copy import deepcopy
 
 import torch
-
-from docuverse import SearchResult
-from docuverse.utils.embeddings.dense_embedding_function import DenseEmbeddingFunction
 from .reranker import Reranker
-from sentence_transformers import util as st_util
 from docuverse.engines.search_engine_config_params import RerankerConfig as RerankerConfig
 from ...utils.embeddings.sparse_embedding_function import SparseEmbeddingFunction
 from ...utils.timer import timer
