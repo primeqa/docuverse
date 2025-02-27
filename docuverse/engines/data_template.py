@@ -112,12 +112,12 @@ default_data_template = DataTemplate(id_header='id',
                                      text_header="text|documents|document",
                                      keep_fields=None)
 
-sap_data_template = DataTemplate(text_header = "document",
-                                 passage_header = "text",
-                                 id_header = "document_id",
-                                 title_header = "title"
+sap_data_template = DataTemplate(text_header= document",
+                                 passage_header="text",
+                                 id_header="document_id",
+                                 title_header="title"
                                  )
 
-beir_data_template = DataTemplate(text_header = "text",
+beir_data_template = DataTemplate(text_header="text",
                                   title_header="title",
-                                  id_header = "_id")
+                                  id_header="_id")
