@@ -118,16 +118,31 @@ class MilvusEngine(RetrievalEngine):
             print("MilvusEngine server is not initialized - it's OK if this in a hybrid combination!")
             # raise RuntimeError("MilvusEngine server is not initialized!")
         else:
-            if self.server.type == "file":
-                self.client = MilvusClient(uri=self.server.server_name)
-            else:
-                self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
-                                           user=get_param(self.server, "user", ""),
-                                           password=get_param(self.server, "password", ""),
-                                           server_name=get_param(self.server, "server_name", ""),
-                                           secure=get_param(self.server, "secure", False),
-                                           server_pem_path = get_param(self.server, "server_pem_path", None)
-                                           )
+            try:
+                if self.server.type == "file":
+                    self.client = MilvusClient(uri=self.server.server_name)
+                else:
+                    self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
+                                               user=get_param(self.server, "user", ""),
+                                               password=get_param(self.server, "password", ""),
+                                               server_name=get_param(self.server, "server_name", ""),
+                                               secure=get_param(self.server, "secure", False),
+                                               server_pem_path = get_param(self.server, "server_pem_path", None)
+                    )
+            except ConnectionNotExistException as e:
+                print(f"Connection to Milvus not found - probably server is down.")
+                sys.exit(10)
+            except CollectionNotExistException as e:
+                print(f"Collection \"{self.config.index_name}\" does not exist.")
+                sys.exit(12)
+            except IndexNotExistException as e:
+                print(f"Index for the collection \"{self.config.index_name}\" does not exist.")
+                sys.exit(14)
+            except MilvusException as e:
+                print(f"Error running the search: {e}")
+                sys.exit(11)
+            except Exception as e:
+                raise e
 
     def has_index(self, index_name: str):
         return self.client.has_collection(self.config.index_name) if self.client else False
@@ -225,7 +240,9 @@ class MilvusEngine(RetrievalEngine):
             if vector_is_empty(vector):
                 continue
             dt = {key: item[key] for key in ['text', 'title', 'id']}
-            dt[self.embeddings_name] = vector.reshape(1, vector.shape[0])
+            # dt[self.embeddings_name] = vector.reshape(1, vector.shape[0])
+            dt[self.embeddings_name] = vector
+
             for f in self.config.data_template.extra_fields:
                 if isinstance(item[f], dict|list):
                     dt[f] = json.dumps(item[f])

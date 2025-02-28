@@ -1,8 +1,8 @@
 rouge-score
-pyyaml~=6.0.1
+pyyaml~=6.0.2
 sentence-transformers
 python-dotenv~=1.0.1
-numpy~=2.1.2
+numpy~=2.2.3
 urllib3~=1.26.18
 torch~=2.6.0
 tqdm~=4.67.1
