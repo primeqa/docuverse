@@ -357,6 +357,12 @@ def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes')
 def convert_to_single_vectors(embs):
     return [embs[[i], :] for i, _ in enumerate(embs)]
 
+def vector_is_empty(vector):
+    return (
+            (getattr(vector, '_nnz', None) is not None and vector._nnz() > 0) or
+            (getattr(vector, 'count_nonzero', None) is not None and int(vector.to_dense().count_nonzero()) == 0)
+    )
+
 def save_command_line(args, output="logfile"):
     from datetime import datetime
     with open(output, "a") as cmdlog:
