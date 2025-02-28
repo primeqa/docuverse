@@ -92,8 +92,8 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
     def _encode_data(method, texts, tqdm_instance=None, **kwargs):
         if tqdm_instance is not None:
             tq = tqdm_instance
-        else:
-            tq = tqdm(desc=f"Encoding texts w/ SPLADE", total=len(texts))
+        # else:
+        #     tq = tqdm(desc=f"Encoding texts w/ SPLADE", total=len(texts))
 
         embs = method(texts)
         return embs

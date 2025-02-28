@@ -2,9 +2,11 @@ import json
 import sys
 from typing import Union
 
-from pymilvus.exceptions import CollectionNotExistException, IndexNotExistException, ConnectionNotExistException
+from pymilvus.exceptions import ConnectionNotExistException, CollectionNotExistException, IndexNotExistException, \
+    MilvusException
 # from onnx.reference.custom_element_types importp; bfloat16
 from scipy.sparse import spmatrix
+from scipy.sparse._csr import csr_array
 from tqdm import tqdm, trange
 
 from docuverse import SearchCorpus
@@ -15,7 +17,7 @@ from docuverse.utils.timer import timer
 
 try:
     from pymilvus import (
-    # connections,
+        # connections,
         MilvusClient,
         utility,
         FieldSchema, CollectionSchema, DataType,
@@ -243,6 +245,9 @@ class MilvusEngine(RetrievalEngine):
                 continue
             dt = {key: item[key] for key in ['text', 'title', 'id']}
             # dt[self.embeddings_name] = vector.reshape(1, vector.shape[0])
+            if isinstance(vector, csr_array):
+                if len(vector.shape) == 1:
+                    vector.resize((1, vector.shape[0]))
             dt[self.embeddings_name] = vector
 
             for f in self.config.data_template.extra_fields:
