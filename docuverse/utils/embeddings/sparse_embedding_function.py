@@ -1,7 +1,7 @@
 import os
 
 from click.core import batch
-from scipy.sparse import csr_array
+from scipy.sparse import csr_matrix
 from torch.nn import Embedding
 from transformers import AutoTokenizer
 import torch
@@ -81,12 +81,21 @@ class SparseSentenceTransformer:
             tm.add_timing("attention_mask_filter")
             # get topk high weights
 
-
+            max_size = maxdim1.shape[1]
             topk, indices = torch.topk(maxdim1, k=self.doc_max_tokens) # (weight - (bs * max_terms), index - (bs * max_terms))
             tm.add_timing("get_topk_weights")
-            embeddings = torch.zeros_like(maxdim1)
-            embeddings = embeddings.scatter(1, indices, topk)
-            embeddings = embeddings.to_sparse_csr().unbind(dim=0)
+            topk_n = topk.tolist()
+            inds = indices.tolist()
+
+            embeddings = [
+                csr_matrix((vals, (np.zeros(len(ind)), ind)), shape=(1, max_size))
+                for vals, ind in zip(topk_n, inds)
+            ]
+            # embeddings = torch.zeros_like(maxdim1)
+            # embeddings = embeddings.scatter(1, indices, topk)
+            # # embeddings = embeddings.to_sparse_csr().unbind(dim=0)
+            # shp = embeddings.shape
+            # embeddings = [e.to_sparse_coo() for e in embeddings.view(-1,1,shp[1]).unbind(dim=0)]
             tm.add_timing("expansion::create_expansion")
             expansions.extend(embeddings)
             tm.add_timing("expansion::add_expansion")

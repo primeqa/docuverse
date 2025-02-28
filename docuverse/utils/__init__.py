@@ -303,6 +303,9 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
                     res = apply_funcs(text)
                     d[id] = res
                     tk1.update(1)
+                except ImportError as e:
+                    print(f"Error in thread {thread_number}: {e}")
+                    break
                 except Exception as e:
                     d[id] = []
 
@@ -359,8 +362,8 @@ def convert_to_single_vectors(embs):
 
 def vector_is_empty(vector):
     return (
-            (getattr(vector, '_nnz', None) is not None and vector._nnz() > 0) or
-            (getattr(vector, 'count_nonzero', None) is not None and int(vector.to_dense().count_nonzero()) == 0)
+            (getattr(vector, '_nnz', None) is not None and vector._nnz() == 0) or
+            (getattr(vector, 'count_nonzero', None) is not None and int(vector.count_nonzero()) == 0)
     )
 
 def save_command_line(args, output="logfile"):

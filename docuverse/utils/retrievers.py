@@ -17,6 +17,7 @@ def create_retrieval_engine(retriever_config: dict):
    """
    name: str | None = retriever_config.get('db_engine')
    engine = None
+   print(f"Retrieval engine: {name}")
    if name.startswith('elastic-') or name.startswith('es-'):
        import docuverse.engines.retrieval.elastic as elastic
        if name in ['es-bm25', 'elastic-bm25']:
