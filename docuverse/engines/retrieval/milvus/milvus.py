@@ -1,8 +1,11 @@
 import json
 from typing import Union
 
+from pymilvus.exceptions import ConnectionNotExistException, CollectionNotExistException, IndexNotExistException, \
+    MilvusException
 # from onnx.reference.custom_element_types importp; bfloat16
 from scipy.sparse import spmatrix
+from scipy.sparse._csr import csr_array
 from tqdm import tqdm, trange
 
 from docuverse import SearchCorpus
@@ -114,6 +117,7 @@ class MilvusEngine(RetrievalEngine):
 
     def init_client(self):
         #connections.connect("default", host=self.host, port=self.port)
+        import sys
         if self.server is None:
             print("MilvusEngine server is not initialized - it's OK if this in a hybrid combination!")
             # raise RuntimeError("MilvusEngine server is not initialized!")
@@ -241,6 +245,9 @@ class MilvusEngine(RetrievalEngine):
                 continue
             dt = {key: item[key] for key in ['text', 'title', 'id']}
             # dt[self.embeddings_name] = vector.reshape(1, vector.shape[0])
+            if isinstance(vector, csr_array):
+                if len(vector.shape) == 1:
+                    vector.resize((1, vector.shape[0]))
             dt[self.embeddings_name] = vector
 
             for f in self.config.data_template.extra_fields:
