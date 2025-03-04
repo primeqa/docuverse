@@ -24,6 +24,7 @@ class MilvusSparseEngine(MilvusEngine):
         self.model = SparseEmbeddingFunction(self.config.model_name, batch_size=self.config.bulk_batch,
                                              doc_max_tokens=get_param(self.config, 'doc_max_tokens', None),
                                              query_max_tokens=get_param(self.config, 'query_max_tokens', None),
+                                             process_name="ingest_and_test::search"
                                              )
 
     def prepare_index_params(self, embeddings_name="embeddings"):

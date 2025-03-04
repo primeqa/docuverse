@@ -12,7 +12,8 @@ class SpladeReranker(Reranker):
     def __init__(self, reranking_config: RerankerConfig|dict, **kwargs):
         super().__init__(reranking_config, **kwargs)
         self.model = SparseEmbeddingFunction(reranking_config.reranker_model,
-                                             batch_size=reranking_config.reranker_gpu_batch_size)
+                                             batch_size=reranking_config.reranker_gpu_batch_size,
+                                             process_name="reranking")
 
     def pair_similarity(self, pair, device='cpu'):
         return self.similarity(pair[0], pair[1], device)
