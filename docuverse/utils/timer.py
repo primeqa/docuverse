@@ -47,11 +47,12 @@ class timer(object):
     timing = {}
     processed = 0
 
-    def __init__(self, name="timer"):
+    def __init__(self, name="timer", disable=False):
         self._orig = datetime.now()
         self._last = datetime.now()
         self._time = datetime.now()
         self.name = name
+        self.disable = disable
 
     def mark(self):
         '''Starts a particular timing event.'''
@@ -169,6 +170,8 @@ class timer(object):
             - ms  - the millisecods to add. If not provided, the current timer is mark()ed, and
                     the timing from the last mark is used.
         '''
+        if self.disable:
+            return
         if ms == -1:
             ms = self.mark_and_return_microseconds()/1000.0
         timer.static_add_timing(self.name, key, ms)

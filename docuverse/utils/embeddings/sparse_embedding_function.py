@@ -20,7 +20,8 @@ from docuverse.utils.timer import timer
 
 
 class SparseSentenceTransformer:
-    def __init__(self, model_name_or_path, device:str= 'cpu', doc_max_tokens=None, query_max_tokens=None):
+    def __init__(self, model_name_or_path, device:str= 'cpu', doc_max_tokens=None, query_max_tokens=None,
+                 process_name="ingest_and_test::search", **kwargs):
         self.model = AutoModelForMaskedLM.from_pretrained(model_name_or_path)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         self.device = device
@@ -31,12 +32,15 @@ class SparseSentenceTransformer:
         self.model.eval()
         self.doc_max_tokens = doc_max_tokens
         self.query_max_tokens = query_max_tokens
+        self.process_name = process_name
 
     @torch.no_grad()
     def encode(self, sentences: List[str], _batch_size=16, show_progress_bar=False,
-               tqdm_instance=None, **kwargs):
+               tqdm_instance=None,
+               process_name=None,
+               **kwargs):
         # input_dict=self.tokenizer(sentences, max_length=512,padding='max_length',return_tensors='pt')
-        tm = timer("reranking::encode")
+        tm = timer(f"{process_name if process_name is not None else self.process_name}::encode", disable=False)
         expansions = []
         num_toks = 0
         max_num_expansion = 500
@@ -51,7 +55,7 @@ class SparseSentenceTransformer:
             tk = tqdm_instance
         else:
             if show_progress_bar:
-                tk = tqdm(desc=message, disable=not show_progress_bar, total=num_sents, leave=True)
+                tk = tqdm(desc=message, disable=not show_progress_bar, total=num_sents, leave=True, smoothing=1)
             else:
                 tk = None
 
