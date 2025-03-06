@@ -1,15 +1,33 @@
 # from __future__ import annotations
 import json
+
 from datetime import datetime
 import os
 import sys
 import io
+
+from docuverse.utils import prepare_for_save_and_backup
 from docuverse.utils.timer import timer
 
 from docuverse import SearchEngine
 from docuverse.engines.search_engine_config_params import DocUVerseConfig
 from docuverse.utils.evaluator import EvaluationEngine
 from docuverse.utils import save_command_line
+
+
+
+def write_metrics_file(metrics_file, _results, _timing, _config):
+    prepare_for_save_and_backup(metrics_file)
+    with open(metrics_file, "w") as out:
+        out.write(str(_results)+"\n")
+        command_line = ' '.join(sys.argv)
+        out.write(f"\n#Command: python {command_line}\n")
+        out.write(f"Timing:\n")
+        out.write(_timing + "\n")
+        out.write("=" * 30 + "\n")
+        out.write(f"****** Config: *******\n")
+        out.write(_config.to_yaml() + "\n")
+        out.write("=" * 30 + "\n")
 
 
 if __name__ == '__main__':
@@ -46,21 +64,17 @@ if __name__ == '__main__':
         metrics_file = config.output_file.replace(".json", ".metrics")
         tm.add_timing("evaluate")
         ostring = io.StringIO()
-        print(timer.display_timing)
-        timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0, sorted_by="%",
+        # print(timer.display_timing)
+        timer.display_timing(tm.milliseconds_since_beginning(), keys={'queries':len(queries)}, sorted_by="%",
                              reverse=True, output_stream=ostring)
-        # timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0, sorted_by="%",
-        #                      reverse=True)
-        print(f"Results:\n{results}")
-        with open(metrics_file, "w") as out:
-            out.write(str(results))
-            out.write(f"\n#Command: python {' '.join(sys.argv)}\n")
-            out.write(f"Timing:\n")
-            out.write(ostring.getvalue()+"\n")
-        print(f"Timing:\n")
-        print(ostring.getvalue()+"\n")
+        timing = ostring.getvalue()
+
+        print(f"Results:\n{results}\n")
+        write_metrics_file(metrics_file, results, timing, config)
+        print(f"Timing: ")
+        print(timing)
 
     else:
-        timer.display_timing(tm.milliseconds_since_beginning(), num_chars=0, num_words=0, sorted_by="%",
+        timer.display_timing(tm.milliseconds_since_beginning(), keys={'queries':len(queries)}, sorted_by="%",
                              reverse=True)
 

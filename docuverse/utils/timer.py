@@ -10,6 +10,7 @@ Author: Radu Florian
 raduf@us.ibm.com )'''
 from datetime import datetime
 import sys
+from typing import Dict
 
 msec = 1
 sec = 1000
@@ -176,6 +177,7 @@ class timer(object):
             ms = self.mark_and_return_microseconds()/1000.0
         timer.static_add_timing(self.name, key, ms)
 
+
     @staticmethod
     def static_add_timing(name, key, val):
         '''Adds the given number of milliseconds given in val to the given key.
@@ -242,7 +244,8 @@ class timer(object):
         return res
 
     @staticmethod
-    def display_timing(totalms, level=0, stat_list=None, num_words=0, num_chars=0, sorted_by:str|None=None,
+    def display_timing(totalms, level=0, stat_list=None, keys: dict[str, int]|None=None,
+                       sorted_by:str|None=None,
                        reverse=False, output_stream=None):
         '''Static method that will print the hierarchical times for the labeled times.
         The speeds computed are in kilo-words/sec and kilo-chars/sec.
@@ -250,28 +253,48 @@ class timer(object):
             - totalms - the total number of milliseconds - used to compute the absolute % times.
             - level   - the level of the tree to display (default 0)
             - stat_list - filter for the labels
-            - num_words - the number of processed words; needed for words/s speed calculation
-            - num_chars - the number of processed characters; needed for kc/s speed calculation
+            - keys: dict[Str:Int] - a list of keys to break performance by (e.g., num_words, num_chars, etc.)
+            # - num_words - the number of processed words; needed for words/s speed calculation
+            # - num_chars - the number of processed characters; needed for kc/s speed calculation
             '''
+        if keys is None:
+            keys = {}
         if output_stream is None:
             output_stream = sys.stdout
-        def _display_tree(node, level, num_words=1, num_chars=1):
+        # def _display_tree(node, level, num_words=1, num_chars=1):
+        def _display_tree(node, level, keys: dict[str, int]):
+            def process_val(v):
+                vv = 1000*v*1.0/ms
+                if vv < 10000:
+                    return f"{vv:10.1f}"
+                elif vv < 1000000:
+                    return f"{vv/1000.0:10.1f}k"
+                elif v < 10000000000:
+                    return f"{vv/1000000.0:10.1f}M"
+                else:
+                    return f"{vv/100000000.0:10.1f}Bs"
             ms = max(100, node["time"])
             secs = max(0.1, ms/1000.0)
             perc = node["percent"]
             okey = (" " * 2 * level) + node['key']
 
-            print("{:<40s}{:>10.1f}s {:>10.1f}% {:10.1f}%{:10.1f}{:10.1f}".
-                  format(okey, secs, perc, ms*100 / totalms, num_words * 1.0 / ms,
-                         num_chars * 1.0 / ms),
-                  file=output_stream)
+            # print("{:<40s}{:>10.1f}s {:>10.1f}% {:10.1f}%{:10.1f}{:10.1f}".
+            #       format(okey, secs, perc, ms*100 / totalms, num_words * 1.0 / ms,
+            #              num_chars * 1.0 / ms),
+            #       file=output_stream)
+            print("{:<40s}{:>10.1f}s {:>10.1f}% {:10.1f}%".
+                  format(okey, secs, perc, ms*100 / totalms),
+                  file=output_stream, end='')
+            for k, v in keys.items():
+                print(process_val(v), end='', file=output_stream)
+            print(file=output_stream)
             if sorted_by == "%":
                 node["children"] = sorted(node["children"], key=lambda val: val["percent"], reverse=reverse)
             elif sorted_by == "name":
                 node["children"] = sorted(node["children"], key=lambda val: val["key"], reverse=reverse)
 
             for child in node["children"]:
-                _display_tree(child, level+1, num_words, num_chars)
+                _display_tree(child, level+1, keys)
 
         tree = timer._compute_timing_tree(None, 0)
 
@@ -282,21 +305,23 @@ class timer(object):
         else:
             tree = tree[0]
 
-        if num_chars*1000/totalms > 1000000: # kchars/s > 1000
-            range='M'
-            num_chars /= 1000
-            num_words /= 1000
-        elif num_words*1000/totalms<100: # kchars/s < 0.1
-            num_chars *= 1000
-            num_words *= 1000
-            range=''
-        else:
-            range='k'
+        # if num_chars*1000/totalms > 1000000: # kchars/s > 1000
+        #     range='M'
+        #     num_chars /= 1000
+        #     num_words /= 1000
+        # elif num_words*1000/totalms<100: # kchars/s < 0.1
+        #     num_chars *= 1000
+        #     num_words *= 1000
+        #     range=''
+        # else:
+        #     range='k'
 
-        print("{:<40s}{:>10s}{:>11s}{:>11s}{:>11s}{:>11s}".
-              format("Name", "Time (s)", "Rel %", "Abs %", f'Spd({range}w/s)', f'Spd({range}c/s)'), file=output_stream)
+        print(f"{'Name':<40s} {'Time (s)':>10s}  {'Rel %':>10s}  {'Abs %':>10s}", file=output_stream, end='')
+        for k, v in keys.items():
+            print(f"{k+'/s':>10s}", file=output_stream, end='')
+        print(file=output_stream)
 
-        _display_tree(tree, level, num_words, num_chars)
+        _display_tree(tree, level, keys)
 
     @staticmethod
     def test():
@@ -316,7 +341,7 @@ class timer(object):
         tm.add_timing("method4::submethod1::subsubmethod2", 100)
         tm.add_timing("method4::submethod1", 250)
 
-        tm.display_timing(9000, num_words=100, num_chars=10000)
+        tm.display_timing(9000, keys={'pigs':100, 'chars':10000})
 
 
 if __name__ == "__main__":
