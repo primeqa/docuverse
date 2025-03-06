@@ -26,6 +26,8 @@ def get_param(dictionary: dict|list[dict]|object, key: str, default: str | None 
             else:
                 dd = _dictionary.__dict__
             for k in keys:
+                if not isinstance(dd, dict):
+                    dd = dd.__dict__
                 if k in dd:
                     dd = dd[k]
                 else:
@@ -366,3 +368,16 @@ def vector_is_empty(vector):
             (getattr(vector, 'count_nonzero', None) is not None and int(vector.count_nonzero()) == 0)
     )
 
+def prepare_for_save_and_backup(output_file, overwrite=False):
+    path = os.path.dirname(output_file)
+    if not os.path.exists(path):
+        os.makedirs(path)
+    if not overwrite and os.path.exists(output_file):
+        # Make a copy before writing over
+        import shutil
+        template, extension = os.path.splitext(output_file)
+        i = 1
+        # template = output_file.replace(f".{extension}", "")
+        while os.path.exists(f"{template}.bak{i}{extension}"):
+            i += 1
+        shutil.copy2(output_file, f"{template}.bak{i}{extension}")
