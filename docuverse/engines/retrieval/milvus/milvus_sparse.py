@@ -21,6 +21,7 @@ class MilvusSparseEngine(MilvusEngine):
         super().__init__(config, **kwargs)
         self.build_config = get_param(self.config, 'sparse_config')
         self.search_config = get_param(self.config, 'search_config')
+        self.search_params = self.get_search_params()
 
     def init_model(self, **kwargs):
         self.model = SparseEmbeddingFunction(self.config.model_name, batch_size=self.config.bulk_batch,

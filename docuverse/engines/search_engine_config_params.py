@@ -384,6 +384,8 @@ class RetrievalArguments(GenericArguments):
 
     sparse_config: SparseConfig = None
 
+    search_params: dict = None
+
     def __post_init__(self):
         # parse the query_header_template
 

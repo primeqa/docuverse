@@ -92,6 +92,8 @@ class MilvusEngine(RetrievalEngine):
         if extra is not None and len(extra) > 0:
             self.output_fields += extra
 
+        self.search_params = self.get_search_params()
+
     def init_model(self, **kwargs):
         pass
 
@@ -287,7 +289,7 @@ class MilvusEngine(RetrievalEngine):
     def search(self, question: SearchQueries.Query, **kwargs) -> SearchResult:
         tm = timer("ingest_and_test::search")
         self.check_client()
-        search_params = self.get_search_params()
+        # search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'
         query_vector = self.encode_query(question)
         tm.add_timing("encode")
@@ -297,8 +299,11 @@ class MilvusEngine(RetrievalEngine):
         group_by = get_param(kwargs, 'group_by', None)
         extra = {}
         if group_by is not None:
+            search_params = self.search_params.copy()
             search_params['params']['group_by_field'] = group_by
             extra = {'group_by_field': group_by}
+        else:
+            search_params = self.search_params
 
         res = self.client.search(
             collection_name=self.config.index_name,

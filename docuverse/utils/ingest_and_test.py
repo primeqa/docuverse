@@ -70,9 +70,8 @@ if __name__ == '__main__':
         timing = ostring.getvalue()
 
         print(f"Results:\n{results}\n")
+        print(f"Timing:\n{timing}")
         write_metrics_file(metrics_file, results, timing, config)
-        print(f"Timing: ")
-        print(timing)
 
     else:
         timer.display_timing(tm.milliseconds_since_beginning(), keys={'queries':len(queries)}, sorted_by="%",
