@@ -2,13 +2,13 @@ import math
 from copy import deepcopy
 
 import torch
-from .reranker import Reranker
+from .bi_encoder_reranker import BiEncoderReranker
 from docuverse.engines.search_engine_config_params import RerankerConfig as RerankerConfig
 from ...utils.embeddings.sparse_embedding_function import SparseEmbeddingFunction
 from ...utils.timer import timer
 
 
-class SpladeReranker(Reranker):
+class SpladeReranker(BiEncoderReranker):
     def __init__(self, reranking_config: RerankerConfig|dict, **kwargs):
         super().__init__(reranking_config, **kwargs)
         self.model = SparseEmbeddingFunction(reranking_config.reranker_model,

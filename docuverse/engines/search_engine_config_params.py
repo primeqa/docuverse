@@ -398,6 +398,8 @@ class RetrievalArguments(GenericArguments):
 
     sparse_config: SparseConfig = None
 
+    search_params: dict = None
+
     def __post_init__(self):
         # parse the query_header_template
 
@@ -553,7 +555,7 @@ class RerankerArguments(GenericArguments):
         }
     )
 
-    reranker_engine: Literal["dense", "splade", "none"] = field(
+    reranker_engine: Literal["dense", "splade", "none", "cross-encoder"] = field(
         default="dense",
         metadata={
             "help": "The model type to use for reranking."

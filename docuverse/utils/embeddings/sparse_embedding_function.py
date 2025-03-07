@@ -108,7 +108,8 @@ class SparseSentenceTransformer:
                 max_size = self.tokenizer.vocab_size
                 keys = [torch.unique(input_dict['input_ids'][i], sorted=True).tolist() for i in range(b,b+this_batch_size)]
 
-                embeddings = [csr_matrix((k, (np.zeros(len(k), dtype=int), np.ones(len(k)))), shape=(1, max_size)) for k in keys]
+                embeddings = [csr_matrix((np.ones(len(k)), (np.zeros(len(k), dtype=int), k)), shape=(1, max_size))
+                              for k in keys]
             tm.add_timing("expansion::create_expansion")
             expansions.extend(embeddings)
             tm.add_timing("expansion::add_expansion")

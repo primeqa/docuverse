@@ -25,7 +25,7 @@ from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.utils.evaluation_output import EvaluationOutput
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
-from docuverse.engines.reranking.reranker import Reranker
+from docuverse.engines.reranking.bi_encoder_reranker import BiEncoderReranker
 from docuverse.utils.text_tiler import TextTiler
 
 
@@ -54,7 +54,7 @@ class SearchEngine:
         from docuverse.utils.retrievers import create_retrieval_engine
         return create_retrieval_engine(self.config.retriever_config)
 
-    def _create_reranker(self) -> Reranker | None:
+    def _create_reranker(self) -> BiEncoderReranker | None:
         if self.config.reranker_config is None or self.config.reranker_config.reranker_model is None:
             return None
 
