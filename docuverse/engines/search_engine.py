@@ -15,7 +15,7 @@ from docuverse.utils import (
     open_stream,
     file_is_of_type,
     parallel_process,
-    ask_for_confirmation
+    ask_for_confirmation, prepare_for_save_and_backup
 )
 from docuverse.engines import SearchData
 
@@ -130,14 +130,7 @@ class SearchEngine:
         import json
         if not self.write_necessary:
             return
-        if not overwrite and os.path.exists(self.config.output_file):
-            # Make a copy before writing over
-            import shutil
-            i = 1
-            template = self.config.output_file.replace(".json", "")
-            while os.path.exists(f"{template}.bak{i}.json"):
-                i += 1
-            shutil.copy2(self.config.output_file, f"{template}.bak{i}.json")
+        prepare_for_save_and_backup(self.config.output_file, overwrite)
         if output_file is None:
             output_file = self.config.output_file
         if file_is_of_type(output_file, extensions=".json"):
@@ -149,6 +142,7 @@ class SearchEngine:
         elif file_is_of_type(output_file, extensions=".pkl"):
             with open_stream(output_file, write=True, binary=True) as outfile:
                 pickle.dump(output, outfile)
+
 
     @staticmethod
     def read_output_(filename: str, query_template) -> List[SearchResult]:

@@ -285,10 +285,12 @@ class MilvusEngine(RetrievalEngine):
         pass
 
     def search(self, question: SearchQueries.Query, **kwargs) -> SearchResult:
+        tm = timer("ingest_and_test::search")
         self.check_client()
         search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'
         query_vector = self.encode_query(question)
+        tm.add_timing("encode")
         if vector_is_empty(query_vector):
             print(f"Query \"{question.text}\" has 0 length representation.")
             return SearchResult(question=question, data=[])
@@ -301,15 +303,18 @@ class MilvusEngine(RetrievalEngine):
         res = self.client.search(
             collection_name=self.config.index_name,
             data=[query_vector],
-            # search_params=search_params,
+            search_params=search_params,
             limit=self.config.top_k,
             # limit=1000,
             output_fields=self.output_fields,
             **extra
         )
+        tm.add_timing("milvus_search")
         result = SearchResult(question=question, data=res[0])
+        tm.add_timing("build output")
         result.remove_duplicates(self.config.duplicate_removal,
                                  self.config.rouge_duplicate_threshold)
+        tm.add_timing("remove duplicates")
         return result
 
     def encode_query(self, question):

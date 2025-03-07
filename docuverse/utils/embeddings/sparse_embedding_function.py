@@ -20,7 +20,8 @@ from docuverse.utils.timer import timer
 
 
 class SparseSentenceTransformer:
-    def __init__(self, model_name_or_path, device:str= 'cpu', doc_max_tokens=None, query_max_tokens=None):
+    def __init__(self, model_name_or_path, device:str= 'cpu', doc_max_tokens=None, query_max_tokens=None,
+                 process_name="ingest_and_test::search", **kwargs):
         self.model = AutoModelForMaskedLM.from_pretrained(model_name_or_path)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         self.device = device
@@ -31,17 +32,22 @@ class SparseSentenceTransformer:
         self.model.eval()
         self.doc_max_tokens = doc_max_tokens
         self.query_max_tokens = query_max_tokens
+        self.process_name = process_name
 
     @torch.no_grad()
     def encode(self, sentences: List[str], _batch_size=16, show_progress_bar=False,
-               tqdm_instance=None, **kwargs):
+               tqdm_instance=None,
+               process_name=None,
+               **kwargs):
+        # process_name="sparse_search"
         # input_dict=self.tokenizer(sentences, max_length=512,padding='max_length',return_tensors='pt')
-        tm = timer("reranking::encode")
+        tm = timer(f"{process_name if process_name is not None else self.process_name}::encode", disable=False)
         expansions = []
         num_toks = 0
         max_num_expansion = 500
         num_sents = len(sentences)
         sorted_sents_inds = sorted(range(0, len(sentences)), key=lambda x: len(sentences[x]), reverse=True)
+        tm.add_timing("sorting sentences")
         # sorted_sents = [sentences[i] for i in sorted_sents_inds]
         message = get_param(kwargs, 'message', "Processed candidates")
         max_terms = get_param(kwargs, 'max_terms', self.doc_max_tokens)
@@ -51,62 +57,68 @@ class SparseSentenceTransformer:
             tk = tqdm_instance
         else:
             if show_progress_bar:
-                tk = tqdm(desc=message, disable=not show_progress_bar, total=num_sents, leave=True)
+                tk = tqdm(desc=message, disable=not show_progress_bar, total=num_sents, leave=True, smoothing=1)
             else:
                 tk = None
 
+        encode_question = get_param(kwargs, 'encode_question', True)
         for b in range(0, num_sents, _batch_size):
             this_batch_size = min(b+_batch_size, num_sents)-b
             input_dict = self.tokenizer([sentences[sorted_sents_inds[i]] for i in range(b,b+this_batch_size)],
                                         max_length=512, padding=True, return_tensors='pt', truncation=True)
             tm.add_timing("tokenizer")
-            num_toks += (input_dict['input_ids'] != 1).sum().item()
-            attention_mask = input_dict['attention_mask']  # (bs,seqlen)
-            if self.device == "cuda":
-                input_dict['input_ids'] = input_dict['input_ids'].cuda()
-                input_dict['attention_mask'] = input_dict['attention_mask'].cuda()
-                if 'token_type_ids' in input_dict:
-                    input_dict['token_type_ids'] = input_dict['token_type_ids'].cuda()
-            tm.add_timing("copy_to_gpu")
-            outputs = self.model(**input_dict)  # , return_dict=True)
-            tm.add_timing("bert_encoding")
-            hidden_state = outputs[0]
-            tm.add_timing("copy_to_cpu")
-            maxarg = torch.log(1.0 + torch.relu(hidden_state))
-            tm.add_timing("relu")
+            if encode_question:
+                num_toks += (input_dict['input_ids'] != 1).sum().item()
+                attention_mask = input_dict['attention_mask']  # (bs,seqlen)
+                if self.device == "cuda":
+                    input_dict['input_ids'] = input_dict['input_ids'].cuda()
+                    input_dict['attention_mask'] = input_dict['attention_mask'].cuda()
+                    if 'token_type_ids' in input_dict:
+                        input_dict['token_type_ids'] = input_dict['token_type_ids'].cuda()
+                tm.add_timing("copy_to_gpu")
+                outputs = self.model(**input_dict)  # , return_dict=True)
+                tm.add_timing("bert_encoding")
+                hidden_state = outputs[0]
+                tm.add_timing("copy_to_cpu")
+                maxarg = torch.log(1.0 + torch.relu(hidden_state))
+                tm.add_timing("relu")
 
-            input_mask_expanded = attention_mask.unsqueeze(-1).to(maxarg.device)# .expand(hidden_state.size()).type(hidden_state.dtype)
-             # bs * seqlen * voc
-            maxdim1 = torch.max(maxarg * input_mask_expanded, dim=1).values  # bs * voc
-            tm.add_timing("attention_mask_filter")
-            # get topk high weights
+                input_mask_expanded = attention_mask.unsqueeze(-1).to(maxarg.device)# .expand(hidden_state.size()).type(hidden_state.dtype)
+                 # bs * seqlen * voc
+                maxdim1 = torch.max(maxarg * input_mask_expanded, dim=1).values  # bs * voc
+                tm.add_timing("attention_mask_filter")
+                # get topk high weights
 
-            max_size = maxdim1.shape[1]
-            topk, indices = torch.topk(maxdim1, k=self.doc_max_tokens) # (weight - (bs * max_terms), index - (bs * max_terms))
-            tm.add_timing("get_topk_weights")
-            topk_n = topk.tolist()
-            inds = indices.tolist()
+                max_size = maxdim1.shape[1]
+                topk, indices = torch.topk(maxdim1, k=self.doc_max_tokens) # (weight - (bs * max_terms), index - (bs * max_terms))
+                tm.add_timing("get_topk_weights")
+                topk_n = topk.tolist()
+                inds = indices.tolist()
 
-            embeddings = [
-                csr_matrix((vals, (np.zeros(len(ind)), ind)), shape=(1, max_size))
-                for vals, ind in zip(topk_n, inds)
-            ]
-            # embeddings = torch.zeros_like(maxdim1)
-            # embeddings = embeddings.scatter(1, indices, topk)
-            # # embeddings = embeddings.to_sparse_csr().unbind(dim=0)
-            # shp = embeddings.shape
-            # embeddings = [e.to_sparse_coo() for e in embeddings.view(-1,1,shp[1]).unbind(dim=0)]
+                embeddings = [
+                    csr_matrix((vals, (np.zeros(len(ind)), ind)), shape=(1, max_size))
+                    for vals, ind in zip(topk_n, inds)
+                ]
+                # embeddings = torch.zeros_like(maxdim1)
+                # embeddings = embeddings.scatter(1, indices, topk)
+                # # embeddings = embeddings.to_sparse_csr().unbind(dim=0)
+                # shp = embeddings.shape
+                # embeddings = [e.to_sparse_coo() for e in embeddings.view(-1,1,shp[1]).unbind(dim=0)]
+            else: # No query encoding, just map the tokens to 1.0
+                max_size = self.tokenizer.vocab_size
+                keys = [torch.unique(input_dict['input_ids'][i], sorted=True).tolist() for i in range(b,b+this_batch_size)]
+
+                embeddings = [csr_matrix((k, (np.zeros(len(k), dtype=int), np.ones(len(k)))), shape=(1, max_size)) for k in keys]
             tm.add_timing("expansion::create_expansion")
             expansions.extend(embeddings)
             tm.add_timing("expansion::add_expansion")
             if tk:
-                tk.update(min(_batch_size, num_sents-b))
-
+                tk.update(min(_batch_size, num_sents - b))
         unsorted_expansions = [[]] * len(expansions)
 
         for i, e in enumerate(expansions):
             unsorted_expansions[sorted_sents_inds[i]] = e
-
+        tm.add_timing("unsort sentences")
         return unsorted_expansions
 
 
@@ -183,7 +195,7 @@ class SparseEmbeddingFunction(EmbeddingFunction):
 
         return res
 
-    def encode_query(self, query: str):
+    def encode_query(self, query: str, show_progress_bar=False, tqdm_instance=None, **kwargs):
         # return self.encode(query, max_terms=self.model.query_max_tokens)
-        return self.model.encode([query], max_terms=self.model.query_max_tokens, show_progress_bar=False)[0]
+        return self.model.encode([query], max_terms=self.model.query_max_tokens, show_progress_bar=show_progress_bar, **kwargs)[0]
 

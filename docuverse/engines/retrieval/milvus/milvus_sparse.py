@@ -19,11 +19,14 @@ from docuverse.utils.embeddings.sparse_embedding_function import SparseEmbedding
 class MilvusSparseEngine(MilvusEngine):
     def __init__(self, config: SearchEngineConfig|dict, **kwargs) -> None:
         super().__init__(config, **kwargs)
+        self.build_config = get_param(self.config, 'sparse_config')
+        self.search_config = get_param(self.config, 'search_config')
 
     def init_model(self, **kwargs):
         self.model = SparseEmbeddingFunction(self.config.model_name, batch_size=self.config.bulk_batch,
-                                             doc_max_tokens=get_param(self.config, 'doc_max_tokens', None),
-                                             query_max_tokens=get_param(self.config, 'query_max_tokens', None),
+                                             doc_max_tokens=get_param(self.config, 'sparse_config.doc_max_tokens', None),
+                                             query_max_tokens=get_param(self.config, 'sparse_config.query_max_tokens', None),
+                                             process_name="ingest_and_test::search"
                                              )
 
     def prepare_index_params(self, embeddings_name="embeddings"):
@@ -33,11 +36,20 @@ class MilvusSparseEngine(MilvusEngine):
                 field_name="_id",
                 index_type="STL_SORT"
             )
+        # index_build_vals = get_param(self.config, 'index_build_vals', None)
+        build_configuration_name = get_param(self.config, 'sparse_config.sparse_build_config', 'SPLADE')
+        build_config = get_param(self.config, 'index_params',
+                                 self.milvus_defaults['index_params'][build_configuration_name])
         index_params.add_index(field_name=embeddings_name,
-                               index_name="sparse_inverted_index",
-                               index_type="SPARSE_INVERTED_INDEX",
-                               metric_type="IP",
-                               params={"drop_ratio_build": 0.2})
+                               **build_config
+#                                index_name="sparse_inverted_index",
+#                                index_type="SPARSE_INVERTED_INDEX",
+#                                metric_type="IP",
+#                                params={
+#                                   "drop_ratio_build": 0.2,
+# #                                   "inverted_index_algo": "DAAT_WAND"
+#                                    },
+                               )
         return index_params
 
     def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
@@ -49,13 +61,18 @@ class MilvusSparseEngine(MilvusEngine):
         return fields
 
     def get_search_params(self):
+        search_config_name = get_param(self.config, 'sparse_config.sparse_search_config', 'SPLADE')
         search_params = get_param(self.config, 'search_params',
-                                  self.milvus_defaults['search_params']["SPLADE"])
+                                  self.milvus_defaults['search_params'][search_config_name])
 
         return search_params
 
     def encode_query(self, question):
-        query_vector = self.model.encode_query(question.text)
+        query_vector = self.model.encode_query(query=question.text,
+                                               encode_question=get_param(self.config,
+                                                                        'sparse_config.runtime_query_encoding',
+                                                                         True)
+                                               )
         return query_vector
 
     @classmethod
