@@ -27,8 +27,8 @@ class Reranker(object):
     def _rerank(self, answer_list, show_progress):
         pass
 
-    def _build_sorted_list(self, answer, hybrid_similarities):
-        sorted_similarities = sorted(zip(answer, hybrid_similarities),
+    def _build_sorted_list(self, answer, similarities):
+        sorted_similarities = sorted(zip(answer, similarities),
                                      key=lambda pair: pair[1], reverse=True)
         self.tm.add_timing("cosine::reorder")
         op = SearchResult(answer.question, [])
