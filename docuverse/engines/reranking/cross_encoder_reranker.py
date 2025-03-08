@@ -18,7 +18,10 @@ class CrossEncoderModel:
         scores = None
         with torch.no_grad():
             enc = self.tokenizer(pairs, padding=True, truncation=True, return_tensors='pt').to(device)
-            scores = self.model(**enc, return_dict=True).logits.view(-1, ).float()
+            res = self.model(**enc, return_dict=True)
+            # scores = res.logits.view(-1, ).float()
+            # scores = res.last_hidden_state[:,0,0].float()
+            scores = res.last_hidden_state[:,0,:].softmax(dim=1)[:,0].tolist()
             # pred_ids = scores.argsort(descending=True)
         return scores
 
