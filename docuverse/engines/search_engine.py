@@ -106,7 +106,7 @@ class SearchEngine:
                                          answers=['yes', 'no'],
                                          default='no')
                 if r=='no':
-                    return None, None
+                    return None, cache_file
                 print(f"Reading cached search results from {cache_file}")
                 try:
                     answers = self.read_output(cache_file)
