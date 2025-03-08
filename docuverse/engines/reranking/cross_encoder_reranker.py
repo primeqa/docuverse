@@ -9,8 +9,9 @@ from sentence_transformers.cross_encoder import CrossEncoder
 from docuverse.engines.search_result import SearchResult
 
 class CrossEncoderModel:
-    def __init__(self, model_name):
+    def __init__(self, model_name, device='cuda'):
         self.model = AutoModel.from_pretrained(model_name)
+        self.model.to(device)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     def predict(self, pairs, device='cuda'):
@@ -29,7 +30,7 @@ class CrossEncoderReranker(Reranker):
     def _rerank(self, answer_list, show_progress):
         num_docs = len(answer_list)
         output = []
-        for qid, answer in tqdm(answer_list, desc="Computing cross-encodings",
+        for answer in tqdm(answer_list, desc="Computing cross-encodings",
                                 total=num_docs, disable=not show_progress):
             similarity_scores = self.model.predict([[answer.question.text, t.text] for t in answer])
             sorted_similarities = sorted(zip(answer, similarity_scores),
