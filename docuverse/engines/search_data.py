@@ -10,7 +10,7 @@ from multiprocessing import Manager, Queue, Process
 from typing import Dict, List
 from tqdm import tqdm
 import queue
-from docuverse.utils import at_most, open_stream, file_is_of_type, parallel_process
+from docuverse.utils import at_most, open_stream, file_is_of_type, parallel_process, get_orig_docid
 import pickle
 
 from docuverse.engines import data_template
@@ -390,20 +390,15 @@ class SearchData:
     def remove_stopwords(txt, **kwargs):
         return txt
 
-    @staticmethod
-    def get_orig_docid(id):
-        if isinstance(id, int):
-            return id
-        index = id.rfind("-", 0, id.rfind("-"))
-        if index >= 0:
-            return SearchData.get_orig_docid(id[:index])
-            # new_id = id[:index]
-            # if new_id.rfind("-") > 0:
-            #     index = new_id.rfind("-", 0, new_id.rfind("-"))
-            #     new_id = id[:index]
-            # return new_id
-        else:
-            return id
+    # @staticmethod
+    # def get_orig_docid(id):
+    #     if isinstance(id, int):
+    #         return id
+    #     index = id.rfind("-", 0, id.rfind("-"))
+    #     if index >= 0:
+    #         return id[:index]
+    #     else:
+    #         return id
 
     @classmethod
     def read_data(cls,
@@ -752,7 +747,7 @@ class SearchData:
             update_stat(token_length, token_based)
             token_vals.append(token_length)
             tiles += 1
-            doc_ids[SearchData.get_orig_docid(get_param(entry, 'id'))] = 1
+            doc_ids[get_orig_docid(get_param(entry, 'id'))] = 1
         tq.close()
 
         stats = {

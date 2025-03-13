@@ -23,7 +23,7 @@ class Reranker(object):
         self.model = None
         self.config = reranking_config
         self.name = reranking_config['name']
-        self.tm = timer("reranking")
+        self.tm = timer("ingest_and_test::search::reranking")
 
 
     def similarity(self, embedding1, embedding2, device='cuda'):
@@ -99,11 +99,11 @@ class Reranker(object):
         """
         sorted_similarities = sorted(zip(answer, similarities),
                                      key=lambda pair: pair[1], reverse=True)
-        self.tm.add_timing("cosine::reorder")
+        self.tm.add_timing("cosine::sort")
         op = SearchResult(answer.question, [])
         for _doc, sim in sorted_similarities:
             doc1 = deepcopy(_doc)
-            doc1.score = sim
+            doc1.score = float(sim)
             op.append(doc1)
         self.tm.add_timing("cosine::copy_data")
         return op
