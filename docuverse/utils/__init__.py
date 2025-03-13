@@ -381,3 +381,50 @@ def prepare_for_save_and_backup(output_file, overwrite=False):
         while os.path.exists(f"{template}.bak{i}{extension}"):
             i += 1
         shutil.copy2(output_file, f"{template}.bak{i}{extension}")
+
+def log_program():
+    """
+    Logs the execution of a program, including the timestamp, the user who executed
+    the program, and the command-line arguments used.
+
+    This function appends the log information to a file named "logfile". The
+    timestamp is captured at the time of the function execution, the username is
+    retrieved from the environment variable 'USER', and the command-line arguments
+    are read from the `sys.argv` list.
+
+    Raises:
+        EnvironmentError: If there is no 'USER' environment variable set.
+        IOError: If there is an error in appending to the log file.
+
+    """
+    from datetime import datetime
+    import sys
+    with open("logfile", "a") as cmdlog:
+        cmdlog.write(f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')} - {os.getenv('USER')} - "
+                     f"{' '.join(sys.argv)}\n")
+
+def get_orig_docid(id):
+    """
+    Determines and returns the original document ID by processing the input ID.
+
+    If the input ID is an integer, it is returned as-is. For string IDs, it identifies
+    and returns the substring up to the second-to-last occurrence of a hyphen ("-"),
+    or returns the original string if there are fewer than two hyphens.
+
+    Args:
+        id (int | str): The ID to process. It can be an integer or a string
+            containing hyphens.
+
+    Returns:
+        int | str: The processed original document ID. If the input ID is an
+            integer, it is returned directly. If it is a string, the function
+            returns the substring up to the second-to-last hyphen, or the original
+            string if the hyphen criteria are not met.
+    """
+    if isinstance(id, int):
+        return id
+    index = id.rfind("-", 0, id.rfind("-"))
+    if index >= 0:
+        return id[:index]
+    else:
+        return id

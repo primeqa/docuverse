@@ -7,6 +7,7 @@ from .reranker import Reranker
 from docuverse.engines.search_engine_config_params import RerankerConfig as RerankerConfig
 from sentence_transformers.cross_encoder import CrossEncoder
 from docuverse.engines.search_result import SearchResult
+import numpy as np
 
 class CrossEncoderModel:
     """
@@ -35,9 +36,10 @@ class CrossEncoderModel:
             The device on which the model will run, such as 'cuda' or 'cpu'.
         """
         # self.model = AutoModel.from_pretrained(model_name)
-        self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
-        self.model.to(device)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = CrossEncoder(model_name, device=device)
+        # self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
+        # self.model.to(device)
+        # self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     def predict(self, pairs, device='cuda'):
         """
@@ -59,13 +61,16 @@ class CrossEncoderModel:
         """
         scores = None
         with torch.no_grad():
-            enc = self.tokenizer(pairs, padding=True, truncation=True, return_tensors='pt').to(device)
-            res = self.model(**enc, return_dict=True)
-            scores = res.logits.view(-1, ).float()
+            # enc = self.tokenizer(pairs, padding=True, truncation=True, return_tensors='pt').to(device)
+            # res = self.model(**enc, return_dict=True)
+            # scores = res.logits.view(-1, ).float()
+            scores = self.model.predict(pairs, convert_to_numpy=True)
+
             # scores = res.last_hidden_state[:,0,0].float()
             # scores = res.last_hidden_state[:,0,:].softmax(dim=1)[:,0].tolist()
             # pred_ids = scores.argsort(descending=True)
-        return scores.exp().tolist()
+        # return scores.exp().tolist()
+        return scores
 
 class CrossEncoderReranker(Reranker):
     """
@@ -118,6 +123,7 @@ class CrossEncoderReranker(Reranker):
         for answer in tqdm(answer_list, desc="Computing cross-encodings",
                                 total=num_docs, disable=not show_progress):
             similarity_scores = self.model.predict([[answer.question.text, t.text] for t in answer])
+            self.tm.add_timing("similarity_computation")
             # sorted_similarities = sorted(zip(answer, similarity_scores),
             #                              key=lambda pair: pair[1], reverse=True)
             output.append(self._build_sorted_list(answer, similarity_scores))

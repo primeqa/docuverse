@@ -1,12 +1,8 @@
 # from __future__ import annotations
-import json
-
-from datetime import datetime
-import os
 import sys
 import io
 
-from docuverse.utils import prepare_for_save_and_backup
+from docuverse.utils import prepare_for_save_and_backup, log_program
 from docuverse.utils.timer import timer
 
 from docuverse import SearchEngine
@@ -24,14 +20,13 @@ def write_metrics_file(metrics_file, _results, _timing, _config):
         out.write(_timing + "\n")
         out.write("=" * 30 + "\n")
         out.write(f"****** Config: *******\n")
-        out.write(_config.to_yaml() + "\n")
+        out.write(_config.to_yaml().replace("\n", "\\n") + "\n")
         out.write("=" * 30 + "\n")
 
 
+
 if __name__ == '__main__':
-    with open("logfile", "a") as cmdlog:
-        cmdlog.write(f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')} - {os.getenv('USER')} - "
-                     f"{' '.join(sys.argv)}\n")
+    log_program()
     tm = timer("ingest_and_test")
     config = DocUVerseConfig.get_stdargs_config()
 #    config = DocUVerseConfig("experiments/clapnq/setup.yaml")

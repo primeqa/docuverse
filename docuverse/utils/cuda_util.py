@@ -2,16 +2,26 @@ import torch
 from docuverse.utils.timer import timer
 from time import sleep
 from docuverse.utils.ticker import Ticker
+import argparse
 
-util=0
-n=0
-tm=timer()
+parser = argparse.ArgumentParser(description="Monitor GPU utilization.")
+parser.add_argument("--window", type=int, default=10, help="Moving average window size for utilization (default: 10)")
+args = parser.parse_args()
+
+util = 0
+n = 0
+tm = timer()
 tk = Ticker("Utilization: ", step=100)
+vals = []
+prev_sum = 0
+window_size = args.window-1
 while True:
-    ut=torch.cuda.utilization()
-    util += ut
-    n += 1
+    ut = torch.cuda.utilization()
+    prev_sum += ut
+    vals.append(ut)
+    if len(vals) >= window_size:
+        prev_sum -= vals.pop(0)
+    # util += ut
     sleep(0.1)
-    if n%10==0:
-        # print(f"Time elapsed: {tm.time_since_beginning()}; Utilization: {util/n/100:.1%}")
-        tk.tick(force=True, new_value=f"{util/n/100:.1%}")
+    if n % args.window == 0:
+        tk.tick(force=True, new_value=f"{prev_sum / len(vals) / 100:.1%}")

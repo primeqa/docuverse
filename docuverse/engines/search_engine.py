@@ -158,7 +158,8 @@ class SearchEngine:
             res = pickle.load(open_stream(filename, binary=True))
         return res
 
-    def read_output(self, filename):
+    def read_output(self, filename=None) -> list[SearchResult]:
+        filename = self.config.output_file if filename is None else filename
         return SearchEngine.read_output_(filename, self.config.query_template)
 
     def set_index(self, index=None):
