@@ -2,7 +2,6 @@ import math
 import itertools
 import operator
 
-
 class EvaluationOutput:
     mappable_metrics = ['match', 'mrr', 'ndcg', 'map']
     def __init__(self, num_ranked_queries, num_judged_queries, doc_scores,
@@ -79,6 +78,15 @@ class EvaluationOutput:
             found = False
             _mrr = 0
             _dcg = 0
+
+            last_rank = self.ranks[0]
+            j = 0
+            while j < len(self.ranks) and self.ranks[j] <= len(relevant):
+                last_rank = self.ranks[j]
+                j += 1
+            if j < len(self.ranks):
+                last_rank = self.ranks[j]
+
             for i in range(0, min(len(relevant), self.ranks[-1])):
                 if not found and relevant[i]:
                     rank_first = i+1
@@ -89,20 +97,23 @@ class EvaluationOutput:
                 doc_dcg[i+1] = _dcg # relevant[i]/math.log2(i+2)
                 doc_mrr[i+1] = _mrr # 1.0/rank_first if rank_first>0 else 0
 
+            for k in range(j, len(self.ranks)):
+
+                k_rnk = self.ranks[k]
+                doc_match[k_rnk] = relevant[rank_first - 1] if rank_first > 0 else False
+                doc_dcg[k_rnk] = _dcg # relevant[i]/math.log2(i+2)
+                doc_mrr[k_rnk] = _mrr # 1.0/rank_first if rank_first>0 else 0
+
             doc_map = list(itertools.accumulate(doc_match, operator.add))
             doc_match = list(itertools.accumulate(doc_match, max))
             # doc_dcg = list(itertools.accumulate(doc_dcg, operator.add))
-            last_rank = self.ranks[0]
-            j = 0
-            while j < len(self.ranks) and self.ranks[j] <= len(relevant):
-                last_rank = self.ranks[j]
-                j+=1
 
             for i in self.ranks:
                 update = i
                 if i>last_rank:
                     update = last_rank
-                self.ndcg[i] += doc_dcg[update]/self.idcg[min(update, self.num_gold[qid])]
+                # self.ndcg[i] += doc_dcg[update]/self.idcg[min(update, self.num_gold[qid])]
+                self.ndcg[i] += doc_dcg[update] / self.idcg[1]
                 self.match[i] += doc_match[update]
                 self.mrr[i] += doc_mrr[update]
                 self.map[i] = doc_map[update]*1.0/update
