@@ -576,6 +576,13 @@ class RerankerArguments(GenericArguments):
         }
     )
 
+    reranker_top_k: Optional[int] = field(
+        default=-1,
+        metadata={
+            "help": "The number of documents to rerank."
+        }
+    )
+
 
 @dataclass
 class EvaluationArguments(GenericArguments):

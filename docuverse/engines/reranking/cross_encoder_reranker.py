@@ -122,7 +122,7 @@ class CrossEncoderReranker(Reranker):
         output = []
         for answer in tqdm(answer_list, desc="Computing cross-encodings",
                                 total=num_docs, disable=not show_progress):
-            similarity_scores = self.model.predict([[answer.question.text, t.text] for t in answer])
+            similarity_scores = self.model.predict([[answer.question.text, t.text] for t in answer.top_k(self.top_k)])
             self.tm.add_timing("similarity_computation")
             # sorted_similarities = sorted(zip(answer, similarity_scores),
             #                              key=lambda pair: pair[1], reverse=True)

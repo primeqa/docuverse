@@ -1,15 +1,10 @@
 import json
 import pickle
-from multiprocessing import Pool
-from typing import List, Tuple, Union
+from typing import List, Union
 
 import os
 
-from pydantic_core.core_schema import LiteralSchema
-from tqdm import tqdm
 from copy import deepcopy
-
-from triton.language.extra.cuda import num_threads
 
 from docuverse.utils import (
     open_stream,
@@ -27,6 +22,7 @@ from docuverse.utils.evaluation_output import EvaluationOutput
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.engines.reranking.bi_encoder_reranker import BiEncoderReranker
 from docuverse.utils.text_tiler import TextTiler
+# from docuverse.utils.timer import timer
 
 
 class SearchEngine:
@@ -83,7 +79,10 @@ class SearchEngine:
             self.write_necessary = True
             self.write_cache_file(answers, cache_file)
         if self.reranker is not None:
-            ranswers, cache_file = self.read_cache_file(extension=".rerank.pkl.bz2")
+            if self.write_necessary: # The retriever just got run, therefore force running the reranker
+                ranswers, cache_file = None, self._get_cache_file(extension=".rerank.pkl.bz2")
+            else:
+                ranswers, cache_file = self.read_cache_file(extension=".rerank.pkl.bz2")
             if ranswers is None:
                 answers = self.reranker.rerank(answers)
                 self.write_necessary = True
@@ -91,7 +90,10 @@ class SearchEngine:
                 self.write_cache_file(answers, cache_file)
             else:
                 answers = ranswers
-
+        # tm = timer.subtimer_from_top("search", default_parent="ingest_and_test")
+        for answer in answers:
+            answer.remove_duplicates(self.config.duplicate_removal, self.config.rouge_duplicate_threshold)
+        # tm.add_timing("remove duplicates")
         return answers
 
     def read_cache_file(self, extension):
@@ -99,8 +101,7 @@ class SearchEngine:
         cache_file = None
         if self.config.cache_dir is not None and not self.config.no_cache:
             # Read the results if available, don't search again
-            base_cache_file = os.path.basename(self.config.output_file.replace(".json", extension))
-            cache_file = os.path.join(self.config.cache_dir, base_cache_file)
+            cache_file = self._get_cache_file(extension)
             if os.path.exists(cache_file):
                 r = ask_for_confirmation(f"File {cache_file} exists, read?",
                                          answers=['yes', 'no'],
@@ -113,6 +114,11 @@ class SearchEngine:
                 except Exception as e:
                     print(f"Failed to read cache file {cache_file}: {e}")
         return answers, cache_file
+
+    def _get_cache_file(self, extension):
+        base_cache_file = os.path.basename(self.config.output_file.replace(".json", extension))
+        cache_file = os.path.join(self.config.cache_dir, base_cache_file)
+        return cache_file
 
     def write_cache_file(self, values, cache_file):
         if cache_file is not None:

@@ -1,6 +1,7 @@
 from copy import deepcopy
 
 from docuverse.engines.search_result import SearchResult
+from docuverse.utils import get_param
 from docuverse.utils.timer import timer
 
 
@@ -23,8 +24,8 @@ class Reranker(object):
         self.model = None
         self.config = reranking_config
         self.name = reranking_config['name']
-        self.tm = timer("ingest_and_test::search::reranking")
-
+        self.tm = timer.subtimer_from_top(f"search::reranking", default_parent="ingest_and_test")
+        self.top_k = get_param(reranking_config, 'reranker_top_k', -1)
 
     def similarity(self, embedding1, embedding2, device='cuda'):
         """
@@ -105,5 +106,7 @@ class Reranker(object):
             doc1 = deepcopy(_doc)
             doc1.score = float(sim)
             op.append(doc1)
+        if self.top_k > 0:
+            op.retrieved_passages.extend(answer.retrieved_passages[self.top_k:])
         self.tm.add_timing("cosine::copy_data")
         return op
