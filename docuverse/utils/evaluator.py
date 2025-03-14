@@ -137,7 +137,8 @@ class EvaluationEngine:
                     scr = 0.
                 else:
                     pass
-            # print(f"{rid}: {len([i for i, t in enumerate(self.relevant[rid]) if t])} ")
+            # print(f"{rid}: {len([i for i, t in enumerate(self.relevant[rid]) if t])} "
+            #       f"gold: {len(get_param(record.question, query_id_header, []))}")
 
         _result = EvaluationOutput(num_ranked_queries=num_eval_questions,
                                    num_judged_queries=num_eval_questions,

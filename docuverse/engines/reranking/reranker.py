@@ -107,6 +107,6 @@ class Reranker(object):
             doc1.score = float(sim)
             op.append(doc1)
         if self.top_k > 0:
-            op.retrieved_passages.extend(answer.retrieved_passages[self.top_k:])
+            op.retrieved_passages.extend(deepcopy(answer.retrieved_passages[self.top_k:]))
         self.tm.add_timing("cosine::copy_data")
         return op
