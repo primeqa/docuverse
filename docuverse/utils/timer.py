@@ -12,6 +12,8 @@ from datetime import datetime
 import sys
 from typing import Dict
 
+from numpy.matlib import empty
+
 msec = 1
 sec = 1000
 minute = 60 * sec
@@ -190,6 +192,18 @@ class timer(object):
             timer.timing[key] = val
         else:
             timer.timing[key] += val
+
+    @staticmethod
+    def get_top_method(default="timer"):
+        keys = list(timer.timing.keys())
+        if len(keys)==0:
+            return default
+        else:
+            return sorted(list(timer.timing.keys()))[0]
+
+    @staticmethod
+    def subtimer_from_top(name: str, default_parent:str="timer"):
+        return timer(f"{timer.get_top_method(default_parent)}::{name}", disable=False)
 
     @staticmethod
     def _compute_timing_tree(namelist=None, level=0):

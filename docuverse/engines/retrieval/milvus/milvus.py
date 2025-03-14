@@ -312,9 +312,9 @@ class MilvusEngine(RetrievalEngine):
         tm.add_timing("milvus_search")
         result = SearchResult(question=question, data=res[0])
         tm.add_timing("build output")
-        result.remove_duplicates(self.config.duplicate_removal,
-                                 self.config.rouge_duplicate_threshold)
-        tm.add_timing("remove duplicates")
+        # result.remove_duplicates(self.config.duplicate_removal,
+        #                          self.config.rouge_duplicate_threshold)
+        # tm.add_timing("remove duplicates")
         return result
 
     def encode_query(self, question):

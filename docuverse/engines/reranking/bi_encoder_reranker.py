@@ -14,7 +14,7 @@ class BiEncoderReranker(Reranker):
         output = []
 
         for answer in answer_list:
-            for doc in answer:
+            for doc in answer.top_k(self.top_k):
                 if doc.id not in id2pos:
                     id2pos[doc.id] = len(texts)
                     texts.append(doc.text)
@@ -54,8 +54,8 @@ class BiEncoderReranker(Reranker):
                 k = num_examples
                 for i in range(num_examples):
                     hybrid_similarities[i] = 1.0 / (k + i + 1) + 1.0 / (k + idx_to_rerank_idx[i] + 1)
-
-            output.append(self._build_sorted_list(answer, similarity_scores))
+            reranked_list = self._build_sorted_list(answer, similarity_scores)
+            output.append(reranked_list)
             # self._build_sorted_list(answer, hybrid_similarities, output)
 
         total_docs = (len(answer_list[0]) + 1) * len(answer_list)
