@@ -2,14 +2,12 @@
 import sys
 import io
 
-from docuverse.utils import prepare_for_save_and_backup, log_program
+from docuverse.utils import prepare_for_save_and_backup, save_command_line
 from docuverse.utils.timer import timer
 
 from docuverse import SearchEngine
 from docuverse.engines.search_engine_config_params import DocUVerseConfig
 from docuverse.utils.evaluator import EvaluationEngine
-from docuverse.utils import save_command_line
-
 
 
 def write_metrics_file(metrics_file, _results, _timing, _config):
@@ -24,7 +22,6 @@ def write_metrics_file(metrics_file, _results, _timing, _config):
         out.write(f"****** Config: *******\n")
         out.write(_config.to_yaml().replace("\n", "\\n") + "\n")
         out.write("=" * 30 + "\n")
-
 
 
 if __name__ == '__main__':
