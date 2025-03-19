@@ -426,4 +426,4 @@ def save_command_line(args, output="logfile"):
     from datetime import datetime
     with open(output, "a") as cmdlog:
         cmdlog.write(f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')} - {os.getenv('USER')} - "
-                     f"{' '.join(args)}\n")
+                     f"python {' '.join(args)}\n")
