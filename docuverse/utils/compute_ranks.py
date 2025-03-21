@@ -1,9 +1,10 @@
-from docuverse.utils import log_program, get_param, get_orig_docid
+import sys
+from docuverse.utils import save_command_line, get_param, get_orig_docid
 from docuverse.engines import SearchEngine
 from docuverse.engines.search_engine_config_params import DocUVerseConfig
 
 if __name__ == '__main__':
-    log_program()
+    save_command_line(args=sys.argv)
     config = DocUVerseConfig.get_stdargs_config()
     engine = SearchEngine(config)
     output = engine.read_output()

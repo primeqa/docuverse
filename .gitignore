@@ -142,3 +142,4 @@ examples/tmp.ipynb
 /config
 /experiments/ibm-swsupport/gte-small-setup-256.yaml
 /notebooks/benchmark/
+/notebooks/models/
