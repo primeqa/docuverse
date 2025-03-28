@@ -38,32 +38,26 @@ downloadable.
 
 ## Design
 
-The following is a code snippet showing how to run a query search, and also how to ingest a corpus,
-followed by an evaluation search.
+The following is a code snippet showing how to ingesting a new corpus (create an index for a specific engine), 
+read the query file, run the search, compute the results and print them:
 ```python
-from docuverse import SearchEngine, SearchQueries
+from docuverse import SearchEngine
+engine = SearchEngine(config_or_path="data/clapnq_small/milvus-test.yaml")
 
-# Test an existing engine
-engine = SearchEngine(config="experiments/sap/elastic_v2/setup.yaml")
-queries = SearchQueries(data="benchmark_v2.csv")
+# Read the ClapNQ dataset
+data = engine.read_data() # or engine.read_data(engine.config.input_passages)
+#Ingest the data
+engine.ingest(data)
 
+# Read the queries
+queries = engine.read_questions() # or engine.read_questions(engine.config.input_queries)
+# Run the retrieval
 results = engine.search(queries)
+# Evaluation and print the results
 scores = engine.compute_score(queries, results)
-print (f"Results:\n{scores.to_string()}")
-```
 
-Ingesting a new corpus (create an index for a specific engine) should be just as easy:
-```python
-from docuverse import SearchEngine, SearchCorpus, SearchQueries
-
-corpus = SearchCorpus(filepaths="experiments/claspnq/passages.jsonl")
-engine = SearchEngine(config="experiments/sap/elastic_v2/setup.yaml")
-engine.ingest(corpus, max_doc_length=512, stride=100, title_handling="all", 
-              index="my_new_index")
-
-queries = SearchQueries(data="ClaspNQ.jsonl")
-scores = engine.compute_score(queries, results)
-print (f"Results:\n{scores.to_string()}")
+# Print the evaluation results in a human-readable format.
+print(f"Results:\n{scores}")
 ```
 
 ## ✔️ Getting Started
@@ -76,71 +70,32 @@ print (f"Results:\n{scores.to_string()}")
 
 # If you want to run on GPU make sure to install torch appropriately
 
-# E.g. for torch 1.11 + CUDA 11.3:
-pip install 'torch~=1.11.0' --extra-index-url https://download.pytorch.org/whl/cu113
-
 # Install as editable (-e) or non-editable using pip, with extras (e.g. tests) as desired
 # Example installation commands:
 
 # Minimal install (non-editable)
 pip install .
 
-# GPU support
-pip install .[gpu]
-
 # Full install (editable)
 pip install -e .[all]
+
+# Install milvus and/or elastic dependencies, and the pyizumo library (if you have acecess to it)
+pip install -r requirements-milvus.txt
+pip install -r requirements-elastic.txt
+pip install -r requirements_extra.txt
 ```
 
 Please note that dependencies (specified in [setup.py](./setup.py)) are pinned to provide a stable experience.
 When installing from source these can be modified, however this is not officially supported.
 
-**Note:** in many environments, conda-forge based faiss libraries perform substantially better than the default ones installed with pip. To install faiss libraries from conda-forge, use the following steps:
+## 🔭 Learn more (not yet working)
 
-- Create and activate a conda environment
-- Install faiss libraries, using a command
+| Section                                                                                     | Description                                                |
+|---------------------------------------------------------------------------------------------|------------------------------------------------------------|
+| 📒 [Documentation](https://primeqa.github.io/primeqa)                                       | Start API documentation and tutorials                      |
+| 📓 [Tutorials: Jupyter Notebooks](https://github.com/primeqa/docuverse/tree/main/notebooks) | Notebooks to get started on QA tasks                       |
+| 🤗 [Model sharing and uploading](https://huggingface.co/docs/transformers/model_sharing)    | Upload and share your fine-tuned models with the community |
+| ✅ [Pull Request](https://primeqa.github.io/docuverse/pull_request_template.html)            | PrimeQA Pull Request                                       |
+| 📄 [Generate Documentation](https://primeqa.github.io/primeqa/README.html)                  | How Documentation works                                    |        
 
-```conda install -c conda-forge faiss=1.7.0 faiss-gpu=1.7.0```
-
-- In `setup.py`, remove the faiss-related lines:
-
-```commandline
-"faiss-cpu~=1.7.2": ["install", "gpu"],
-"faiss-gpu~=1.7.2": ["gpu"],
-```
-
-- Continue with the `pip install` commands as desctibed above.
-
-## :speech_balloon: Blog Posts
-There're several blog posts by members of the open source community on how they've been using PrimeQA for their needs. Read some of them:
-1. [PrimeQA and GPT 3](https://www.marktechpost.com/2023/03/03/with-just-20-lines-of-python-code-you-can-do-retrieval-augmented-gpt-based-qa-using-this-open-source-repository-called-primeqa/)
-2. [Enterprise search with PrimeQA](https://heidloff.net/article/introduction-neural-information-retrieval/)
-3. [A search engine for Trivia geeks](https://www.deleeuw.me.uk/posts/Using-PrimeQA-For-NLP-Question-Answering/)
-
-
-## 🧪 Unit Tests
-[Testing doc](https://primeqa.github.io/primeqa/testing.html)       
-
-To run the unit tests you first need to [install PrimeQA](#Installation).
-Make sure to install with the `[tests]` or `[all]` extras from pip.
-
-From there you can run the tests via pytest, for example:
-```shell
-pytest --cov PrimeQA --cov-config .coveragerc tests/
-```
-
-For more information, see:
-- Our [tox.ini](./tox.ini)
-- The [pytest](https://docs.pytest.org) and [tox](https://tox.wiki/en/latest/) documentation    
-
-## 🔭 Learn more
-
-| Section | Description |
-|-|-|
-| 📒 [Documentation](https://primeqa.github.io/primeqa) | Full API documentation and tutorials |
-| 📓 [Tutorials: Jupyter Notebooks](https://github.com/primeqa/primeqa/tree/main/notebooks) | Notebooks to get started on QA tasks |
-| 🤗 [Model sharing and uploading](https://huggingface.co/docs/transformers/model_sharing) | Upload and share your fine-tuned models with the community |
-| ✅ [Pull Request](https://primeqa.github.io/primeqa/pull_request_template.html) | PrimeQA Pull Request |
-| 📄 [Generate Documentation](https://primeqa.github.io/primeqa/README.html) | How Documentation works |        
-
-## ❤️ PrimeQA collaborators include       
+## ❤️ DocUVerse collaborators include: Sara Rosenthal, Parul Awasthy, Scott McCarley, Jatin Ganhotra, and Radu Florian.       

@@ -1,2 +1,3 @@
 pyizumo[pos]~=2.0.2
 huggingface_hub[cli]
+pynvml

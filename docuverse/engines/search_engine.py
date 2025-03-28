@@ -172,9 +172,14 @@ class SearchEngine:
         pass
 
     def compute_score(self, queries: SearchQueries, results: List[SearchResult]) -> EvaluationOutput:
-        pass
+        from docuverse.utils.evaluator import EvaluationEngine
+        scorer = EvaluationEngine(self.config)
+        results = scorer.compute_score(queries, results, model_name=self.get_output_name())
+        return results
 
-    def read_data(self, file, no_cache: bool | None = None):
+    def read_data(self, file=None, no_cache: bool | None = None):
+        if file is None:
+            file = self.config.input_passages
         if self.config.db_engine in ['milvus-hybrid', 'milvus_hybrid']:
             if not self.config.hybrid['shared_tokenizer']:
                 data = []
@@ -220,8 +225,9 @@ class SearchEngine:
         else:
             return self.tiler
 
-    def read_questions(self, file):
-        return SearchQueries.read(file, **vars(self.config.retriever_config))
+    def read_questions(self, file=None):
+        return SearchQueries.read(file if file else self.config.input_queries,
+                                  **vars(self.config.retriever_config))
 
     def get_output_name(self):
         if self.config.output_name is None:
