@@ -45,14 +45,28 @@ class MilvusDenseEngine(MilvusEngine):
                 field_name="_id",
                 index_type="STL_SORT"
             )
-        index_params.add_index(
-            field_name=embeddings_name,
-            index_type="HNSW",
-            metric_type="IP",
-            params={"nlist": 1024,
+
+        _basic_index_params = {
+            "index_type": "HNSW",
+            "metric_type": "IP",
+            "params": {"nlist": 1024,
                     "M": 128,
                     "efConstruction": 128}
+        }
+        _default_index_params = get_param(self.milvus_defaults, "search_params.default_dense", _basic_index_params)
+        _index_params = get_param(self.config, 'index_params', _default_index_params)
+        import json
+        print(f"Index params: {json.dumps(_index_params, indent=2)}")
+        index_params.add_index(
+            field_name=embeddings_name,
+            **_index_params
+            # index_type="HNSW",
+            # metric_type="IP",
+            # params={"nlist": 1024,
+            #         "M": 128,
+            #         "efConstruction": 128}
         )
+        self.index_type = _index_params["index_type"]
         return index_params
 
     def create_fields(self, embeddings_name="embeddings", new_fields_only=False):

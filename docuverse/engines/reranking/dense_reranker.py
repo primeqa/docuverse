@@ -2,12 +2,12 @@ from copy import deepcopy
 
 from docuverse import SearchResult
 from docuverse.utils.embeddings.dense_embedding_function import DenseEmbeddingFunction
-from .reranker import Reranker
+from .bi_encoder_reranker import BiEncoderReranker
 from sentence_transformers import util as st_util
 from docuverse.engines.search_engine_config_params import RerankerConfig as RerankerConfig
 
 
-class DenseReranker(Reranker):
+class DenseReranker(BiEncoderReranker):
     def __init__(self, reranking_config: RerankerConfig|dict, **kwargs):
         super().__init__(reranking_config, **kwargs)
         self.model = DenseEmbeddingFunction(reranking_config.reranker_model)

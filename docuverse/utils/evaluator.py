@@ -8,7 +8,7 @@ from tqdm import tqdm
 from docuverse import SearchResult, SearchQueries
 from docuverse.engines import SearchData
 from docuverse.engines.search_engine_config_params import EvaluationArguments, DocUVerseConfig
-from . import get_param
+from . import get_param, get_orig_docid
 from .evaluation_output import EvaluationOutput
 from rouge_score.rouge_scorer import RougeScorer
 
@@ -122,7 +122,7 @@ class EvaluationEngine:
             for aid, answer in enumerate(record.retrieved_passages):
                 if aid >= ranks[-1]:
                     break
-                docid = SearchData.get_orig_docid(get_param(answer, f"id|{data_id_header}"))
+                docid = get_orig_docid(get_param(answer, f"id|{data_id_header}"))
 
                 # if str(docid) in gt[qid]:  # Great, we found a match.
                 #     update_scores(ranks, aid, 1, sum, tmp_scores)
@@ -137,12 +137,8 @@ class EvaluationEngine:
                     scr = 0.
                 else:
                     pass
-                    # scr = max(
-                    #     [
-                    #         self.rouge_scorer.score(passage, answer[data_text_header])['rouge1'].recall for passage in
-                    #         query['passages']
-                    #     ]
-                    # )
+            # print(f"{rid}: {len([i for i, t in enumerate(self.relevant[rid]) if t])} "
+            #       f"gold: {len(get_param(record.question, query_id_header, []))}")
 
         _result = EvaluationOutput(num_ranked_queries=num_eval_questions,
                                    num_judged_queries=num_eval_questions,

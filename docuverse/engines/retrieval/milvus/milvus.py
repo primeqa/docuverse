@@ -2,11 +2,12 @@ import json
 import sys
 from typing import Union
 
-from pymilvus.exceptions import CollectionNotExistException, IndexNotExistException, ConnectionNotExistException
+from pymilvus.exceptions import ConnectionNotExistException, CollectionNotExistException, IndexNotExistException, \
+    MilvusException
 # from onnx.reference.custom_element_types importp; bfloat16
 from scipy.sparse import spmatrix
+from scipy.sparse._csr import csr_array
 from tqdm import tqdm, trange
-
 from docuverse import SearchCorpus
 from docuverse.engines.retrieval.retrieval_servers import RetrievalServers, Server
 from docuverse.engines.search_queries import SearchQueries
@@ -15,7 +16,7 @@ from docuverse.utils.timer import timer
 
 try:
     from pymilvus import (
-    # connections,
+        # connections,
         MilvusClient,
         utility,
         FieldSchema, CollectionSchema, DataType,
@@ -26,7 +27,7 @@ except:
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_engine_config_params import SearchEngineConfig
-from docuverse.utils import get_param, read_config_file
+from docuverse.utils import get_param, read_config_file, vector_is_empty
 
 import os
 from dotenv import load_dotenv
@@ -120,16 +121,31 @@ class MilvusEngine(RetrievalEngine):
             print("MilvusEngine server is not initialized - it's OK if this in a hybrid combination!")
             # raise RuntimeError("MilvusEngine server is not initialized!")
         else:
-            if self.server.type == "file":
-                self.client = MilvusClient(uri=self.server.server_name)
-            else:
-                self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
-                                           user=get_param(self.server, "user", ""),
-                                           password=get_param(self.server, "password", ""),
-                                           server_name=get_param(self.server, "server_name", ""),
-                                           secure=get_param(self.server, "secure", False),
-                                           server_pem_path = get_param(self.server, "server_pem_path", None)
-                                           )
+            try:
+                if self.server.type == "file":
+                    self.client = MilvusClient(uri=self.server.server_name)
+                else:
+                    self.client = MilvusClient(uri=f"http://{self.server.host}:{self.server.port}",
+                                               user=get_param(self.server, "user", ""),
+                                               password=get_param(self.server, "password", ""),
+                                               server_name=get_param(self.server, "server_name", ""),
+                                               secure=get_param(self.server, "secure", False),
+                                               server_pem_path = get_param(self.server, "server_pem_path", None)
+                    )
+            except ConnectionNotExistException as e:
+                print(f"Connection to Milvus not found - probably server is down.")
+                sys.exit(10)
+            except CollectionNotExistException as e:
+                print(f"Collection \"{self.config.index_name}\" does not exist.")
+                sys.exit(12)
+            except IndexNotExistException as e:
+                print(f"Index for the collection \"{self.config.index_name}\" does not exist.")
+                sys.exit(14)
+            except MilvusException as e:
+                print(f"Error running the search: {e}")
+                sys.exit(11)
+            except Exception as e:
+                raise e
 
     def has_index(self, index_name: str):
         return self.client.has_collection(self.config.index_name) if self.client else False
@@ -224,10 +240,15 @@ class MilvusEngine(RetrievalEngine):
         data = []
         for i, (item, vector) in enumerate(zip(corpus, passage_vectors)):
             # if isinstance(vector, spmatrix) and vector.getnnz() == 0:
-            if getattr(vector, 'count_nonzero', None) is not None and vector.count_nonzero()==0:
+            if vector_is_empty(vector):
                 continue
             dt = {key: item[key] for key in ['text', 'title', 'id']}
+            # dt[self.embeddings_name] = vector.reshape(1, vector.shape[0])
+            if isinstance(vector, csr_array):
+                if len(vector.shape) == 1:
+                    vector.resize((1, vector.shape[0]))
             dt[self.embeddings_name] = vector
+
             for f in self.config.data_template.extra_fields:
                 if isinstance(item[f], dict|list):
                     dt[f] = json.dumps(item[f])
@@ -263,26 +284,25 @@ class MilvusEngine(RetrievalEngine):
         pass
 
     def search(self, question: SearchQueries.Query, **kwargs) -> SearchResult:
+        tm = timer("ingest_and_test::search")
         self.check_client()
         search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'
         query_vector = self.encode_query(question)
-        if getattr(query_vector, 'count_nonzero', None) is not None:
-            non_zero = query_vector.count_nonzero()
-            if non_zero == 0:
-                print(f"Query \"{question.text}\" has 0 length representation.")
-                return SearchResult(question=question, data=[])
+        tm.add_timing("encode")
+        if vector_is_empty(query_vector):
+            print(f"Query \"{question.text}\" has 0 length representation.")
+            return SearchResult(question=question, data=[])
         group_by = get_param(kwargs, 'group_by', None)
         extra = {}
         if group_by is not None:
             search_params['params']['group_by_field'] = group_by
             extra = {'group_by_field': group_by}
-
         try:
             res = self.client.search(
                 collection_name=self.config.index_name,
                 data=[query_vector],
-                # search_params=search_params,
+                search_params=search_params,
                 limit=self.config.top_k,
                 # limit=1000,
                 output_fields=self.output_fields,
@@ -302,9 +322,12 @@ class MilvusEngine(RetrievalEngine):
             sys.exit(11)
         except Exception as e:
             raise e
+        tm.add_timing("milvus_search")
         result = SearchResult(question=question, data=res[0])
-        result.remove_duplicates(self.config.duplicate_removal,
-                                 self.config.rouge_duplicate_threshold)
+        tm.add_timing("build output")
+        # result.remove_duplicates(self.config.duplicate_removal,
+        #                          self.config.rouge_duplicate_threshold)
+        # tm.add_timing("remove duplicates")
         return result
 
     def encode_query(self, question):

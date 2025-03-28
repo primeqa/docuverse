@@ -14,7 +14,7 @@ import yaml
 from tqdm.auto import tqdm
 
 
-def get_param(dictionary: dict|list[dict]|object, key: str, default: str | None | bool = None):
+def get_param(dictionary: dict|list[dict]|object, key: str, default: str | None | bool | int | float | dict= None):
     def recursive_get(_dictionary, key, default):
         if _dictionary is None:
             return default
@@ -26,6 +26,8 @@ def get_param(dictionary: dict|list[dict]|object, key: str, default: str | None 
             else:
                 dd = _dictionary.__dict__
             for k in keys:
+                if not isinstance(dd, dict):
+                    dd = dd.__dict__
                 if k in dd:
                     dd = dd[k]
                 else:
@@ -279,7 +281,7 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
         return result
 
     if num_threads <= 1:
-        return [apply_funcs(dt) for dt in tqdm(data, desc=msg)]
+        return [apply_funcs(dt) for dt in tqdm(data, desc=msg, smoothing=1)]
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     num_items = len(data)
@@ -303,6 +305,9 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
                     res = apply_funcs(text)
                     d[id] = res
                     tk1.update(1)
+                except ImportError as e:
+                    print(f"Error in thread {thread_number}: {e}")
+                    break
                 except Exception as e:
                     d[id] = []
 
@@ -357,8 +362,68 @@ def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes')
 def convert_to_single_vectors(embs):
     return [embs[[i], :] for i, _ in enumerate(embs)]
 
+def vector_is_empty(vector):
+    return (
+            (getattr(vector, '_nnz', None) is not None and vector._nnz() == 0) or
+            (getattr(vector, 'count_nonzero', None) is not None and int(vector.count_nonzero()) == 0)
+    )
+
+def prepare_for_save_and_backup(output_file, overwrite=False):
+    path = os.path.dirname(output_file)
+    if not os.path.exists(path):
+        os.makedirs(path)
+    if not overwrite and os.path.exists(output_file):
+        # Make a copy before writing over
+        import shutil
+        template, extension = os.path.splitext(output_file)
+        i = 1
+        # template = output_file.replace(f".{extension}", "")
+        while os.path.exists(f"{template}.bak{i}{extension}"):
+            i += 1
+        shutil.copy2(output_file, f"{template}.bak{i}{extension}")
+
+def get_orig_docid(id):
+    """
+    Determines and returns the original document ID by processing the input ID.
+
+    If the input ID is an integer, it is returned as-is. For string IDs, it identifies
+    and returns the substring up to the second-to-last occurrence of a hyphen ("-"),
+    or returns the original string if there are fewer than two hyphens.
+
+    Args:
+        id (int | str): The ID to process. It can be an integer or a string
+            containing hyphens.
+
+    Returns:
+        int | str: The processed original document ID. If the input ID is an
+            integer, it is returned directly. If it is a string, the function
+            returns the substring up to the second-to-last hyphen, or the original
+            string if the hyphen criteria are not met.
+    """
+    if isinstance(id, int):
+        return id
+    index = id.rfind("-", 0, id.rfind("-"))
+    if index >= 0:
+        return id[:index]
+    else:
+        return id
+
 def save_command_line(args, output="logfile"):
+    """
+    Logs the execution of a program, including the timestamp, the user who executed
+    the program, and the command-line arguments used.
+
+    This function appends the log information to a file named "logfile". The
+    timestamp is captured at the time of the function execution, the username is
+    retrieved from the environment variable 'USER', and the command-line arguments
+    are read from the `sys.argv` list.
+
+    Raises:
+        EnvironmentError: If there is no 'USER' environment variable set.
+        IOError: If there is an error in appending to the log file.
+
+    """
     from datetime import datetime
     with open(output, "a") as cmdlog:
         cmdlog.write(f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')} - {os.getenv('USER')} - "
-                     f"{' '.join(args)}\n")
+                     f"python {' '.join(args)}\n")

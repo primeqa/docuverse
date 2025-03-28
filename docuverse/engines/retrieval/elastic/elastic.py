@@ -223,8 +223,6 @@ class ElasticEngine(RetrievalEngine):
             )
 
         result = SearchResult(question=question, data=self.read_results(res))
-        result.remove_duplicates(self.duplicate_removal,
-                                 self.rouge_duplicate_threshold)
         return result
 
     @staticmethod

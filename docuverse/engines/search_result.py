@@ -125,6 +125,9 @@ class SearchResult:
     def __iter__(self):
         return iter(self.retrieved_passages)
 
+    def top_k(self, k: int):
+        return self.retrieved_passages[:k] if k>0 else self.retrieved_passages
+
     def read_data(self, data):
         if isinstance(data, dict):
             if 'hits' in data and 'hits' in data['hits']:  # Looks like Elasticsearch results

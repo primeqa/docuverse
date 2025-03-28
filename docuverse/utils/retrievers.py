@@ -1,5 +1,6 @@
 from typing import Any
 
+from docuverse.engines.reranking.cross_encoder_reranker import CrossEncoderReranker
 from docuverse.engines.reranking.dense_reranker import DenseReranker
 from docuverse.engines.reranking.splade_reranker import SpladeReranker
 from docuverse.engines.search_engine_config_params import RerankerArguments
@@ -17,6 +18,7 @@ def create_retrieval_engine(retriever_config: dict):
    """
    name: str | None = retriever_config.get('db_engine')
    engine = None
+   print(f"Retrieval engine: {name}")
    if name.startswith('elastic-') or name.startswith('es-'):
        import docuverse.engines.retrieval.elastic as elastic
        if name in ['es-bm25', 'elastic-bm25']:
@@ -66,5 +68,7 @@ def create_reranker_engine(reranker_config: dict|RerankerArguments):
         return DenseReranker(reranker_config)
     elif name == "splade":
         return SpladeReranker(reranker_config)
+    elif name == "cross-encoder":
+        return CrossEncoderReranker(reranker_config)
     else:
         raise RuntimeError("The available reranking engine types are 'dense', 'splade', and 'none'.")

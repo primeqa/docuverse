@@ -12,10 +12,10 @@ try:
     )
     from pymilvus import model as MilvusModel
     from pymilvus.model.sparse.bm25.tokenizers import build_default_analyzer
-    from milvus_model.sparse.bm25 import BM25EmbeddingFunction
+    from pymilvus.model.sparse.bm25 import BM25EmbeddingFunction
 except:
     print(f"You need to install pymilvus to be using Milvus functionality!")
-    raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
+    raise RuntimeError("You need to install pymilvus to be using Milvus functionality!")
 from docuverse.engines.search_engine_config_params import SearchEngineConfig
 from docuverse.utils import get_param, ask_for_confirmation, convert_to_single_vectors
 from tqdm import tqdm

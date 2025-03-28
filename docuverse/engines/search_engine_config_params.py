@@ -2,12 +2,15 @@ import json
 import os
 from typing import Optional, List, Literal
 
-from optimum.utils.runs import RunConfig, Run
+import yaml
+
+from docuverse.engines.sparse_config import SparseConfig
+# from optimum.utils.runs import RunConfig, Run
 
 from docuverse.utils import read_config_file
 from docuverse.engines.retrieval.search_filter import SearchFilter
 from docuverse.utils import get_param
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from transformers import HfArgumentParser
 from docuverse.engines.data_template import (
     DataTemplate,
@@ -389,8 +392,15 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
-    query_template: DataTemplate = default_query_template
-    data_template: DataTemplate = default_data_template
+    query_template: DataTemplate = None
+
+    data_template: DataTemplate = None
+
+    sparse_config: SparseConfig = None
+
+    search_params: dict = None
+
+    index_params: dict = None
 
     def __post_init__(self):
         # parse the query_header_template
@@ -409,9 +419,14 @@ class RetrievalArguments(GenericArguments):
 
             if self.query_header_format is not None:
                 self.query_template = create_template(self.query_header_format)
+            if self.query_template is None:
+                self.query_template = default_query_template
 
             if self.data_header_format is not None:
                 self.data_template = create_template(self.data_header_format)
+            if self.data_template is None:
+                self.data_template = default_data_template
+
         if self.filter_on is not None:
             res = []
             for name, _filter in self.filter_on.items():
@@ -426,6 +441,12 @@ class RetrievalArguments(GenericArguments):
             self.hybrid = {}
         if self.db_engine in ['milvus-bm25', 'milvus_bm25'] and self.milvus_idf_file is None:
             self.milvus_idf_file = os.path.join(self.project_dir, f"{self.index_name}.idf")
+        if self.sparse_config is None:
+            self.sparse_config = SparseConfig()
+        elif isinstance(self.sparse_config, dict):
+            self.sparse_config = SparseConfig(**self.sparse_config)
+        else:
+            raise NotImplementedError
 
 @dataclass
 class EngineArguments(GenericArguments):
@@ -536,7 +557,7 @@ class RerankerArguments(GenericArguments):
         }
     )
 
-    reranker_engine: Literal["dense", "splade", "none"] = field(
+    reranker_engine: Literal["dense", "splade", "none", "cross-encoder"] = field(
         default="dense",
         metadata={
             "help": "The model type to use for reranking."
@@ -554,6 +575,13 @@ class RerankerArguments(GenericArguments):
         default=False,
         metadata={
             "help": "If specified, the splade vector would be formatted with text tokens"
+        }
+    )
+
+    reranker_top_k: Optional[int] = field(
+        default=-1,
+        metadata={
+            "help": "The number of documents to rerank."
         }
     )
 
@@ -690,6 +718,11 @@ class DocUVerseConfig(GenericArguments):
 
         """
 
+    default_retriever_config = RetrievalArguments()
+    default_reranker_config = RerankerArguments()
+    default_eval_config = EvaluationArguments()
+    default_run_config = EngineArguments()
+
     def __init__(self, config: dict | str = None):
         self.evaluate = None
         self.output_file = None
@@ -704,7 +737,7 @@ class DocUVerseConfig(GenericArguments):
         self.retriever_config: SearchEngineConfig | None = None
         self.run_config: RunConfig | None = None
         if isinstance(config, str | dict):
-            self.read_configs(config)
+            self.config = self.read_configs(config)
 
     def read_dict(self, kwargs):
         self._process_params(self.params.parse_dict, kwargs, allow_extra_keys=True)
@@ -729,7 +762,7 @@ class DocUVerseConfig(GenericArguments):
             for key, value in _dict.__dict__.items():
                 self.__setattr__(key, value)
 
-    def read_configs(self, config_or_path: str) -> GenericArguments:
+    def read_configs(self, config_or_path: str) -> GenericArguments | None:
         if isinstance(config_or_path, str):
             if os.path.exists(config_or_path):
                 try:
@@ -769,10 +802,6 @@ class DocUVerseConfig(GenericArguments):
                 if value != default.__dict__[key]:
                     output_class.__dict__[key] = value
 
-    default_retriever_config = RetrievalArguments()
-    default_reranker_config = RerankerArguments()
-    default_eval_config = EvaluationArguments()
-    default_run_config = EngineArguments()
 
     @staticmethod
     def get_stdargs_config():
@@ -792,3 +821,9 @@ class DocUVerseConfig(GenericArguments):
         if config.retriever_config.num_preprocessor_threads > 1:
             os.environ['TOKENIZERS_PARALLELISM'] = "false"
         return config
+
+    def to_yaml(self):
+        return yaml.dump({'retriever': asdict(self.retriever_config),
+                          'reranker': asdict(self.reranker_config),
+                          'evaluate': asdict(self.eval_config)
+                          })

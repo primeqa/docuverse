@@ -2,21 +2,18 @@ import math
 from copy import deepcopy
 
 import torch
-
-from docuverse import SearchResult
-from docuverse.utils.embeddings.dense_embedding_function import DenseEmbeddingFunction
-from .reranker import Reranker
-from sentence_transformers import util as st_util
+from .bi_encoder_reranker import BiEncoderReranker
 from docuverse.engines.search_engine_config_params import RerankerConfig as RerankerConfig
 from ...utils.embeddings.sparse_embedding_function import SparseEmbeddingFunction
 from ...utils.timer import timer
 
 
-class SpladeReranker(Reranker):
+class SpladeReranker(BiEncoderReranker):
     def __init__(self, reranking_config: RerankerConfig|dict, **kwargs):
         super().__init__(reranking_config, **kwargs)
         self.model = SparseEmbeddingFunction(reranking_config.reranker_model,
-                                             batch_size=reranking_config.reranker_gpu_batch_size)
+                                             batch_size=reranking_config.reranker_gpu_batch_size,
+                                             process_name="reranking")
 
     def pair_similarity(self, pair, device='cpu'):
         return self.similarity(pair[0], pair[1], device)

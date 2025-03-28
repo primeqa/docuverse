@@ -1,21 +1,16 @@
 import json
 import pickle
-from multiprocessing import Pool
-from typing import List, Tuple, Union
+from typing import List, Union
 
 import os
 
-from pydantic_core.core_schema import LiteralSchema
-from tqdm import tqdm
 from copy import deepcopy
-
-from triton.language.extra.cuda import num_threads
 
 from docuverse.utils import (
     open_stream,
     file_is_of_type,
     parallel_process,
-    ask_for_confirmation
+    ask_for_confirmation, prepare_for_save_and_backup
 )
 from docuverse.engines import SearchData
 
@@ -25,8 +20,9 @@ from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.utils.evaluation_output import EvaluationOutput
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
-from docuverse.engines.reranking.reranker import Reranker
+from docuverse.engines.reranking.bi_encoder_reranker import BiEncoderReranker
 from docuverse.utils.text_tiler import TextTiler
+# from docuverse.utils.timer import timer
 
 
 class SearchEngine:
@@ -54,7 +50,7 @@ class SearchEngine:
         from docuverse.utils.retrievers import create_retrieval_engine
         return create_retrieval_engine(self.config.retriever_config)
 
-    def _create_reranker(self) -> Reranker | None:
+    def _create_reranker(self) -> BiEncoderReranker | None:
         if self.config.reranker_config is None or self.config.reranker_config.reranker_model is None:
             return None
 
@@ -83,7 +79,10 @@ class SearchEngine:
             self.write_necessary = True
             self.write_cache_file(answers, cache_file)
         if self.reranker is not None:
-            ranswers, cache_file = self.read_cache_file(extension=".rerank.pkl.bz2")
+            if self.write_necessary: # The retriever just got run, therefore force running the reranker
+                ranswers, cache_file = None, self._get_cache_file(extension=".rerank.pkl.bz2")
+            else:
+                ranswers, cache_file = self.read_cache_file(extension=".rerank.pkl.bz2")
             if ranswers is None:
                 answers = self.reranker.rerank(answers)
                 self.write_necessary = True
@@ -91,7 +90,10 @@ class SearchEngine:
                 self.write_cache_file(answers, cache_file)
             else:
                 answers = ranswers
-
+        # tm = timer.subtimer_from_top("search", default_parent="ingest_and_test")
+        for answer in answers:
+            answer.remove_duplicates(self.config.duplicate_removal, self.config.rouge_duplicate_threshold)
+        # tm.add_timing("remove duplicates")
         return answers
 
     def read_cache_file(self, extension):
@@ -99,20 +101,24 @@ class SearchEngine:
         cache_file = None
         if self.config.cache_dir is not None and not self.config.no_cache:
             # Read the results if available, don't search again
-            base_cache_file = os.path.basename(self.config.output_file.replace(".json", extension))
-            cache_file = os.path.join(self.config.cache_dir, base_cache_file)
+            cache_file = self._get_cache_file(extension)
             if os.path.exists(cache_file):
                 r = ask_for_confirmation(f"File {cache_file} exists, read?",
                                          answers=['yes', 'no'],
                                          default='no')
                 if r=='no':
-                    return None, None
+                    return None, cache_file
                 print(f"Reading cached search results from {cache_file}")
                 try:
                     answers = self.read_output(cache_file)
                 except Exception as e:
                     print(f"Failed to read cache file {cache_file}: {e}")
         return answers, cache_file
+
+    def _get_cache_file(self, extension):
+        base_cache_file = os.path.basename(self.config.output_file.replace(".json", extension))
+        cache_file = os.path.join(self.config.cache_dir, base_cache_file)
+        return cache_file
 
     def write_cache_file(self, values, cache_file):
         if cache_file is not None:
@@ -130,14 +136,7 @@ class SearchEngine:
         import json
         if not self.write_necessary:
             return
-        if not overwrite and os.path.exists(self.config.output_file):
-            # Make a copy before writing over
-            import shutil
-            i = 1
-            template = self.config.output_file.replace(".json", "")
-            while os.path.exists(f"{template}.bak{i}.json"):
-                i += 1
-            shutil.copy2(self.config.output_file, f"{template}.bak{i}.json")
+        prepare_for_save_and_backup(self.config.output_file, overwrite)
         if output_file is None:
             output_file = self.config.output_file
         if file_is_of_type(output_file, extensions=".json"):
@@ -149,6 +148,7 @@ class SearchEngine:
         elif file_is_of_type(output_file, extensions=".pkl"):
             with open_stream(output_file, write=True, binary=True) as outfile:
                 pickle.dump(output, outfile)
+
 
     @staticmethod
     def read_output_(filename: str, query_template) -> List[SearchResult]:
@@ -164,7 +164,8 @@ class SearchEngine:
             res = pickle.load(open_stream(filename, binary=True))
         return res
 
-    def read_output(self, filename):
+    def read_output(self, filename=None) -> list[SearchResult]:
+        filename = self.config.output_file if filename is None else filename
         return SearchEngine.read_output_(filename, self.config.query_template)
 
     def set_index(self, index=None):
