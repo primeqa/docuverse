@@ -1,0 +1,31 @@
+retriever:
+    project_dir: data/clapnq_small
+    input_queries: "{{project_dir}}/question_dev_answerable.tsv"
+    input_passages: "{{project_dir}}/passages.tsv"
+    db_engine: milvus-dense
+    model_name: "ibm-granite/granite-embedding-30m-english"
+    dataset: clapnq
+    date: 20250328
+    top_k: 40
+    actions: "ire"
+    max_doc_length: 512
+    stride: 100
+    index_name: "{{dataset}}-granite30m-{{max_doc_length}}-{{stride}}-{{date}}"
+    # server: "localhost"
+    server: "file:{{project_dir}}/file_test.db"
+    doc_based: 1
+    aligned_on_sentences: 0
+    title_handling: "all"
+    output_file: "{{project_dir}}/output/{{dataset}}-granite30m.json"
+    data_format: "config/clapnq_data_format.yml"
+    num_preprocessor_threads: 8
+    bulk_batch: 128
+    index_params:
+      index_type: FLAT
+      metric_type: IP
+    search_params:
+      metric_type: IP
+reranker: null
+evaluate:
+    eval_measure: "match,mrr,ndcg"
+    ranks: "1,3,5,10,40"
