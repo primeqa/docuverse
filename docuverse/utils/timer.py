@@ -355,7 +355,7 @@ class timer(object):
         tm.add_timing("method4::submethod1::subsubmethod2", 100)
         tm.add_timing("method4::submethod1", 250)
 
-        tm.display_timing(9000, keys={'pigs':100, 'chars':10000})
+        tm.display_timing(9000, keys={'pigs':100, 'cats':10000})
 
 
 if __name__ == "__main__":
