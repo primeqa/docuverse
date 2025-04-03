@@ -55,6 +55,8 @@ class MilvusDenseEngine(MilvusEngine):
         }
         _default_index_params = get_param(self.milvus_defaults, "search_params.default_dense", _basic_index_params)
         _index_params = get_param(self.config, 'index_params', _default_index_params)
+        if _index_params is None:
+            _index_params = _basic_index_params
         import json
         print(f"Index params: {json.dumps(_index_params, indent=2)}")
         index_params.add_index(
