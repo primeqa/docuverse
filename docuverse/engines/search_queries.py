@@ -116,6 +116,7 @@ class SearchQueries(SearchData):
                 out_text_header = query_template.text_header.split("|")[0]
                 out_id_header = query_template.id_header.split("|")[0]
                 out_relevant_header = query_template.relevant_header.split("|")[0]
+                not_printed = True
                 for it, row in enumerate(at_most(question_data, max_num_questions)):
                     question = get_param(row, query_template.text_header)
                     if url is not None:
@@ -145,11 +146,13 @@ class SearchQueries(SearchData):
                                                 val = re.sub(cls._ms, "','", val)
                                             val = val.replace("'", '"')
                                         try:
-                                            # print(f"Loading {it}: {val}")
-                                            val = json.loads(val)
-                                            itm[extra] = val
+                                            vv = json.loads(val)
                                         except Exception as e:
-                                            print(f"Cannot parse field {row[extra]}: {e}")
+                                            if not_printed:
+                                                print(f"Field {extra}:'{row[extra][:20]}...' is not json, keeping as string.")
+                                                not_printed = False
+                                            vv = val
+                                        itm[extra] = vv
                                     else:
                                         itm[extra] = val
                                 elif isinstance(val, list|dict):
