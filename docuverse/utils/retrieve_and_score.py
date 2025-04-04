@@ -12,6 +12,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--get_best_rouge_passage', default=False, action='store_true',
                         help='Whether to rank the passages by rouge with the gold answer')
+    parser.add_argument("--max_rank", type=int, default=100, help="Maximum rank to compute match")
     args = parser.parse_args()
 
     config = DocUVerseConfig(args.config)
