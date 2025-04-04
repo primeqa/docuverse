@@ -6,7 +6,6 @@ import re
 import time
 from itertools import chain
 from functools import partial
-from multiprocessing import Manager, Queue, Process
 from typing import Dict, List
 from tqdm import tqdm
 import queue
@@ -544,57 +543,57 @@ class SearchData:
         else:
             return passages
 
-    @classmethod
-    def parallel_process(cls, process_func, data, num_threads, post_func=None, post_label=None):
-        doc_queue = Queue()
-        manager = Manager()
-        d = manager.dict()
-        import multiprocessing as mp
-        def processor(inqueue, d):
-            pid = mp.current_process().pid
-            while True:
-                try:
-                    id, text = inqueue.get(block=True, timeout=1)
-                except queue.Empty:
-                    break
-                except Exception as e:
-                    break
-
-                try:
-                    items = process_func(unit=text)
-                    if post_func is not None:
-                        d[id] = [{**item,
-                                  post_label: post_func(item)}
-                                  for item in items]
-                    else:
-                        d[id] = items
-
-                except Exception as e:
-                    d[id] = []
-
-        for i, doc in enumerate(data):
-            doc_queue.put([i, doc])
-        processes = []
-        for i in range(num_threads):
-            p = Process(target=processor, args=(doc_queue, d))
-            processes.append(p)
-            p.start()
-        tk = tqdm(desc="Reading docs:", total=doc_queue.qsize())
-        c = doc_queue.qsize()
-        while c > 0:
-            c1 = doc_queue.qsize()
-            if c != c1:
-                tk.update(c - c1)
-                c = c1
-            time.sleep(0.1)
-        print(f"Dropped out of the while loop: {doc_queue.qsize()}")
-        tk.clear()
-        for i, p in enumerate(processes):
-            p.join()
-        tpassages = []
-        for i in range(len(data)):
-            tpassages.extend(d[i])
-        return tpassages
+    # @classmethod
+    # def parallel_process(cls, process_func, data, num_threads, post_func=None, post_label=None):
+    #     doc_queue = Queue()
+    #     manager = Manager()
+    #     d = manager.dict()
+    #     import multiprocessing as mp
+    #     def processor(inqueue, d):
+    #         pid = mp.current_process().pid
+    #         while True:
+    #             try:
+    #                 id, text = inqueue.get(block=True, timeout=1)
+    #             except queue.Empty:
+    #                 break
+    #             except Exception as e:
+    #                 break
+    #
+    #             try:
+    #                 items = process_func(unit=text)
+    #                 if post_func is not None:
+    #                     d[id] = [{**item,
+    #                               post_label: post_func(item)}
+    #                               for item in items]
+    #                 else:
+    #                     d[id] = items
+    #
+    #             except Exception as e:
+    #                 d[id] = []
+    #
+    #     for i, doc in enumerate(data):
+    #         doc_queue.put([i, doc])
+    #     processes = []
+    #     for i in range(num_threads):
+    #         p = Process(target=processor, args=(doc_queue, d))
+    #         processes.append(p)
+    #         p.start()
+    #     tk = tqdm(desc="Reading docs:", total=doc_queue.qsize())
+    #     c = doc_queue.qsize()
+    #     while c > 0:
+    #         c1 = doc_queue.qsize()
+    #         if c != c1:
+    #             tk.update(c - c1)
+    #             c = c1
+    #         time.sleep(0.1)
+    #     print(f"Dropped out of the while loop: {doc_queue.qsize()}")
+    #     tk.clear()
+    #     for i, p in enumerate(processes):
+    #         p.join()
+    #     tpassages = []
+    #     for i in range(len(data)):
+    #         tpassages.extend(d[i])
+    #     return tpassages
 
     @classmethod
     def _read_csv_query_file(cls, data_template, data_type, in_file):
