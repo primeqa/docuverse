@@ -39,7 +39,7 @@ class SearchQueries(SearchData):
 
         @property
         def text(self):
-            return get_param(self, self.template.text_header)
+            return get_param(self.args, self.template.text_header)
 
     def __init__(self, preprocessor, filenames, **data):
         super().__init__(filenames, **data)
@@ -116,6 +116,9 @@ class SearchQueries(SearchData):
                 out_text_header = query_template.text_header.split("|")[0]
                 out_id_header = query_template.id_header.split("|")[0]
                 out_relevant_header = query_template.relevant_header.split("|")[0]
+                # out_text_header = "text"
+                # out_id_header = "id"
+                # out_relevant_header = "relevant"
                 not_printed = True
                 for it, row in enumerate(at_most(question_data, max_num_questions)):
                     question = get_param(row, query_template.text_header)

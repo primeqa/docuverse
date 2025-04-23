@@ -1,11 +1,14 @@
 import argparse
+import sys
 
 import numpy as np
 import pandas as pd
 import json
+
+import yaml
 from tqdm import tqdm
 
-field_map = {
+zfield_map = {
     "is_essuperuser_ibmentitlement": "",
     'scopes': 'metadata.scopes',
     'doc_vector': '',
@@ -27,6 +30,7 @@ field_map = {
     'ibmdocsproduct': 'metadata.ibmdocsproduct',
     'title': 'title'
 }
+field_map = zfield_map
 
 
 def add_to_doc(doc, new_key, value):
@@ -53,6 +57,15 @@ def append(res, datum):
         res.append(doc)
 
 
+def read_field_map(field_map):
+    config = yaml.safe_load(open(field_map))
+    if 'field_map' in config:
+        return config['field_map']
+    else:
+        print("Malformed field map yaml file: it should be a yaml file with a top 'field_map' key, "
+              "which is dictionary of mappings")
+        sys.exit(11)
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('input_files', nargs='+', help="The input files")
@@ -60,6 +73,7 @@ if __name__ == '__main__':
                         help="If provided, it will list the keys in the first file and exit.")
     parser.add_argument('-e', '--exclude_keys',
                         help="If provided, it will ignore the given keys")
+    parser.add_argument('-f', '--field-map', type=str, default=None, help="A yaml file defining the field mapping")
     parser.add_argument('-o', "--output", type=str, help="The output file")
     args = parser.parse_args()
     input_files = args.input_files
@@ -76,11 +90,16 @@ if __name__ == '__main__':
                 else:
                     print(f"{v}")
             exit(0)
+    if args.field_map:
+        field_map = read_field_map(args.field_map)
     for file in input_files:
-        df = pd.read_parquet(file)
+        if file.endswith(".parquet"):
+            df = pd.read_parquet(file)
+        elif file.endswith(".csv"):
+            df = pd.read_csv(file)
         # add_to_doc(result, df)
         append(result, df)
 
-    with open(args.output, 'w') as f:
+    with open(args.output, 'w', encoding="utf8") as f:
         for doc in result:
-            f.write(json.dumps(doc) + '\n')
+            f.write(json.dumps(doc, ensure_ascii=False).replace("NaN", '""') + '\n')
