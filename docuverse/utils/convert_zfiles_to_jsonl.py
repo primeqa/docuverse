@@ -54,17 +54,34 @@ def append(res, datum):
         for k, v in dd.items():
             if k in field_map and field_map[k] != "":
                 add_to_doc(doc, field_map[k], v)
+        if add_fields is not None:
+            for k, v in add_fields.items():
+                add_to_doc(doc, k, v)
         res.append(doc)
 
 
 def read_field_map(field_map):
     config = yaml.safe_load(open(field_map))
     if 'field_map' in config:
-        return config['field_map']
+        return config['field_map'], config['add_fields'] if 'add_fields' in config else None
     else:
         print("Malformed field map yaml file: it should be a yaml file with a top 'field_map' key, "
               "which is dictionary of mappings")
         sys.exit(11)
+
+
+def read_file(file: str):
+    if file.endswith(".parquet"):
+        df = pd.read_parquet(file)
+    elif file.endswith(".csv"):
+        df = pd.read_csv(file)
+    elif file.endswith(".jsonl"):
+        df = pd.read_json(file, lines=True)
+    else:
+        print(f"Unsupported file type: {file}")
+        exit(1)
+    return df
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -80,7 +97,8 @@ if __name__ == '__main__':
     result = list()
 
     if args.list_keys:
-        df = pd.read_parquet(input_files[0])
+        # df = pd.read_parquet(input_files[0])
+        df = read_file(input_files[0])
         for index, row in df.iterrows():
             # print("Keys: ", "\n * ".join(row.keys()))
             for k, v in row.to_dict().items():
@@ -91,12 +109,9 @@ if __name__ == '__main__':
                     print(f"{v}")
             exit(0)
     if args.field_map:
-        field_map = read_field_map(args.field_map)
+        field_map, add_fields = read_field_map(args.field_map)
     for file in input_files:
-        if file.endswith(".parquet"):
-            df = pd.read_parquet(file)
-        elif file.endswith(".csv"):
-            df = pd.read_csv(file)
+        df = read_file(file)
         # add_to_doc(result, df)
         append(result, df)
 

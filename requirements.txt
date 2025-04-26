@@ -5,7 +5,7 @@ sentence-transformers
 python-dotenv~=1.0.1
 numpy~=2.2.3
 urllib3~=1.26.18
-torch~=2.6.0
+torch~=2.7.0
 tqdm~=4.67.1
 transformers~=4.49.0
 orjson~=3.10.5
