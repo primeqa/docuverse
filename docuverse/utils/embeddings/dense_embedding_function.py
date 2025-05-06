@@ -14,7 +14,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
     def __init__(self, model_or_directory_name, batch_size=128, **kwargs):
         super().__init__(model_or_directory_name=model_or_directory_name, batch_size=batch_size, **kwargs)
         import torch
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'  # "mps" if torch.backends.mps.is_available() else 'cpu'
+        device = 'cuda' if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else 'cpu'
         if device == 'cpu':
             print(f"You are using {device}. This is much slower than using "
                   "a CUDA-enabled GPU. If on Colab you can change this by "
@@ -22,8 +22,12 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             self.num_devices = 0
         else:
             self.num_devices = torch.cuda.device_count()
-            print("Running on the gpus: ",
-                  simple_colors.red([torch.cuda.get_device_name(i) for i in range(self.num_devices)], ['bold']))
+            if torch.cuda.is_available():
+                print("Running on the gpus: ",
+                      simple_colors.red([torch.cuda.get_device_name(i) for i in range(self.num_devices)], ['bold']))
+            elif torch.backends.mps.is_available():
+                print(f"Running on the {simple_colors.red('mps')} ")
+
         self.pqa = False
         self.emb_pool = None
         # if os.path.exists(name):
