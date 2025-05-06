@@ -5,7 +5,7 @@ import torch
 import numpy as np
 from typing import Union, List
 
-from docuverse.utils import get_param, get_config_dir
+from docuverse.utils import get_param, detect_device
 from docuverse.utils.embeddings.embedding_function import EmbeddingFunction
 import simple_colors
 
@@ -14,7 +14,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
     def __init__(self, model_or_directory_name, batch_size=128, **kwargs):
         super().__init__(model_or_directory_name=model_or_directory_name, batch_size=batch_size, **kwargs)
         import torch
-        device = 'cuda' if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else 'cpu'
+        device = detect_device()
         if device == 'cpu':
             print(f"You are using {device}. This is much slower than using "
                   "a CUDA-enabled GPU. If on Colab you can change this by "
@@ -30,19 +30,6 @@ class DenseEmbeddingFunction(EmbeddingFunction):
 
         self.pqa = False
         self.emb_pool = None
-        # if os.path.exists(name):
-        #     raise NotImplemented
-        #     # from transformers import DPRQuestionEncoder, DPRQuestionEncoderTokenizer, AutoConfig
-        #     # self.queries_to_vectors = None # queries_to_vectors
-        #     # self.model = DPRQuestionEncoder.from_pretrained(
-        #     #     pretrained_model_name_or_path=name,
-        #     #     from_tf = False,
-        #     #     cache_dir=None,)
-        #     # self.model.eval()
-        #     # self.model = self.model.half()
-        #     # self.model.to(device)
-        #     # self.pqa = True
-        # else:
         dmf_loaded = False
         if get_param(kwargs, 'from_dmf', None) is not None:
             model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
@@ -68,6 +55,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                 raise RuntimeError(f"Model not found: {model_or_directory_name}")
 
         print('=== done initializing model')
+
 
     def __call__(self, texts: Union[List[str], str], **kwargs) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:

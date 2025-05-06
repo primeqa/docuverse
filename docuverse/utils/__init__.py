@@ -22,6 +22,11 @@ import yaml
 from tqdm.auto import tqdm
 
 
+def detect_device():
+    import torch
+    device = 'cuda' if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else 'cpu'
+    return device
+
 def get_param(dictionary: dict|list[dict]|object, key: str, default: str | None | bool | int | float | dict= None):
     def recursive_get(_dictionary, key, default):
         if _dictionary is None:
