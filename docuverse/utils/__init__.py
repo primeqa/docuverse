@@ -5,7 +5,15 @@ import os
 import queue
 import re
 import time
-from multiprocessing import Queue, Manager, Process
+import sys
+if sys.platform == "darwin":
+    print("We're on a Mac !!")
+    from multiprocess import Queue, Manager, Process
+    import multiprocess as mp
+else:
+    from multiprocessing import Queue, Manager, Process
+    import multiprocessing as mp
+
 from typing import List, Union
 from jinja2 import Template, Undefined
 
@@ -291,7 +299,7 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     doc_queue = Queue()
     manager = Manager()
     d = manager.dict()
-    import multiprocessing as mp
+    print(f"Created dictionary: {d}")
     def processor(inqueue, d, thread_number, size):
         pid = mp.current_process().pid
         with tqdm(desc=f"{msg}/thread {thread_number}", leave=False,
@@ -313,15 +321,17 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
                 except Exception as e:
                     d[id] = []
 
-    for i, doc in enumerate(data):
+    for i, doc in tqdm(enumerate(data), desc="Adding docs:"):
         doc_queue.put([i, doc])
     processes = []
     tk = tqdm(desc=f"{msg}:", total=doc_queue.qsize(), leave=True, position=0)
     c = doc_queue.qsize()
+    print("starting processes")
     for i in range(num_threads):
         p = Process(target=processor, args=(doc_queue, d, i, doc_queue.qsize()/num_threads,))
         processes.append(p)
         p.start()
+    print("Running")
     while c > 0:
         c1 = doc_queue.qsize()
         if c != c1:

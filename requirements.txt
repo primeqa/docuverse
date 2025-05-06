@@ -5,7 +5,8 @@ sentence-transformers
 python-dotenv~=1.0.1
 numpy~=2.2.3
 urllib3~=1.26.18
-torch~=2.7.0
+torch~=2.7.0;platform_system!="Darwin"
+torch~=2.2.2;platform_system=="Darwin"
 tqdm~=4.67.1
 transformers~=4.49.0
 orjson~=3.10.5

@@ -77,6 +77,9 @@ class MilvusEngine(RetrievalEngine):
         self.server = None
         if get_param(self.config, 'server', None):
             if self.config.server.find("file:") >= 0:
+                file_dir = os.path.dirname(self.config.server)
+                if not os.path.isdir(file_dir):
+                    os.makedirs(file_dir, exist_ok=True)
                 self.server = Server(host=self.config.server)
             else:
                 self.server = self.servers[self.config.server]

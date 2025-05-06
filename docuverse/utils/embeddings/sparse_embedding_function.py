@@ -8,7 +8,7 @@ import torch
 import numpy as np
 from typing import Union, List, Dict
 
-from triton.language.extra.cuda import num_threads
+# from triton.language.extra.cuda import num_threads
 
 from docuverse.utils import get_param, get_config_dir
 from docuverse.utils.embeddings.embedding_function import EmbeddingFunction
@@ -138,7 +138,7 @@ class SparseEmbeddingFunction(EmbeddingFunction):
         super().__init__(model_or_directory_name=model_or_directory_name, batch_size=batch_size, **kwargs)
         self.model = None
         import torch
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'  # "mps" if torch.backends.mps.is_available() else 'cpu'
+        device = 'cuda' if torch.cuda.is_available() else "cpu" # "mps" if torch.backends.mps.is_available() else 'cpu'
         if device == 'cpu':
             print(f"You are using {device}. This is much slower than using "
                   "a CUDA-enabled GPU. If on Colab you can change this by "
