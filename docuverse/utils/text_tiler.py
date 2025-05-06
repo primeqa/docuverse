@@ -297,20 +297,21 @@ class TextTiler:
                                              return_offsets_mapping=True)
                         texts = []
                         positions = []
-                        end_token = re.compile(f' ?{re.escape(tokenizer.sep_token)}$')
-                        start_token = re.compile(f'{re.escape(tokenizer.cls_token)} ?')
+                        # end_token = re.compile(f' ?{re.escape(tokenizer.sep_token)}$')
+                        # start_token = re.compile(f'{re.escape(tokenizer.cls_token)} ?')
                         # init_pos = 0
                         for split_passage, offsets in zip(res['input_ids'], res['offset_mapping']):
-                            tt = self.remove_start_end_tokens(tokenizer, split_passage, start_token, end_token)
-                            texts.append(tt)
-                            id = 0
-                            while split_passage[id] == tokenizer.cls_token_id:
-                                id += 1
-                            init_pos = offsets[id][0]
-                            id = -1
-                            while split_passage[id] == tokenizer.sep_token_id:
-                                id -= 1
-                            end_pos = offsets[id][1]
+                            # tt = self.remove_start_end_tokens(tokenizer, split_passage, start_token, end_token)
+                            sid = 0
+                            while split_passage[sid] == tokenizer.cls_token_id:
+                                sid += 1
+                            init_pos = offsets[sid][0]
+                            eid = -1
+                            while split_passage[eid] == tokenizer.sep_token_id:
+                                eid -= 1
+                            end_pos = offsets[eid][1]
+                            # texts.append(split_passage[init_pos:end_pos+1])
+                            texts.append(tokenizer.decode(split_passage[sid:eid+1]))
                             positions.append([init_pos, end_pos])
                             # init_pos += stride
                         added_titles = [False for _ in positions]
