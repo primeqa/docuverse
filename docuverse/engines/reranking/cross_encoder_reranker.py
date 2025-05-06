@@ -24,7 +24,7 @@ class CrossEncoderModel:
     tokenizer : Tokenizer associated with the model for input processing.
 
     """
-    def __init__(self, model_name, device='cuda'):
+    def __init__(self, model_name_or_path, device='cuda'):
         """
         Initializes the object with a language model and its associated tokenizer. The model is configured
         for sequence classification tasks and is set up to run on the specified device.
@@ -36,7 +36,8 @@ class CrossEncoderModel:
             The device on which the model will run, such as 'cuda' or 'cpu'.
         """
         # self.model = AutoModel.from_pretrained(model_name)
-        self.model = CrossEncoder(model_name, device=device)
+        self.model = CrossEncoder(model_name_or_path, device=device,
+                                  tokenizer_kwargs={'model_max_length': 512})
         # self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
         # self.model.to(device)
         # self.tokenizer = AutoTokenizer.from_pretrained(model_name)

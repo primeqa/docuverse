@@ -1,6 +1,8 @@
 import json
 from typing import List, Dict, Union
 
+import pymilvus
+
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.utils import get_param
 
@@ -145,7 +147,7 @@ class SearchResult:
         elif isinstance(data, list):
             if len(data) == 0:
                 return []
-            elif isinstance(data[0], dict):
+            elif isinstance(data[0], dict) or isinstance(data[0], pymilvus.client.search_reasult.Hit):
                 if 'entity' in data[0]:
                     data = sorted(data, key=lambda k: (k['distance'], k['entity']['id']), reverse=True)
                     for r in data:

@@ -53,10 +53,12 @@ class MilvusDenseEngine(MilvusEngine):
                     "M": 128,
                     "efConstruction": 128}
         }
-        _default_index_params = get_param(self.milvus_defaults, "search_params.default_dense", _basic_index_params)
+        _default_index_params = get_param(self.milvus_defaults, "index_params.default_dense", _basic_index_params)
         _index_params = get_param(self.config, 'index_params', _default_index_params)
         if _index_params is None:
             _index_params = _basic_index_params
+        elif isinstance(_index_params, str):
+            _index_params = get_param(self.milvus_defaults, "index_params." + _index_params, _basic_index_params)
         import json
         print(f"Index params: {json.dumps(_index_params, indent=2)}")
         index_params.add_index(
@@ -92,6 +94,8 @@ class MilvusDenseEngine(MilvusEngine):
     def get_search_params(self):
         search_params = get_param(self.config, 'search_params',
                                   self.milvus_defaults['search_params']["HNSW"])
+        if isinstance(search_params, str):
+            search_params = get_param(self.milvus_defaults, "search_params." + search_params)
         return search_params
 
     def encode_data(self, texts, batch_size, **kwargs):

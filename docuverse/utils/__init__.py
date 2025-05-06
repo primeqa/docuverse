@@ -18,7 +18,9 @@ def get_param(dictionary: dict|list[dict]|object, key: str, default: str | None 
     def recursive_get(_dictionary, key, default):
         if _dictionary is None:
             return default
-        if key.find(".") >= 0:
+        elif isinstance(_dictionary, dict) and key in _dictionary:
+            return _dictionary.get(key)
+        elif key.find(".") >= 0:
             keys = key.split(".")
             res = default
             if isinstance(_dictionary, dict):

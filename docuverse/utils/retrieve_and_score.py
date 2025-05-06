@@ -1,6 +1,6 @@
 import argparse
 
-from docuverse.utils import save_command_line
+from docuverse.utils import save_command_line, parallel_process
 
 from docuverse import SearchEngine
 from docuverse.engines.search_engine_config_params import DocUVerseConfig
@@ -32,11 +32,26 @@ if __name__ == "__main__":
         from rouge_score.rouge_scorer import RougeScorer
         rouge_scorer = RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
 
-        for res in results:
-            gold = res.question['Gold Answer']
+        # for res in results:
+        #     gold = res.question['Gold Answer']
+        #     scores = []
+        #     for answer in res[:args.max_rank]:
+        #         score = rouge_scorer.score(gold, answer.text)
+        #         scores.append(score['rouge1'].recall)
+        #     inds = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+        #     print(f"Best answer for {res.question.text}: {res[inds[0]]['id']}, recall: {scores[inds[0]]}")
+        def compute_rouge(result):
+            gold = result.question['Gold Answer']
+
             scores = []
-            for answer in res:
+            for answer in result:
                 score = rouge_scorer.score(gold, answer.text)
                 scores.append(score['rouge1'].recall)
+
             inds = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-            print(f"Best answer for {res.question.text}: {res[inds[0]]['id']}, recall: {scores[inds[0]]}")
+            # print(f"Best answer for {res.question.text}: {res[inds[0]]['id']}, recall: {scores[inds[0]]}")
+            return {result.question.id: {"best": result[inds[0]]['id'], "score": scores[inds[0]]}}
+
+        best_match = parallel_process(compute_rouge, results,
+                                      num_threads=4, msg="Finding best matches")
+        print(f"Best match\n{best_match}")
