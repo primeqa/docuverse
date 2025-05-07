@@ -1,7 +1,3 @@
-import os
-
-from transformers import AutoTokenizer
-import torch
 import numpy as np
 from typing import Union, List
 
