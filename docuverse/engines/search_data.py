@@ -384,20 +384,11 @@ class SearchData:
                     except Exception as e:
                         print(f"Error while processing passage {id}-{passage_id}: {e}")
                     return tpassages
+                return None
 
     @staticmethod
     def remove_stopwords(txt, **kwargs):
         return txt
-
-    # @staticmethod
-    # def get_orig_docid(id):
-    #     if isinstance(id, int):
-    #         return id
-    #     index = id.rfind("-", 0, id.rfind("-"))
-    #     if index >= 0:
-    #         return id[:index]
-    #     else:
-    #         return id
 
     @classmethod
     def read_data(cls,
@@ -505,7 +496,7 @@ class SearchData:
 
             tpassages = []
             if num_threads <= 0:
-                for doc in tqdm(data, desc="Reading docs:"):
+                for doc in tqdm(data, desc="Processing docs"):
                     try:
                         items = process_text_func(unit=doc)
                     except Exception as e:
@@ -542,58 +533,6 @@ class SearchData:
             return passages, unmapped_ids
         else:
             return passages
-
-    # @classmethod
-    # def parallel_process(cls, process_func, data, num_threads, post_func=None, post_label=None):
-    #     doc_queue = Queue()
-    #     manager = Manager()
-    #     d = manager.dict()
-    #     import multiprocessing as mp
-    #     def processor(inqueue, d):
-    #         pid = mp.current_process().pid
-    #         while True:
-    #             try:
-    #                 id, text = inqueue.get(block=True, timeout=1)
-    #             except queue.Empty:
-    #                 break
-    #             except Exception as e:
-    #                 break
-    #
-    #             try:
-    #                 items = process_func(unit=text)
-    #                 if post_func is not None:
-    #                     d[id] = [{**item,
-    #                               post_label: post_func(item)}
-    #                               for item in items]
-    #                 else:
-    #                     d[id] = items
-    #
-    #             except Exception as e:
-    #                 d[id] = []
-    #
-    #     for i, doc in enumerate(data):
-    #         doc_queue.put([i, doc])
-    #     processes = []
-    #     for i in range(num_threads):
-    #         p = Process(target=processor, args=(doc_queue, d))
-    #         processes.append(p)
-    #         p.start()
-    #     tk = tqdm(desc="Reading docs:", total=doc_queue.qsize())
-    #     c = doc_queue.qsize()
-    #     while c > 0:
-    #         c1 = doc_queue.qsize()
-    #         if c != c1:
-    #             tk.update(c - c1)
-    #             c = c1
-    #         time.sleep(0.1)
-    #     print(f"Dropped out of the while loop: {doc_queue.qsize()}")
-    #     tk.clear()
-    #     for i, p in enumerate(processes):
-    #         p.join()
-    #     tpassages = []
-    #     for i in range(len(data)):
-    #         tpassages.extend(d[i])
-    #     return tpassages
 
     @classmethod
     def _read_csv_query_file(cls, data_template, data_type, in_file):
