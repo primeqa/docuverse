@@ -147,6 +147,7 @@ def read_config_file(config_file):
                 if len(parents) == 0:
                     return "None"
                 parents = parents[:-1]
+            return "None"
 
         not_done = False
         for key, val in local_dict.items():
@@ -367,14 +368,20 @@ def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes')
     """
     display_answers = ", ".join(a.title() if a==default else a for a in answers)
     print(text)
-    while True:
-        r = input(f"Say: {display_answers}, <enter>={default}:").strip()
-        if r=="":
-            return default
-        elif r in answers:
-            return r
-        else:
-            print(f"Please type one of {answers}, not {r}!")
+    try:
+        while True:
+            r = input(f"Say: {display_answers}, <enter>={default}:").strip()
+            if r=="":
+                return default
+            elif r in answers:
+                return r
+            else:
+                print(f"Please type one of {answers}, not {r}!")
+    except EOFError:
+        import simple_colors
+
+        print(f" <No input available: returning '{simple_colors.red(default)}'>")
+        return default
 
 def convert_to_single_vectors(embs):
     return [embs[[i], :] for i, _ in enumerate(embs)]
