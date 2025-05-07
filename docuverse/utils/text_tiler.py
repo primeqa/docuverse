@@ -228,10 +228,15 @@ class TextTiler:
                     try:
                         import pyizumo
                     except:
-                        raise ImportError(f"You need to install the pyzimo package before using this method.")
+                        raise ImportError(f"You need to install the pyizumo package before using this method.")
 
                     if not self.nlp:
-                        self.nlp = pyizumo.load(language_code, parsers=['token', 'sentence'])
+                        try:
+                            self.nlp = pyizumo.load(language_code, parsers=['token', 'sentence'])
+                        except Exception as e:
+                            raise ImportError(f"Problem loading the pyizumo package: {e}. If you're having trouble, "
+                                              f"maybe turn off sentence-based text splitting (--split_on_sentences=False) ")
+
                     parsed_text = self.nlp(text)
 
                     tsizes = []
@@ -350,6 +355,7 @@ class TextTiler:
                                 raise RuntimeError(f"Data too big: {idx} fragments.")
 
                 return texts, positions, added_titles
+        return [], [], []
 
     @staticmethod
     def remove_start_end_tokens(tokenizer, split_passage, start_token, end_token):
