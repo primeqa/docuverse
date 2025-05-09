@@ -391,6 +391,18 @@ class SearchData:
         return txt
 
     @classmethod
+    def read_filter(cls, val):
+        if isinstance(val, str):
+            if not os.path.exists(val):
+                raise RuntimeError(f"Filter file {val} does not exist.")
+            keys = {}
+            with open(val) as inp:
+                for line in inp:
+                    keys[line.strip()] = 1
+            return keys
+        return val
+
+    @classmethod
     def read_data(cls,
                   input_files,
                   lang="en",
@@ -439,8 +451,8 @@ class SearchData:
         elif data_type == "beir":
             data_template = beir_data_template
 
-        docid_filter = kwargs.get('docid_filter', [])
-        exclude_docids = kwargs.get('exclude_docids', [])
+        docid_filter   = cls.read_filter(kwargs.get('docid_filter', {}))
+        exclude_docids = cls.read_filter(kwargs.get('exclude_docids', {}))
         uniform_product_name = kwargs.get('uniform_product_name')
         from docuverse.utils.timer import timer
         tm = timer("Data Loading")
@@ -468,9 +480,9 @@ class SearchData:
                         skipped = 0
                         num_docs = len(to_copy)
                         if docid_filter:
-                            to_copy = [d for d in to_copy if d[data_template.id_header] in docid_filter]
+                            to_copy = [d for d in to_copy if get_orig_docid(d['id']) in docid_filter]
                         elif exclude_docids:
-                            to_copy = [d for d in to_copy if d[data_template.id_header] not in exclude_docids]
+                            to_copy = [d for d in to_copy if get_orig_docid(d['id']) not in exclude_docids]
                         print(f"Skipped {num_docs-len(to_copy)} passages.")
                         passages.extend(to_copy)
                         continue

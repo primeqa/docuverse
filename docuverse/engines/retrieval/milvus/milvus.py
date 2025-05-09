@@ -32,7 +32,6 @@ from docuverse.utils import get_param, read_config_file, vector_is_empty
 import os
 from dotenv import load_dotenv
 
-
 class MilvusEngine(RetrievalEngine):
     """MilvusEngine class
 
@@ -254,7 +253,7 @@ class MilvusEngine(RetrievalEngine):
 
             for f in self.config.data_template.extra_fields:
                 if isinstance(item[f], dict|list):
-                    dt[f] = json.dumps(item[f])
+                    dt[f] = json.dumps(self._trim_json(item[f]))
                 else:
                     dt[f] = str(item[f])
             data.append(dt)
@@ -354,3 +353,14 @@ class MilvusEngine(RetrievalEngine):
         Creates a search request, based on the type of the engine - used in hybrid/multi-index search
         """
         pass
+
+    @staticmethod
+    def _trim_json(data):
+        if isinstance(data, dict):
+            for k, v in data.items():
+                data[k] = MilvusEngine._trim_json(v)
+        elif isinstance(data, list):
+            data = [MilvusEngine._trim_json(v) for v in data]
+        elif isinstance(data, str):
+            data =  data[:9999]
+        return data
