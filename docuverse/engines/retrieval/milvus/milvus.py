@@ -86,7 +86,7 @@ class MilvusEngine(RetrievalEngine):
         self.init_model(**kwargs)
         # Milvus does not accept '-', only letters, numbers, and "_"
         self.init_client()
-        self.output_fields = ["id", "text", 'title']
+        self.output_fields = ["id", "text", 'title'] if self.config.store_text_in_index else ["title", "id"]
         # self.output_fields = [self.config.data_template.get(f"{t}_header", t) for t in ["id", "text", 'title']]
         extra = get_param(self.config.data_template, 'extra_fields', None)
         self.ingestion_batch_size = get_param(self.config, 'bulk_batch', 40)
@@ -273,9 +273,11 @@ class MilvusEngine(RetrievalEngine):
         fields = [
             FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID", auto_id=True),
             FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=False, max_length=1000),
-            FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=21000),
             FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=10000),
         ]
+        if self.config.store_text_in_index:
+            fields.append(FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=21000))
+
         if self.config.data_template.extra_fields is not None:
             for f in self.config.data_template.extra_fields:
                 fields.append(FieldSchema(name=f, dtype=DataType.VARCHAR, max_length=10000))
