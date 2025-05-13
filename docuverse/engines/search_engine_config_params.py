@@ -257,7 +257,13 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
-
+    store_text_in_index: Optional[bool] = field(
+        default=True,
+        metadata={
+            "help": "If true, the documents will be stored in the index as text. If it's set to false,"
+                    "the text will not be stored in the index (presumably, too large)."
+        }
+    )
 
     bulk_batch: Optional[int] = field(
         default=40,

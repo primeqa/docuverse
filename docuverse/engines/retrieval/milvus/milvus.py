@@ -244,7 +244,10 @@ class MilvusEngine(RetrievalEngine):
             # if isinstance(vector, spmatrix) and vector.getnnz() == 0:
             if vector_is_empty(vector):
                 continue
-            dt = {key: item[key] for key in ['text', 'title', 'id']}
+            keys = ['text', 'title', 'id'] if self.config.store_text_in_index else ['title', 'id']
+            dt = {key: item[key] for key in keys}
+            if 'text' in dt and len(dt['text']) > 19950: # Trim to avoid
+                dt['text'] = dt['text'][:19950]+" <trimmed>"
             # dt[self.embeddings_name] = vector.reshape(1, vector.shape[0])
             if isinstance(vector, csr_array):
                 if len(vector.shape) == 1:
@@ -270,7 +273,7 @@ class MilvusEngine(RetrievalEngine):
         fields = [
             FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID", auto_id=True),
             FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=False, max_length=1000),
-            FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=20000),
+            FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=21000),
             FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=10000),
         ]
         if self.config.data_template.extra_fields is not None:
@@ -362,5 +365,5 @@ class MilvusEngine(RetrievalEngine):
         elif isinstance(data, list):
             data = [MilvusEngine._trim_json(v) for v in data]
         elif isinstance(data, str):
-            data =  data[:9999]
+            data = data[:9999]
         return data

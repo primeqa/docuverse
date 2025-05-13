@@ -52,7 +52,7 @@ class DefaultProcessor:
     def __call__(self, unit, id, data_template, **kwargs):
         itm = {
             'id': id,
-            'title': self.cleanup(get_param(unit, data_template.title_header)),
+            'title': self.cleanup(get_param(unit, data_template.title_header, "")),
             'text': self.cleanup(get_param(unit, data_template.text_header))
         }
         url = get_param(unit, 'document_url|url', "")
@@ -270,7 +270,9 @@ class SearchData:
                             tiler: TextTiler = None,
                             title_handling="all",
                             cache_dir: str = default_cache_dir):
-        tok_dir_name = os.path.basename(tiler.tokenizer.name_or_path) if tiler is not None else "none"
+        tok_dir_name = os.path.basename(tiler.tokenizer.name_or_path) \
+            if (tiler is not None and tiler.tokenizer is not None) \
+            else "none"
         if tok_dir_name == "":
             tok_dir_name = os.path.basename(os.path.dirname(tiler.tokenizer.name_or_path))
         extension = "pickle.xz"
@@ -726,4 +728,7 @@ class SearchData:
         print("Char histogram:\n")
         histogram(char_vals)
         print("Token histogram:\n")
-        histogram(token_vals)
+        if tiler and tiler.tokenizer:
+            histogram(token_vals)
+        else:
+            print("No token information available.")
