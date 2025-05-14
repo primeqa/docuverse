@@ -274,6 +274,22 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    trim_text_to: Optional[str|int] = field(
+        default=None,
+        metadata={
+            "help": "If provided, the document text will be trimmed to the specified size: defaults to no trimming. "
+                    "By default, it interprets the number as the number of tokens, but you can change to characters by "
+                    "appending 'c'"
+        }
+    )
+
+    trim_text_count_type: Literal['char', 'token'] = field(
+        default='token',
+        metadata={
+        "help": "If provided, it will trim the ingesting document text to either characters or tokens."
+        }
+    )
+
     bulk_batch: Optional[int] = field(
         default=40,
         metadata={
@@ -417,6 +433,7 @@ class RetrievalArguments(GenericArguments):
 
     index_params: dict = None
 
+    @property
     def __post_init__(self):
         # parse the query_header_template
 
@@ -464,6 +481,19 @@ class RetrievalArguments(GenericArguments):
             self.sparse_config = SparseConfig(**self.sparse_config)
         else:
             raise NotImplementedError
+        if self.trim_text_to is not None:
+            if isinstance(self.trim_text_to, str):
+                if self.trim_text_to.endswith("c"):
+                    self.trim_text_to = int(self.trim_text_to[:-1])
+                    self.trim_text_count_type = 'char'
+                else:
+                    if self.trim_text_to.endswith("t"):
+                        self.trim_text_to = int(self.trim_text_to[:-1])
+                    else:
+                        self.trim_text_to = int(self.trim_text_to)
+                    self.trim_text_count_type = 'token'
+            else:
+                self.trim_text_count_type = 'token'
 
 @dataclass
 class EngineArguments(GenericArguments):

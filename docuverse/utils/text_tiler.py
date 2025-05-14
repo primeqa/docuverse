@@ -1,7 +1,6 @@
-import os.path
 import unicodedata
 import re
-from typing import List, Any, Dict, Union
+from typing import List, Any, Union
 from collections import deque
 
 from transformers import (
@@ -24,7 +23,9 @@ class TextTiler:
     def __init__(self, max_doc_size: int, stride: int,
                  tokenizer: Union[str, PreTrainedTokenizer, None],
                  aligned_on_sentences: bool = True,
-                 count_type='token'):
+                 count_type='token',
+                 trim_to: int=None,
+                 trim_to_type='token'):
         """
 
         Initialize the class instance.
@@ -60,6 +61,8 @@ class TextTiler:
             self.max_doc_size -= self.tokenizer_num_special_tokens
         self.product_counts = {}
         self.aligned_on_sentences = aligned_on_sentences
+        self.trim_to = trim_to
+        self.trim_to_type = trim_to_type
         self.nlp = None
 
     def create_tiles(self,
@@ -209,6 +212,13 @@ class TextTiler:
         texts = []
         positions = []
         added_titles = []
+        parsed_text = None
+        max_num_sentences = 1000000
+        if self.aligned_on_sentences:
+            self._init_nlp(language_code=language_code)
+
+        if self.trim_to is not None:
+            text, parsed_text, max_num_sentences = self.trim_text(text, title, title_in_text=title_in_text)
         if max_length is not None:
             tok_len = self.get_tokenized_length(get_expanded_text(text=text, title=title,
                                                                   title_handling=title_handling,
@@ -225,19 +235,8 @@ class TextTiler:
                         text = text[ind + len(title):]
 
                 if self.aligned_on_sentences:
-                    try:
-                        import pyizumo
-                    except:
-                        raise ImportError(f"You need to install the pyizumo package before using this method.")
-
-                    if not self.nlp:
-                        try:
-                            self.nlp = pyizumo.load(language_code, parsers=['token', 'sentence'])
-                        except Exception as e:
-                            raise ImportError(f"Problem loading the pyizumo package: {e}. If you're having trouble, "
-                                              f"maybe turn off sentence-based text splitting (--split_on_sentences=False) ")
-
-                    parsed_text = self.nlp(text)
+                    if parsed_text is None:
+                        parsed_text = self.nlp(text)
 
                     tsizes = []
                     begins = []
@@ -249,8 +248,10 @@ class TextTiler:
                         _begins.append(sents[i].begin)
                         _ends.append(sents[i + 1].begin if i < len(sents) - 1 else len(text))
 
-                    num_sents = len(list(parsed_text.sentences))
+                    num_sents = max_num_sentences # len(list(parsed_text.sentences))
                     for i, sent in enumerate(parsed_text.sentences):
+                        if i > max_num_sentences:
+                            break
                         stext = sent.text
                         begin = _begins[i]
                         end = _begins[i + 1] if i < num_sents - 1 else len(text)
@@ -357,6 +358,19 @@ class TextTiler:
                 return texts, positions, added_titles
         return [], [], []
 
+    def _init_nlp(self, language_code):
+        if not self.nlp:
+            try:
+                import pyizumo
+            except:
+                raise ImportError(f"You need to install the pyizumo package before using this method.")
+
+            try:
+                self.nlp = pyizumo.load(language_code, parsers=['token', 'sentence'])
+            except Exception as e:
+                raise ImportError(f"Problem loading the pyizumo package: {e}. If you're having trouble, "
+                                  f"maybe turn off sentence-based text splitting (--split_on_sentences=False) ")
+
     @staticmethod
     def remove_start_end_tokens(tokenizer, split_passage, start_token, end_token):
         tt = end_token.sub(
@@ -462,3 +476,29 @@ class TextTiler:
             return not title_in_text and title_handling in ['first', 'all']
         else:
             return title_handling == 'all'
+
+    def trim_text(self, text, title, title_in_text):
+
+        if self.trim_to_type == self.COUNT_TYPE_CHAR:
+            text = text[:self.trim_to_type]
+            return text, None, None
+        else:
+            if self.aligned_on_sentences:
+                parsed_text = self.nlp(text)
+                total_size = 0
+                num_sentences = 0
+                for i, sentence in enumerate(parsed_text.sentences):
+                    len = self.get_tokenized_length(sentence)
+                    if len+total_size > self.trim_to:
+                        return text[sentence.begin], parsed_text, i
+                    num_sentences += 1
+                return text, parsed_text, num_sentences
+            else:
+                tokenized_text = self.tokenizer(text, max_length=-1)
+                total_size = 0
+                if tokenized_text[-1][1] < self.trim_to:
+                    return text, None, None
+                for i, o in enumerate(tokenized_text['offset_mapping']):
+                    if o[1] > self.trim_to:
+                        return text[:o[0]], None, None
+                return text, None, None
