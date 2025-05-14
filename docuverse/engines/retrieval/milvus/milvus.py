@@ -196,8 +196,9 @@ class MilvusEngine(RetrievalEngine):
     def ingest(self, corpus: SearchCorpus, update: bool = False, **kwargs):
         texts = self._check_index_creation_and_get_text(corpus, update)
 
+        tm = timer("ingest_and_test::ingest")
         self._analyze_data(texts)
-
+        tm.add_timing("data_analysis")
         if texts is None:
             return False
         tq = tqdm(desc="Creating data", total=len(texts), leave=True)
@@ -207,7 +208,9 @@ class MilvusEngine(RetrievalEngine):
         for i in range(0, len(texts), ingestion_batch):
             last = min(i+ingestion_batch, len(texts))
             data = self._create_data(corpus[i:last], texts[i:last], tq_instance=tq1, **kwargs)
+            tm.add_timing("encoding_data")
             self._insert_data(data, tq_instance=tq2)
+            tm.add_timing("data_milvusing")
             tq.update(last-i)
         return True
 
@@ -246,8 +249,8 @@ class MilvusEngine(RetrievalEngine):
                 continue
             keys = ['text', 'title', 'id'] if self.config.store_text_in_index else ['title', 'id']
             dt = {key: item[key] for key in keys}
-            if 'text' in dt and len(dt['text']) > 19950: # Trim to avoid
-                dt['text'] = dt['text'][:19950]+" <trimmed>"
+            if 'text' in dt and len(dt['text']) > self.config.max_text_size > 0: # Trim to avoid
+                dt['text'] = dt['text'][:self.config.max_text_size]+" [...]"
             # dt[self.embeddings_name] = vector.reshape(1, vector.shape[0])
             if isinstance(vector, csr_array):
                 if len(vector.shape) == 1:

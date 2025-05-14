@@ -406,6 +406,10 @@ def prepare_for_save_and_backup(output_file, overwrite=False):
             i += 1
         shutil.copy2(output_file, f"{template}.bak{i}{extension}")
 
+
+id_format = re.compile("(.*)-(\\d+)-(\\d+)")
+
+
 def get_orig_docid(id):
     """
     Determines and returns the original document ID by processing the input ID.
@@ -426,11 +430,16 @@ def get_orig_docid(id):
     """
     if isinstance(id, int):
         return id
-    index = id.rfind("-", 0, id.rfind("-"))
-    if index >= 0:
-        return id[:index]
+    # index = id.rfind("-", 0, id.rfind("-"))
+    m = id_format.match(id)
+    if m:
+        return m.group(1)
     else:
         return id
+    # if index >= 0:
+    #     return id[:index]
+    # else:
+    #     return id
 
 def save_command_line(args, output="logfile"):
     """

@@ -265,6 +265,15 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    max_text_size: Optional[int] = field(
+        default=-1,
+        metadata={
+            "help": "If provided, the document text will be truncated to the specified size. "
+                    "A value of -1 means no trucation (default), and a value of 0 means no text is stored "
+                    "(store_text_in_index is switched to False)."
+        }
+    )
+
     bulk_batch: Optional[int] = field(
         default=40,
         metadata={
@@ -443,6 +452,8 @@ class RetrievalArguments(GenericArguments):
                     self.data_template.extra_fields.append(f.document_field)
                 res.append(f)
             self.filter_on = res
+        if self.max_text_size == 0:
+            self.store_text_in_index = False
         if self.hybrid == "":
             self.hybrid = {}
         if self.db_engine in ['milvus-bm25', 'milvus_bm25'] and self.milvus_idf_file is None:
