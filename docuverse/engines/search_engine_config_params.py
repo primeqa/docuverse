@@ -433,7 +433,6 @@ class RetrievalArguments(GenericArguments):
 
     index_params: dict = None
 
-    @property
     def __post_init__(self):
         # parse the query_header_template
 

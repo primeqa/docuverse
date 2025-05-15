@@ -24,8 +24,8 @@ class TextTiler:
                  tokenizer: Union[str, PreTrainedTokenizer, None],
                  aligned_on_sentences: bool = True,
                  count_type='token',
-                 trim_to: int=None,
-                 trim_to_type='token'):
+                 text_trim_to: int=None,
+                 text_trim_to_type='token'):
         """
 
         Initialize the class instance.
@@ -61,8 +61,8 @@ class TextTiler:
             self.max_doc_size -= self.tokenizer_num_special_tokens
         self.product_counts = {}
         self.aligned_on_sentences = aligned_on_sentences
-        self.trim_to = trim_to
-        self.trim_to_type = trim_to_type
+        self.text_trim_to = text_trim_to
+        self.text_trim_to_type = text_trim_to_type
         self.nlp = None
 
     def create_tiles(self,
@@ -217,7 +217,7 @@ class TextTiler:
         if self.aligned_on_sentences:
             self._init_nlp(language_code=language_code)
 
-        if self.trim_to is not None:
+        if self.text_trim_to is not None:
             text, parsed_text, max_num_sentences = self.trim_text(text, title, title_in_text=title_in_text)
         if max_length is not None:
             tok_len = self.get_tokenized_length(get_expanded_text(text=text, title=title,
@@ -479,8 +479,8 @@ class TextTiler:
 
     def trim_text(self, text, title, title_in_text):
 
-        if self.trim_to_type == self.COUNT_TYPE_CHAR:
-            text = text[:self.trim_to_type]
+        if self.text_trim_to_type == self.COUNT_TYPE_CHAR:
+            text = text[:self.text_trim_to_type]
             return text, None, None
         else:
             if self.aligned_on_sentences:
@@ -489,16 +489,16 @@ class TextTiler:
                 num_sentences = 0
                 for i, sentence in enumerate(parsed_text.sentences):
                     len = self.get_tokenized_length(sentence)
-                    if len+total_size > self.trim_to:
+                    if len+total_size > self.text_trim_to:
                         return text[sentence.begin], parsed_text, i
                     num_sentences += 1
                 return text, parsed_text, num_sentences
             else:
                 tokenized_text = self.tokenizer(text, max_length=-1)
                 total_size = 0
-                if tokenized_text[-1][1] < self.trim_to:
+                if tokenized_text[-1][1] < self.text_trim_to:
                     return text, None, None
                 for i, o in enumerate(tokenized_text['offset_mapping']):
-                    if o[1] > self.trim_to:
+                    if o[1] > self.text_trim_to:
                         return text[:o[0]], None, None
                 return text, None, None
