@@ -478,7 +478,6 @@ class TextTiler:
             return title_handling == 'all'
 
     def trim_text(self, text, title, title_in_text):
-
         if self.text_trim_to_type == self.COUNT_TYPE_CHAR:
             text = text[:self.text_trim_to_type]
             return text, None, None
@@ -488,15 +487,16 @@ class TextTiler:
                 total_size = 0
                 num_sentences = 0
                 for i, sentence in enumerate(parsed_text.sentences):
-                    len = self.get_tokenized_length(sentence)
-                    if len+total_size > self.text_trim_to:
-                        return text[sentence.begin], parsed_text, i
+                    length = self.get_tokenized_length(sentence.text)
+                    if length+total_size > self.text_trim_to:
+                        return text[:sentence.begin], parsed_text, i
                     num_sentences += 1
+                    total_size += length
                 return text, parsed_text, num_sentences
             else:
-                tokenized_text = self.tokenizer(text, max_length=-1)
+                tokenized_text = self.tokenizer(text, max_length=100000000, truncation=True, return_offsets_mapping=True)
                 total_size = 0
-                if tokenized_text[-1][1] < self.text_trim_to:
+                if len(tokenized_text['offset_mapping'])-2 < self.text_trim_to:
                     return text, None, None
                 for i, o in enumerate(tokenized_text['offset_mapping']):
                     if o[1] > self.text_trim_to:

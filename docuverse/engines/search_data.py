@@ -666,7 +666,7 @@ class SearchData:
     def compute_statistics(cls, corpus, tiler=None):
         min_idx, max_idx, avg_idx, total_idx = range(0, 4)
         token_based = [1000, 0, 0, 0]
-        char_based = [1000, 0, 0, 0]
+        char_based = [1000, 0, 0, 0]  
         char_vals = []
         token_vals = []
         tiles = 0
