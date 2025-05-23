@@ -257,7 +257,38 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    store_text_in_index: Optional[bool] = field(
+        default=True,
+        metadata={
+            "help": "If true, the documents will be stored in the index as text. If it's set to false,"
+                    "the text will not be stored in the index (presumably, too large)."
+        }
+    )
 
+    max_text_size: Optional[int] = field(
+        default=-1,
+        metadata={
+            "help": "If provided, the document text will be truncated to the specified size. "
+                    "A value of -1 means no trucation (default), and a value of 0 means no text is stored "
+                    "(store_text_in_index is switched to False)."
+        }
+    )
+
+    trim_text_to: Optional[str|int] = field(
+        default=None,
+        metadata={
+            "help": "If provided, the document text will be trimmed to the specified size: defaults to no trimming. "
+                    "By default, it interprets the number as the number of tokens, but you can change to characters by "
+                    "appending 'c'"
+        }
+    )
+
+    trim_text_count_type: Literal['char', 'token'] = field(
+        default='token',
+        metadata={
+        "help": "If provided, it will trim the ingesting document text to either characters or tokens."
+        }
+    )
 
     bulk_batch: Optional[int] = field(
         default=40,
@@ -437,6 +468,8 @@ class RetrievalArguments(GenericArguments):
                     self.data_template.extra_fields.append(f.document_field)
                 res.append(f)
             self.filter_on = res
+        if self.max_text_size == 0:
+            self.store_text_in_index = False
         if self.hybrid == "":
             self.hybrid = {}
         if self.db_engine in ['milvus-bm25', 'milvus_bm25'] and self.milvus_idf_file is None:
@@ -447,6 +480,19 @@ class RetrievalArguments(GenericArguments):
             self.sparse_config = SparseConfig(**self.sparse_config)
         else:
             raise NotImplementedError
+        if self.trim_text_to is not None:
+            if isinstance(self.trim_text_to, str):
+                if self.trim_text_to.endswith("c"):
+                    self.trim_text_to = int(self.trim_text_to[:-1])
+                    self.trim_text_count_type = 'char'
+                else:
+                    if self.trim_text_to.endswith("t"):
+                        self.trim_text_to = int(self.trim_text_to[:-1])
+                    else:
+                        self.trim_text_to = int(self.trim_text_to)
+                    self.trim_text_count_type = 'token'
+            else:
+                self.trim_text_count_type = 'token'
 
 @dataclass
 class EngineArguments(GenericArguments):

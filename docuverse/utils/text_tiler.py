@@ -1,7 +1,6 @@
-import os.path
 import unicodedata
 import re
-from typing import List, Any, Dict, Union
+from typing import List, Any, Union
 from collections import deque
 
 from transformers import (
@@ -21,15 +20,18 @@ class TextTiler:
     COUNT_TYPE_TOKEN = 0
     COUNT_TYPE_CHAR = 1
 
-    def __init__(self, max_doc_size: int, stride: int,
+    def __init__(self, max_doc_length: int, stride: int,
                  tokenizer: Union[str, PreTrainedTokenizer, None],
                  aligned_on_sentences: bool = True,
-                 count_type='token'):
+                 count_type='token',
+                 trim_text_to: int=None,
+                 trim_text_count_type='token',
+                 **kwargs):
         """
 
         Initialize the class instance.
 
-        :param max_doc_size: Maximum size of the document in terms of tokens/characters.
+        :param max_doc_length: Maximum size of the document in terms of tokens/characters.
         :param stride: Overlap between consecutive windows (yes, it's misnamed).
         :param tokenizer: Tokenizer object or name of the tokenizer model.
         :param aligned_on_sentences: Flag indicating whether window alignment should be performed on sentences.
@@ -37,7 +39,7 @@ class TextTiler:
 
         :raises RuntimeError: If the tokenizer argument is neither a string nor a PreTrainedTokenizer class.
         """
-        self.max_doc_size = max_doc_size
+        self.max_doc_size = max_doc_length
         self.stride = stride
         if count_type == 'token':
             self.count_type = self.COUNT_TYPE_TOKEN
@@ -60,6 +62,8 @@ class TextTiler:
             self.max_doc_size -= self.tokenizer_num_special_tokens
         self.product_counts = {}
         self.aligned_on_sentences = aligned_on_sentences
+        self.text_trim_to = trim_text_to
+        self.text_trim_to_type = trim_text_count_type
         self.nlp = None
 
     def create_tiles(self,
@@ -156,6 +160,8 @@ class TextTiler:
         """
         Returns the size of the <text> (in tokens) after being tokenized by <tokenizer>
         :param text: str - the input text
+        :exclude_special_tokens: boolean - if true, exclude the special tokens from the count.
+        :forced_tok: boolean - if true, force the text to be tokenized by the tokenizer.
         :return the length (in word pieces) of the tokenized text.
         """
         if not forced_tok and self.count_type == self.COUNT_TYPE_CHAR:
@@ -209,6 +215,13 @@ class TextTiler:
         texts = []
         positions = []
         added_titles = []
+        parsed_text = None
+        max_num_sentences = 1000000
+        if self.aligned_on_sentences:
+            self._init_nlp(language_code=language_code)
+
+        if self.text_trim_to is not None:
+            text, parsed_text, max_num_sentences = self.trim_text(text, title, title_in_text=title_in_text)
         if max_length is not None:
             tok_len = self.get_tokenized_length(get_expanded_text(text=text, title=title,
                                                                   title_handling=title_handling,
@@ -225,19 +238,8 @@ class TextTiler:
                         text = text[ind + len(title):]
 
                 if self.aligned_on_sentences:
-                    try:
-                        import pyizumo
-                    except:
-                        raise ImportError(f"You need to install the pyizumo package before using this method.")
-
-                    if not self.nlp:
-                        try:
-                            self.nlp = pyizumo.load(language_code, parsers=['token', 'sentence'])
-                        except Exception as e:
-                            raise ImportError(f"Problem loading the pyizumo package: {e}. If you're having trouble, "
-                                              f"maybe turn off sentence-based text splitting (--split_on_sentences=False) ")
-
-                    parsed_text = self.nlp(text)
+                    if parsed_text is None:
+                        parsed_text = self.nlp(text)
 
                     tsizes = []
                     begins = []
@@ -249,8 +251,10 @@ class TextTiler:
                         _begins.append(sents[i].begin)
                         _ends.append(sents[i + 1].begin if i < len(sents) - 1 else len(text))
 
-                    num_sents = len(list(parsed_text.sentences))
+                    num_sents = max_num_sentences # len(list(parsed_text.sentences))
                     for i, sent in enumerate(parsed_text.sentences):
+                        if i > max_num_sentences:
+                            break
                         stext = sent.text
                         begin = _begins[i]
                         end = _begins[i + 1] if i < num_sents - 1 else len(text)
@@ -357,6 +361,19 @@ class TextTiler:
                 return texts, positions, added_titles
         return [], [], []
 
+    def _init_nlp(self, language_code):
+        if not self.nlp:
+            try:
+                import pyizumo
+            except:
+                raise ImportError(f"You need to install the pyizumo package before using this method.")
+
+            try:
+                self.nlp = pyizumo.load(language_code, parsers=['token', 'sentence'])
+            except Exception as e:
+                raise ImportError(f"Problem loading the pyizumo package: {e}. If you're having trouble, "
+                                  f"maybe turn off sentence-based text splitting (--split_on_sentences=False) ")
+
     @staticmethod
     def remove_start_end_tokens(tokenizer, split_passage, start_token, end_token):
         tt = end_token.sub(
@@ -462,3 +479,32 @@ class TextTiler:
             return not title_in_text and title_handling in ['first', 'all']
         else:
             return title_handling == 'all'
+
+    def trim_text(self, text, title, title_in_text):
+        if self.text_trim_to_type == self.COUNT_TYPE_CHAR:
+            text = text[:self.text_trim_to_type]
+            return text, None, None
+        else:
+            if self.aligned_on_sentences:
+                parsed_text = self.nlp(text)
+                total_size = 0
+                num_sentences = 0
+                for i, sentence in enumerate(parsed_text.sentences):
+                    length = self.get_tokenized_length(sentence.text)
+                    if length+total_size > self.text_trim_to:
+                        return text[:sentence.begin], parsed_text, i
+                    num_sentences += 1
+                    total_size += length
+                return text, parsed_text, num_sentences
+            else:
+                tokenized_text = self.tokenizer(text, max_length=100000000, truncation=True, return_offsets_mapping=True)
+                total_size = 0
+                if len(tokenized_text['offset_mapping'])-2 < self.text_trim_to:
+                    return text, None, None
+                last_token = min(self.text_trim_to, len(tokenized_text['offset_mapping'])-2)-1
+                return text[:tokenized_text['offset_mapping'][last_token][0]], None, None
+
+                # for i, o in enumerate(tokenized_text['offset_mapping']):
+                #     if o[1] > self.text_trim_to:
+                #         return text[:o[0]], None, None
+                # return text, None, None

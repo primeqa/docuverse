@@ -52,7 +52,7 @@ class DefaultProcessor:
     def __call__(self, unit, id, data_template, **kwargs):
         itm = {
             'id': id,
-            'title': self.cleanup(get_param(unit, data_template.title_header)),
+            'title': self.cleanup(get_param(unit, data_template.title_header, "")),
             'text': self.cleanup(get_param(unit, data_template.text_header))
         }
         url = get_param(unit, 'document_url|url', "")
@@ -234,7 +234,7 @@ class SearchData:
         'sap': SAPProccesor()
     }
 
-    default_tiler = TextTiler(tokenizer=None, count_type="char", max_doc_size=20000, stride=2000,
+    default_tiler = TextTiler(tokenizer=None, count_type="char", max_doc_length=20000, stride=2000,
                               aligned_on_sentences=False)
 
     class Entry:
@@ -270,18 +270,26 @@ class SearchData:
                             tiler: TextTiler = None,
                             title_handling="all",
                             cache_dir: str = default_cache_dir):
-        tok_dir_name = os.path.basename(tiler.tokenizer.name_or_path) if tiler is not None else "none"
+        def prune_list(list):
+            return [d for d in list if d]
+        tok_dir_name = os.path.basename(tiler.tokenizer.name_or_path) \
+            if (tiler is not None and tiler.tokenizer is not None) \
+            else "none"
         if tok_dir_name == "":
             tok_dir_name = os.path.basename(os.path.dirname(tiler.tokenizer.name_or_path))
         extension = "pickle.xz"
         cache_file_name = os.path.join(cache_dir,
-                                       "_".join([f"{input_file.replace('/', '__')}",
-                                                 f"{max_doc_size}",
-                                                 f"{stride}",
-                                                 f"{aligned}" if aligned else "unaligned",
-                                                 f"{title_handling}",
-                                                 f"{tok_dir_name}.{extension}"])
-                                       )
+                                       "_".join(
+                                           prune_list([
+                                               f"{input_file.replace('/', '__')}",
+                                               f"{max_doc_size}",
+                                               f"{stride}",
+                                               f"{aligned}" if aligned else "unaligned",
+                                               f"{title_handling}",
+                                               f"trim={tiler.text_trim_to}" if tiler.text_trim_to else "",
+                                               f"{tok_dir_name}.{extension}"
+                                           ])
+                                       ))
         print(f"Cache filename is {cache_file_name}")
         return cache_file_name
 
@@ -391,6 +399,18 @@ class SearchData:
         return txt
 
     @classmethod
+    def read_filter(cls, val):
+        if isinstance(val, str):
+            if not os.path.exists(val):
+                raise RuntimeError(f"Filter file {val} does not exist.")
+            keys = {}
+            with open(val) as inp:
+                for line in inp:
+                    keys[line.strip()] = 1
+            return keys
+        return val
+
+    @classmethod
     def read_data(cls,
                   input_files,
                   lang="en",
@@ -439,8 +459,8 @@ class SearchData:
         elif data_type == "beir":
             data_template = beir_data_template
 
-        docid_filter = kwargs.get('docid_filter', [])
-        exclude_docids = kwargs.get('exclude_docids', [])
+        docid_filter   = cls.read_filter(kwargs.get('docid_filter', {}))
+        exclude_docids = cls.read_filter(kwargs.get('exclude_docids', {}))
         uniform_product_name = kwargs.get('uniform_product_name')
         from docuverse.utils.timer import timer
         tm = timer("Data Loading")
@@ -468,9 +488,9 @@ class SearchData:
                         skipped = 0
                         num_docs = len(to_copy)
                         if docid_filter:
-                            to_copy = [d for d in to_copy if d[data_template.id_header] in docid_filter]
+                            to_copy = [d for d in to_copy if get_orig_docid(d['id']) in docid_filter]
                         elif exclude_docids:
-                            to_copy = [d for d in to_copy if d[data_template.id_header] not in exclude_docids]
+                            to_copy = [d for d in to_copy if get_orig_docid(d['id']) not in exclude_docids]
                         print(f"Skipped {num_docs-len(to_copy)} passages.")
                         passages.extend(to_copy)
                         continue
@@ -652,7 +672,7 @@ class SearchData:
     def compute_statistics(cls, corpus, tiler=None):
         min_idx, max_idx, avg_idx, total_idx = range(0, 4)
         token_based = [1000, 0, 0, 0]
-        char_based = [1000, 0, 0, 0]
+        char_based = [1000, 0, 0, 0]  
         char_vals = []
         token_vals = []
         tiles = 0
@@ -714,4 +734,7 @@ class SearchData:
         print("Char histogram:\n")
         histogram(char_vals)
         print("Token histogram:\n")
-        histogram(token_vals)
+        if tiler and tiler.tokenizer:
+            histogram(token_vals)
+        else:
+            print("No token information available.")

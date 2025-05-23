@@ -147,7 +147,7 @@ class SearchResult:
         elif isinstance(data, list):
             if len(data) == 0:
                 return []
-            elif isinstance(data[0], dict) or isinstance(data[0], pymilvus.client.search_reasult.Hit):
+            elif isinstance(data[0], dict) or isinstance(data[0], pymilvus.client.search_result.Hit):
                 if 'entity' in data[0]:
                     data = sorted(data, key=lambda k: (k['distance'], k['entity']['id']), reverse=True)
                     for r in data:

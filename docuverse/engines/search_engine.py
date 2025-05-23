@@ -217,11 +217,16 @@ class SearchEngine:
                 tokenizer = retriever_config.model_name
                 if tokenizer == "" or tokenizer.startswith("."):
                     tokenizer = "sentence-transformers/all-MiniLM-L6-v2"
-            return TextTiler(max_doc_size=retriever_config.max_doc_length,
-                                   stride=retriever_config.stride,
-                                   tokenizer=tokenizer,
-                                   aligned_on_sentences=retriever_config.aligned_on_sentences,
-                                   count_type=retriever_config.count_type)
+
+            return TextTiler(
+                **(
+                    {"tokenizer":tokenizer} | retriever_config.__dict__
+                ))
+                             # max_doc_size=retriever_config.max_doc_length,
+                             # stride=retriever_config.stride,
+                             #
+                             # aligned_on_sentences=retriever_config.aligned_on_sentences,
+                             # count_type=retriever_config.count_type
         else:
             return self.tiler
 

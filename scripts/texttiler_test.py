@@ -11,7 +11,7 @@ if __name__ == '__main__':
     model = SentenceTransformer(model_name)
     max_size = 512
     stride = 100
-    tiler = TextTiler(max_doc_size=max_size, stride=stride, tokenizer=model.tokenizer, aligned_on_sentences=True)
+    tiler = TextTiler(max_doc_length=max_size, stride=stride, tokenizer=model.tokenizer, aligned_on_sentences=True)
 
     with open(args.file) as inp:
         for line in inp:

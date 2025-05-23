@@ -1,1 +1,1 @@
-pymilvus[model]~=2.5.5
+pymilvus[model]~=2.5.9

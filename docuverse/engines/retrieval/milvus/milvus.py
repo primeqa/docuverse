@@ -32,7 +32,6 @@ from docuverse.utils import get_param, read_config_file, vector_is_empty
 import os
 from dotenv import load_dotenv
 
-
 class MilvusEngine(RetrievalEngine):
     """MilvusEngine class
 
@@ -87,7 +86,7 @@ class MilvusEngine(RetrievalEngine):
         self.init_model(**kwargs)
         # Milvus does not accept '-', only letters, numbers, and "_"
         self.init_client()
-        self.output_fields = ["id", "text", 'title']
+        self.output_fields = ["id", "text", 'title'] if self.config.store_text_in_index else ["title", "id"]
         # self.output_fields = [self.config.data_template.get(f"{t}_header", t) for t in ["id", "text", 'title']]
         extra = get_param(self.config.data_template, 'extra_fields', None)
         self.ingestion_batch_size = get_param(self.config, 'bulk_batch', 40)
@@ -197,8 +196,9 @@ class MilvusEngine(RetrievalEngine):
     def ingest(self, corpus: SearchCorpus, update: bool = False, **kwargs):
         texts = self._check_index_creation_and_get_text(corpus, update)
 
+        tm = timer("ingest_and_test::ingest")
         self._analyze_data(texts)
-
+        tm.add_timing("data_analysis")
         if texts is None:
             return False
         tq = tqdm(desc="Creating data", total=len(texts), leave=True)
@@ -208,7 +208,9 @@ class MilvusEngine(RetrievalEngine):
         for i in range(0, len(texts), ingestion_batch):
             last = min(i+ingestion_batch, len(texts))
             data = self._create_data(corpus[i:last], texts[i:last], tq_instance=tq1, **kwargs)
+            tm.add_timing("encoding_data")
             self._insert_data(data, tq_instance=tq2)
+            tm.add_timing("data_milvusing")
             tq.update(last-i)
         return True
 
@@ -245,7 +247,10 @@ class MilvusEngine(RetrievalEngine):
             # if isinstance(vector, spmatrix) and vector.getnnz() == 0:
             if vector_is_empty(vector):
                 continue
-            dt = {key: item[key] for key in ['text', 'title', 'id']}
+            keys = ['text', 'title', 'id'] if self.config.store_text_in_index else ['title', 'id']
+            dt = {key: item[key] for key in keys}
+            if 'text' in dt and len(dt['text']) > self.config.max_text_size > 0: # Trim to avoid
+                dt['text'] = dt['text'][:self.config.max_text_size]+" [...]"
             # dt[self.embeddings_name] = vector.reshape(1, vector.shape[0])
             if isinstance(vector, csr_array):
                 if len(vector.shape) == 1:
@@ -254,7 +259,7 @@ class MilvusEngine(RetrievalEngine):
 
             for f in self.config.data_template.extra_fields:
                 if isinstance(item[f], dict|list):
-                    dt[f] = json.dumps(item[f])
+                    dt[f] = json.dumps(self._trim_json(item[f]))
                 else:
                     dt[f] = str(item[f])
             data.append(dt)
@@ -271,9 +276,11 @@ class MilvusEngine(RetrievalEngine):
         fields = [
             FieldSchema(name="_id", dtype=DataType.INT64, is_primary=True, description="ID", auto_id=True),
             FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=False, max_length=1000),
-            FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=20000),
             FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=10000),
         ]
+        if self.config.store_text_in_index:
+            fields.append(FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=21000))
+
         if self.config.data_template.extra_fields is not None:
             for f in self.config.data_template.extra_fields:
                 fields.append(FieldSchema(name=f, dtype=DataType.VARCHAR, max_length=10000))
@@ -354,3 +361,14 @@ class MilvusEngine(RetrievalEngine):
         Creates a search request, based on the type of the engine - used in hybrid/multi-index search
         """
         pass
+
+    @staticmethod
+    def _trim_json(data):
+        if isinstance(data, dict):
+            for k, v in data.items():
+                data[k] = MilvusEngine._trim_json(v)
+        elif isinstance(data, list):
+            data = [MilvusEngine._trim_json(v) for v in data]
+        elif isinstance(data, str):
+            data = data[:9999]
+        return data
