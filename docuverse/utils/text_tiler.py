@@ -160,6 +160,8 @@ class TextTiler:
         """
         Returns the size of the <text> (in tokens) after being tokenized by <tokenizer>
         :param text: str - the input text
+        :exclude_special_tokens: boolean - if true, exclude the special tokens from the count.
+        :forced_tok: boolean - if true, force the text to be tokenized by the tokenizer.
         :return the length (in word pieces) of the tokenized text.
         """
         if not forced_tok and self.count_type == self.COUNT_TYPE_CHAR:
