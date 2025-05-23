@@ -20,17 +20,18 @@ class TextTiler:
     COUNT_TYPE_TOKEN = 0
     COUNT_TYPE_CHAR = 1
 
-    def __init__(self, max_doc_size: int, stride: int,
+    def __init__(self, max_doc_length: int, stride: int,
                  tokenizer: Union[str, PreTrainedTokenizer, None],
                  aligned_on_sentences: bool = True,
                  count_type='token',
-                 text_trim_to: int=None,
-                 text_trim_to_type='token'):
+                 trim_text_to: int=None,
+                 trim_text_count_type='token',
+                 **kwargs):
         """
 
         Initialize the class instance.
 
-        :param max_doc_size: Maximum size of the document in terms of tokens/characters.
+        :param max_doc_length: Maximum size of the document in terms of tokens/characters.
         :param stride: Overlap between consecutive windows (yes, it's misnamed).
         :param tokenizer: Tokenizer object or name of the tokenizer model.
         :param aligned_on_sentences: Flag indicating whether window alignment should be performed on sentences.
@@ -38,7 +39,7 @@ class TextTiler:
 
         :raises RuntimeError: If the tokenizer argument is neither a string nor a PreTrainedTokenizer class.
         """
-        self.max_doc_size = max_doc_size
+        self.max_doc_size = max_doc_length
         self.stride = stride
         if count_type == 'token':
             self.count_type = self.COUNT_TYPE_TOKEN
@@ -61,8 +62,8 @@ class TextTiler:
             self.max_doc_size -= self.tokenizer_num_special_tokens
         self.product_counts = {}
         self.aligned_on_sentences = aligned_on_sentences
-        self.text_trim_to = text_trim_to
-        self.text_trim_to_type = text_trim_to_type
+        self.text_trim_to = trim_text_to
+        self.text_trim_to_type = trim_text_count_type
         self.nlp = None
 
     def create_tiles(self,
@@ -498,7 +499,10 @@ class TextTiler:
                 total_size = 0
                 if len(tokenized_text['offset_mapping'])-2 < self.text_trim_to:
                     return text, None, None
-                for i, o in enumerate(tokenized_text['offset_mapping']):
-                    if o[1] > self.text_trim_to:
-                        return text[:o[0]], None, None
-                return text, None, None
+                last_token = min(self.text_trim_to, len(tokenized_text['offset_mapping'])-2)-1
+                return text[:tokenized_text['offset_mapping'][last_token][0]], None, None
+
+                # for i, o in enumerate(tokenized_text['offset_mapping']):
+                #     if o[1] > self.text_trim_to:
+                #         return text[:o[0]], None, None
+                # return text, None, None

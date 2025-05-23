@@ -1236,7 +1236,7 @@ if __name__ == '__main__':
             else:
                 model = MyEmbeddingFunction(args.model_name)
 
-    tiler = TextTiler(max_doc_size=args.max_doc_length,
+    tiler = TextTiler(max_doc_length=args.max_doc_length,
                       stride=args.stride,
                       tokenizer=model.tokenizer)
 

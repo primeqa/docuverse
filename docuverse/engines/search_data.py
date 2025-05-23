@@ -234,7 +234,7 @@ class SearchData:
         'sap': SAPProccesor()
     }
 
-    default_tiler = TextTiler(tokenizer=None, count_type="char", max_doc_size=20000, stride=2000,
+    default_tiler = TextTiler(tokenizer=None, count_type="char", max_doc_length=20000, stride=2000,
                               aligned_on_sentences=False)
 
     class Entry:
@@ -270,6 +270,8 @@ class SearchData:
                             tiler: TextTiler = None,
                             title_handling="all",
                             cache_dir: str = default_cache_dir):
+        def prune_list(list):
+            return [d for d in list if d]
         tok_dir_name = os.path.basename(tiler.tokenizer.name_or_path) \
             if (tiler is not None and tiler.tokenizer is not None) \
             else "none"
@@ -277,13 +279,17 @@ class SearchData:
             tok_dir_name = os.path.basename(os.path.dirname(tiler.tokenizer.name_or_path))
         extension = "pickle.xz"
         cache_file_name = os.path.join(cache_dir,
-                                       "_".join([f"{input_file.replace('/', '__')}",
-                                                 f"{max_doc_size}",
-                                                 f"{stride}",
-                                                 f"{aligned}" if aligned else "unaligned",
-                                                 f"{title_handling}",
-                                                 f"{tok_dir_name}.{extension}"])
-                                       )
+                                       "_".join(
+                                           prune_list([
+                                               f"{input_file.replace('/', '__')}",
+                                               f"{max_doc_size}",
+                                               f"{stride}",
+                                               f"{aligned}" if aligned else "unaligned",
+                                               f"{title_handling}",
+                                               f"trim={tiler.text_trim_to}" if tiler.text_trim_to else "",
+                                               f"{tok_dir_name}.{extension}"
+                                           ])
+                                       ))
         print(f"Cache filename is {cache_file_name}")
         return cache_file_name
 

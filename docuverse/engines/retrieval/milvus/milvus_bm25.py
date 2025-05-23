@@ -72,7 +72,7 @@ class MilvusBM25Engine(MilvusEngine):
                                  default="no")
             if ans == 'no':
                 return
-        print(f"Computing IDF - will might a while.", end="", flush=True)
+        print(f"Computing IDF - will might take a while.", end="", flush=True)
         os.environ["TOKENIZERS_PARALLELISM"] = "false" # Prevent the system from complaining that we forked the tokenizer.
         self.bm25_ef.fit(texts)
         print(f" done in {tm.time_since_beginning()}.", flush=True)

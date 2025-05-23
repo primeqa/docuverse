@@ -3,12 +3,13 @@ pyyaml~=6.0.2
 accelerate
 sentence-transformers
 python-dotenv~=1.0.1
-numpy~=2.2.3
-urllib3~=1.26.18
+numpy~=2.2.5
+# urllib3~=1.26.18
+urllib3~=2.4.0
 torch~=2.7.0;platform_system!="Darwin"
 torch~=2.2.2;platform_system=="Darwin"
 tqdm~=4.67.1
 transformers~=4.49.0
-orjson~=3.10.5
-pydantic_core~=2.24.0
+orjson~=3.10.18
+pydantic_core~=2.27.2
 simple_colors~=0.1.5
