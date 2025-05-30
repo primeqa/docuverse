@@ -24,18 +24,18 @@ def write_metrics_file(metrics_file, _results, _timing, _config):
         out.write("=" * 30 + "\n")
 
 
-if __name__ == '__main__':
+def main_cli():
+    global config, engine, results
     save_command_line(args=sys.argv)
     tm = timer("ingest_and_test")
     config = DocUVerseConfig.get_stdargs_config()
-#    config = DocUVerseConfig("experiments/clapnq/setup.yaml")
+    #    config = DocUVerseConfig("experiments/clapnq/setup.yaml")
     engine = SearchEngine(config)
     tm.add_timing("initialize")
     if config.ingest or config.update:
         corpus = engine.read_data(config.input_passages)
         engine.ingest(corpus, update=config.update, skip=config.skip)
         tm.add_timing("ingest")
-
     output = None
     if config.retrieve:
         queries = engine.read_questions(config.input_queries)
@@ -46,7 +46,6 @@ if __name__ == '__main__':
     else:
         output = None
         queries = None
-
     if config.evaluate and config.eval_config is not None:
         scorer = EvaluationEngine(config)
         if queries is None:
@@ -59,7 +58,7 @@ if __name__ == '__main__':
         tm.add_timing("evaluate")
         ostring = io.StringIO()
         # print(timer.display_timing)
-        timer.display_timing(tm.milliseconds_since_beginning(), keys={'queries':len(queries)}, sorted_by="%",
+        timer.display_timing(tm.milliseconds_since_beginning(), keys={'queries': len(queries)}, sorted_by="%",
                              reverse=True, output_stream=ostring)
         timing = ostring.getvalue()
 
@@ -69,6 +68,10 @@ if __name__ == '__main__':
         print(timing)
 
     else:
-        timer.display_timing(tm.milliseconds_since_beginning(), keys={'queries':len(queries)}, sorted_by="%",
+        timer.display_timing(tm.milliseconds_since_beginning(), keys={'queries': len(queries)}, sorted_by="%",
                              reverse=True)
+
+
+if __name__ == '__main__':
+    main_cli()
 

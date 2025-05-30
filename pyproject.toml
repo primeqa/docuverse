@@ -1,3 +1,13 @@
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+#[project]
+#name = "docuverse"
+#version = "v0.0.13"
+#requires-python = ">= 3.11"
+#description = 'State-of-the-art Retrieval/Search engine models, including ElasticSearch, ChromaDB, and Milvus'
+#readme = ""
+#
+#[project.scripts]
+#ingest-and-test = "docuverse.utils.ingest_and_test:main_cli"
