@@ -305,7 +305,7 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     doc_queue = Queue()
     manager = Manager()
     d = manager.dict()
-    print(f"Created dictionary: {d}")
+    # print(f"Created dictionary: {d}")
     def processor(inqueue, d, thread_number, size):
         pid = mp.current_process().pid
         with tqdm(desc=f"{msg}/thread {thread_number}", leave=False,
@@ -332,12 +332,12 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     processes = []
     tk = tqdm(desc=f"{msg}:", total=doc_queue.qsize(), leave=True, position=0)
     c = doc_queue.qsize()
-    print("starting processes")
+    # print("starting processes")
     for i in range(num_threads):
         p = Process(target=processor, args=(doc_queue, d, i, doc_queue.qsize()/num_threads,))
         processes.append(p)
         p.start()
-    print("Running")
+    # print("Running")
     while c > 0:
         c1 = doc_queue.qsize()
         if c != c1:
