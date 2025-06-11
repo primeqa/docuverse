@@ -25,7 +25,7 @@ class ElasticDenseEngine(ElasticEngine):
             else:
                 self.hidden_dim = 384  # Some default value, the system might crash if it's wrong.
         else:
-            self.hidden_dim = len(self.model.encode('text', show_progress_bar=False))
+            self.hidden_dim = len(self.model.encode(['text'], show_progress_bar=False)[0])
             print(f"Hidden dimension for model: {self.hidden_dim}")
 
         self._set_pipelines()
@@ -65,7 +65,6 @@ class ElasticDenseEngine(ElasticEngine):
         mappings = self.coga_mappings[self.config.lang]
         processors = []
         if self.config.model_on_server:
-            vector_field_name = "ml"
             pipeline_name = f"{self.config.model_name}-test"
             processors = [{
                 "inference": {
@@ -94,7 +93,21 @@ class ElasticDenseEngine(ElasticEngine):
         else:
             vector_field_name = "vector"
             pipeline_name = None
-            on_failure = None
+            on_failure = [{
+                "set": {
+                    "description": "Index document to 'failed-<index>'",
+                    "field": "_index",
+                    "value": "failed-{{{_index}}}"
+                }
+            },
+                {
+                    "set": {
+                        "description": "Set error message",
+                        "field": "ingest.failure",
+                        "value": "{{_ingest.on_failure_message}}"
+                    }
+                }]
+            # on_failure = None
 
         mappings['properties'][vector_field_name] = {
             "type": "dense_vector",
@@ -102,8 +115,9 @@ class ElasticDenseEngine(ElasticEngine):
             "dims": self.hidden_dim,
             "index": "true"
         }
-        self.pipeline_name = self.config.model_name + "-test"
-        self.client.ingest.put_pipeline(processors=processors, id=self.pipeline_name)
+        self.pipeline_name = pipeline_name # self.config.model_name + "-test"
+        if self.pipeline_name is not None:
+            self.client.ingest.put_pipeline(processors=processors, id=self.pipeline_name)
 
     def add_fields(self, actions, bulk_batch, corpus, k, num_passages):
         if not self.config.model_on_server:

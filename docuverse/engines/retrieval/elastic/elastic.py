@@ -343,7 +343,7 @@ class ElasticEngine(RetrievalEngine):
                 {
                     "_index": self.config.index_name,
                     "_id": row['id'],
-                    "_source": {k: row[k] for k in keys_to_index}
+                    "_source": {k: row[k] for k in keys_to_index if row[k] != ""}
                 }
                 for pi, row in enumerate(corpus[k:min(k + bulk_batch, num_passages)])
             ]
