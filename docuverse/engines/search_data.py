@@ -601,7 +601,7 @@ class SearchData:
                     for doc in data:
                         for key, val in doc.items():
                             if val.find("[") >= 0:
-                                doc[key] = val.replace("[", "").replace("]", "").replace(",","").replace("'","")
+                                doc[key] = val.replace("[", "").replace("]", "").replace(",","").replace("'","").split(" ")
                 elif file_is_of_type(filename, extensions=".csv"):
                     csv_reader = csv.DictReader(in_file, delimiter=",")
                     data = [doc for doc in at_most(csv_reader, max_num_docs)]
