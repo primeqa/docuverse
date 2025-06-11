@@ -222,6 +222,7 @@ class TextTiler:
 
         if self.text_trim_to is not None:
             text, parsed_text, max_num_sentences = self.trim_text(text, title, title_in_text=title_in_text)
+
         if max_length is not None:
             tok_len = self.get_tokenized_length(get_expanded_text(text=text, title=title,
                                                                   title_handling=title_handling,
@@ -247,12 +248,13 @@ class TextTiler:
                     _begins = []
                     _ends = []
                     sents = list(parsed_text.sentences)
+                    max_num_sentences = len(sents)
                     for i in range(len(sents)):
                         _begins.append(sents[i].begin)
                         _ends.append(sents[i + 1].begin if i < len(sents) - 1 else len(text))
 
                     num_sents = max_num_sentences # len(list(parsed_text.sentences))
-                    for i, sent in enumerate(parsed_text.sentences):
+                    for i, sent in enumerate(sents):
                         if i > max_num_sentences:
                             break
                         stext = sent.text

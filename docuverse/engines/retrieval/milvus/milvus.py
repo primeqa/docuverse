@@ -263,6 +263,12 @@ class MilvusEngine(RetrievalEngine):
                 else:
                     dt[f] = str(item[f])
             data.append(dt)
+        # if tq_instance:
+        #     max_val_text = 0
+        #     for d in data:
+        #         if 'text' in d and len(d['text']) > max_val_text:
+        #             max_val_text = len(d['text'])
+        #     tq_instance.write(f"Max text length: {max_val_text}")
         return data
 
     def encode_data(self, texts, batch_size, **kwargs):

@@ -597,6 +597,11 @@ class SearchData:
                 if file_is_of_type(filename, extensions=".tsv"):
                     csv_reader = csv.DictReader(in_file, delimiter="\t")
                     data = [doc for doc in at_most(csv_reader, max_num_docs)]
+                    # Try to address some list formatting within tsv
+                    for doc in data:
+                        for key, val in doc.items():
+                            if val.find("[") >= 0:
+                                doc[key] = val.replace("[", "").replace("]", "").replace(",","").replace("'","")
                 elif file_is_of_type(filename, extensions=".csv"):
                     csv_reader = csv.DictReader(in_file, delimiter=",")
                     data = [doc for doc in at_most(csv_reader, max_num_docs)]
