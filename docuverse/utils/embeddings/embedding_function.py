@@ -6,6 +6,8 @@ from docuverse.utils import get_param, get_config_dir
 class EmbeddingFunction:
     def __init__(self, model_or_directory_name: str, batch_size: int, **kwargs):
         self.batch_size = batch_size
+        import torch
+        torch.set_float32_matmul_precision('high')
 
     @staticmethod
     def pull_from_dmf(name):

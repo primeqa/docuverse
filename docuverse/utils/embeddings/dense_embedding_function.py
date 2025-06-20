@@ -9,6 +9,7 @@ import simple_colors
 class DenseEmbeddingFunction(EmbeddingFunction):
     def __init__(self, model_or_directory_name, batch_size=128, **kwargs):
         super().__init__(model_or_directory_name=model_or_directory_name, batch_size=batch_size, **kwargs)
+        self.model = None
         import torch
         device = detect_device()
         if device == 'cpu':
@@ -19,8 +20,9 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         else:
             self.num_devices = torch.cuda.device_count()
             if torch.cuda.is_available():
-                print("Running on the gpus: ",
-                      simple_colors.red([torch.cuda.get_device_name(i) for i in range(self.num_devices)], ['bold']))
+                gpus = simple_colors.red([torch.cuda.get_device_name(i) for i in range(self.num_devices)], ['bold'])
+                attn = simple_colors.blue(get_param(kwargs, 'attn_implementation', "sdpa"))
+                print(f"Running on the gpus:{gpus}, attention: {simple_colors.blue(attn)}")
             elif torch.backends.mps.is_available():
                 print(f"Running on the {simple_colors.red('mps')} ")
 
@@ -33,7 +35,8 @@ class DenseEmbeddingFunction(EmbeddingFunction):
 
         model_loaded = False
         try:
-            self.create_model(model_or_directory_name, device)
+            self.create_model(model_or_directory_name, device,
+                              attn_implementation=get_param(kwargs, 'attn_implementation', "sdpa"))
             model_loaded = True
         except Exception as e:
             raise e
@@ -63,9 +66,15 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             self.stop_pool()
             self.emb_pool = None
 
-    def create_model(self, model_or_directory_name: str=None, device: str='cpu'):
+    def create_model(self, model_or_directory_name: str=None, device: str='cpu',
+                     attn_implementation="sdpa"):
         from sentence_transformers import SentenceTransformer
-        self.model = SentenceTransformer(model_or_directory_name, device=device, trust_remote_code=True)
+        if attn_implementation is not None:
+            model_args = {"attn_implementation": attn_implementation}
+            self.model = SentenceTransformer(model_or_directory_name, device=device, trust_remote_code=True,
+                                             model_kwargs=model_args)
+        else:
+            self.model = SentenceTransformer(model_or_directory_name, device=device, trust_remote_code=True)
 
     @property
     def tokenizer(self):

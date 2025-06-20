@@ -54,6 +54,13 @@ class RetrievalArguments(GenericArguments):
         metadata={"help": "Pre-trained model name or path if not the same as model_name"}
     )
 
+    attn_implementation: Optional[str]|None = field(
+        default="sdpa",
+        metadata={
+            "help": "The attention implementation to use (default is sdpa)."
+        }
+    )
+
     input_passages: Optional[str] | None = field(
         default=None,
         metadata={

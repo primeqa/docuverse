@@ -612,7 +612,7 @@ class SearchData:
                     import ast
                     indata = pd.read_csv(filename, sep="\t")
                     for key in indata.keys():
-                        if indata[key].str.contains("\[").sum() > 0:
+                        if isinstance(indata[key], str) and indata[key].find("[") >= 0:
                             indata[key] = indata[key].map(convert_to_list)
                         # if '[' in " ".join(indata[key][:10]):
                         #     indata[key] = indata[key].map(lambda x: ast.literal_eval(x))
