@@ -80,6 +80,8 @@ def get_config_dir(config_path: str | None = None) -> str:
             if head == basename and os.path.basename(os.path.dirname(dir)) != basename:
                 return dir
             dir = os.path.dirname(dir)
+            if dir == "/":
+                return None
             head = os.path.basename(dir)
         return None
 
