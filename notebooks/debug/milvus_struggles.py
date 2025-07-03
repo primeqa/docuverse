@@ -218,7 +218,7 @@ def test_setup(milvus_server_addr="test.db", questions=None, **kwargs):
     print(f"Score: {score * 1.0 / total:.2f} ({score} out of {total})")
 
 online_milvus = "http://localhost:19530"
-file_milvus = "test.db"
+file_milvus = "../test.db"
 use_connections = False
 # keys_to_keep = {"text"}
 # data_list = [{**{k: v for k, v in d.items() if k in keys_to_keep}, '_id': d['id'], test_instance[1]: embeddings[i]} for i, d in
