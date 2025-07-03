@@ -828,8 +828,10 @@ class DocUVerseConfig(GenericArguments):
                 raise FileNotFoundError(f"The configuration file '{config_or_path}' does not exist.")
         elif isinstance(config_or_path, dict):
             self._flatten_and_read_dict(config_or_path)
+            return None
         elif isinstance(config_or_path, GenericArguments):
             return config_or_path
+        return None
 
     def _flatten_and_read_dict(self, vals):
         if get_param(vals, "retrieval|retriever"):  # By default, all parameters are assumed to be retriever params

@@ -1,0 +1,92 @@
+search_params:
+  IVF_FLAT:
+    metric_type: L2
+    params:
+      nprobe: 10
+  IVF_SQ8:
+    metric_type: L2
+    params:
+      nprobe: 10
+  IVF_PQ:
+    metric_type: L2
+    params:
+      nprobe: 10
+  HNSW:
+    metric_type: IP
+    params:
+      ef: 1000
+  RHNSW_FLAT:
+    metric_type: L2
+    params:
+      ef: 1000
+  RHNSW_SQ:
+    metric_type: L2
+    params:
+      ef: 1000
+  RHNSW_PQ:
+    metric_type: L2
+    params:
+      ef: 1000
+  IVF_HNSW:
+    metric_type: L2
+    params:
+      nprobe: 10
+      ef: 1000
+  ANNOY:
+    metric_type: L2
+    params:
+      search_k: 10
+  AUTOINDEX:
+    metric_type: L2
+    params: null
+  BM25:
+    metric_type: IP
+    params: {}
+  SPLADE:
+    metric_type: "IP"
+    params:
+      # drop_ratio_search: 0.2
+      drop_ratio_search: 0.2
+  SPLADE-0.9:
+    metric_type: "IP"
+    params:
+      # drop_ratio_search: 0.2
+      drop_ratio_search: 0.9
+  SPLADE-0.8:
+    metric_type: "IP"
+    index_name: "sparse_inverted_index"
+    index_type: "SPARSE_INVERTED_INDEX"
+    params:
+      drop_ratio_build: 0.8
+  default_flat:
+    metric_type: IP
+
+index_params:
+  default:
+    metric_type: L2
+    index_type: HNSW
+    params:
+      M: 8
+      efConstruction: 64
+  default_flat:
+    metric_type: IP
+    index_type: FLAT
+  default_dense:
+    index_type: HNSW
+    metric_type: IP
+    params:
+      nlist: 1024
+      M: 128
+      efConstruction: 128
+  SPLADE:
+    metric_type: "IP"
+    index_name: "sparse_inverted_index"
+    index_type: "SPARSE_INVERTED_INDEX"
+    params:
+      drop_ratio_build: 0.2
+  SPLADE-0.9:
+    metric_type: "IP"
+    index_name: "sparse_inverted_index"
+    index_type: "SPARSE_INVERTED_INDEX"
+    params:
+      drop_ratio_build: 0.9

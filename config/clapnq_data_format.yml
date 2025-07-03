@@ -1,0 +1,12 @@
+data_format:
+  id_header: id
+  text_header: text
+  title_header: title
+  extra_fields: None
+
+query_format:
+  id_header: id
+  text_header: question
+  relevant_header: doc-id-list
+  answers_header: answers
+  extra_fields: None
