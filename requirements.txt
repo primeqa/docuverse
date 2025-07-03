@@ -6,8 +6,8 @@ python-dotenv~=1.0.1
 numpy~=2.2.5
 # urllib3~=1.26.18
 urllib3~=2.4.0
-torch~=2.7.0;platform_system!="Darwin"
-torch~=2.2.2;platform_system=="Darwin"
+torch~=2.7.1
+multiprocess~=0.70.18;platform_system=="Darwin"
 tqdm~=4.67.1
 transformers~=4.52.4
 orjson~=3.10.18

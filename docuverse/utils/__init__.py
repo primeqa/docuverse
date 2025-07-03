@@ -329,24 +329,25 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
                 except Exception as e:
                     d[id] = []
 
+    num_docs = len(data)
     for i, doc in tqdm(enumerate(data), desc="Adding docs:"):
         doc_queue.put([i, doc])
     processes = []
-    tk = tqdm(desc=f"{msg}:", total=doc_queue.qsize(), leave=True, position=0)
-    c = doc_queue.qsize()
+    tk = tqdm(desc=f"{msg}:", total=num_docs, leave=True, position=0)
+    c = num_docs
     # print("starting processes")
     for i in range(num_threads):
-        p = Process(target=processor, args=(doc_queue, d, i, doc_queue.qsize()/num_threads,))
+        p = Process(target=processor, args=(doc_queue, d, i, num_docs/num_threads,))
         processes.append(p)
         p.start()
     # print("Running")
     while c > 0:
-        c1 = doc_queue.qsize()
+        c1 = num_docs
         if c != c1:
             tk.update(c - c1)
             c = c1
         time.sleep(0.1)
-    # print(f"Dropped out of the while loop: {doc_queue.qsize()}")
+
     for p in processes:
         p.join()
     tk.clear()
