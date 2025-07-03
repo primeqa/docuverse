@@ -8,10 +8,10 @@ import time
 import sys
 if sys.platform == "darwin":
     print("We're on a Mac !!")
-    from multiprocess import Queue, Manager, Process
+    from multiprocess import Queue, Manager, Process, Lock, Value
     import multiprocess as mp
 else:
-    from multiprocessing import Queue, Manager, Process
+    from multiprocessing import Queue, Manager, Process, Lock, Value
     import multiprocessing as mp
 
 from typing import List, Union
@@ -307,14 +307,16 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     doc_queue = Queue()
     manager = Manager()
     d = manager.dict()
-    # print(f"Created dictionary: {d}")
-    def processor(inqueue, d, thread_number, size):
+    print(f"Created dictionary: {d}")
+    def processor(inqueue, d, thread_number, size, curr_size, lock):
         pid = mp.current_process().pid
         with tqdm(desc=f"{msg}/thread {thread_number}", leave=False,
                   position=thread_number+1, total=2*size) as tk1:
             while True:
                 try:
                     id, text = inqueue.get(block=True, timeout=1)
+                    with lock:
+                        curr_size.value -= 1
                 except queue.Empty:
                     break
                 except Exception as e:
@@ -328,6 +330,7 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
                     break
                 except Exception as e:
                     d[id] = []
+            # tk1.write(f"Thread {thread_number} finished")
 
     num_docs = len(data)
     for i, doc in tqdm(enumerate(data), desc="Adding docs:"):
@@ -335,21 +338,26 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     processes = []
     tk = tqdm(desc=f"{msg}:", total=num_docs, leave=True, position=0)
     c = num_docs
-    # print("starting processes")
+    tk.write("starting processes")
+    curr_size = Value('i', num_docs)
+    lock = Lock()
     for i in range(num_threads):
-        p = Process(target=processor, args=(doc_queue, d, i, num_docs/num_threads,))
+        p = Process(target=processor, args=(doc_queue, d, i, num_docs/num_threads, curr_size, lock))
         processes.append(p)
         p.start()
-    # print("Running")
+    # tk.write("Running")
+    c1 = num_docs
     while c > 0:
-        c1 = num_docs
+        c1 = curr_size.value
+        # tk.write(f"Current size: {c1}")
         if c != c1:
             tk.update(c - c1)
             c = c1
         time.sleep(0.1)
 
-    for p in processes:
+    for i, p in enumerate(processes):
         p.join()
+        # tk.write(f"Process {i} joined")
     tk.clear()
     tk.close()
     return list(d[i] for i in range(num_items))
