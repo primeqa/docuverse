@@ -77,7 +77,7 @@ print(f"Results:\n{scores}")
 pip install .
 
 # Full install (editable)
-pip install -e .[all]
+pip install -e .
 
 # Install milvus and/or elastic dependencies, and the pyizumo library (if you have acecess to it)
 pip install -r requirements-milvus.txt
