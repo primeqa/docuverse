@@ -66,66 +66,151 @@ class SearchResult:
     def __add__(self, other):
         return self.append(other)
 
-    def append(self, data: Union[Dict[str, str], SearchDatum], **kwargs):
-        if isinstance(data, SearchResult.SearchDatum):
-            self.retrieved_passages.append(data)
-        else:
-            self.retrieved_passages.append(SearchResult.SearchDatum(data, **kwargs))
-
-    def remove_duplicates(self, duplicate_removal: str = "none",
-                          rouge_duplicate_threshold: float = -1.0):
-        if (duplicate_removal is None or
-                duplicate_removal == "none" or
-                self.retrieved_passages == []
-        ):
-            return
-        # ret = SearchResult(question=self.question, data=[])
-        keep_passages = []
-        if duplicate_removal == "exact":
-            seen = {self.retrieved_passages[0].get_text(): 1}
-            ret = [self.retrieved_passages[0]]
-            for r in self.retrieved_passages[1:]:
-                text_ = r.get_text()
-                if text_ not in seen:
-                    seen[text_] = 1
-                    keep_passages.append(r)
-        elif duplicate_removal == "rouge":
-            from rouge_score.rouge_scorer import RougeScorer
-            if self.rouge_scorer is None:
-                self.rouge_scorer = RougeScorer(['rouge1'],
-                                                use_stemmer=True)
-
-            for r in self.retrieved_passages[1:]:
-                found = False
-                text_ = r.get_text()
-                for c in keep_passages:
-                    scr = self.rouge_scorer.score(c.get_text(), text_)
-                    if scr['rouge1'].fmeasure >= rouge_duplicate_threshold:
-                        found = True
-                        break
-                if not found:
-                    keep_passages.append(r)
-                    # ret.append(r)
-        elif duplicate_removal.startswith("key:"):
-            key = duplicate_removal.replace("key:","")
-            seen = set()
-            for i, r in enumerate(self.retrieved_passages):
-                try:
-                    # print(f"it={i}")
-                    val = get_param(r, key, None)
-                    # print(f"val={val}")
-                    if val and val not in seen:
-                        seen.add(val)
-                        keep_passages.append(r)
-                except Exception as e:
-                    print(f"Error on {r.metadata}: {e}")
-        self.retrieved_passages = keep_passages
-
     def __getitem__(self, i: int) -> SearchDatum:
         return self.retrieved_passages[i]
 
     def __iter__(self):
         return iter(self.retrieved_passages)
+
+    def append(self, data: Union[Dict[str, str], SearchDatum], **kwargs) -> 'SearchResult':
+        if isinstance(data, SearchResult.SearchDatum):
+            self.retrieved_passages.append(data)
+        else:
+            self.retrieved_passages.append(SearchResult.SearchDatum(data, **kwargs))
+        return self
+
+    def remove_duplicates(self, duplicate_removal: str = "none",
+                          rouge_duplicate_threshold: float = -1.0) -> None:
+        """Remove duplicate passages based on specified criteria."""
+        if not self._should_remove_duplicates(duplicate_removal):
+            return
+
+        if duplicate_removal == "exact":
+            self._remove_exact_duplicates()
+        elif duplicate_removal == "rouge":
+            self._remove_rouge_duplicates(rouge_duplicate_threshold)
+        elif duplicate_removal.startswith("key:"):
+            self._remove_key_duplicates(duplicate_removal)
+
+    def _should_remove_duplicates(self, duplicate_removal: str) -> bool:
+        """Check if duplicate removal should be performed."""
+        return not (duplicate_removal is None or
+                    duplicate_removal == "none" or
+                    not self.retrieved_passages)
+
+    def _remove_exact_duplicates(self) -> None:
+        """Remove passages with exact text matches."""
+        if not self.retrieved_passages:
+            return
+
+        keep_passages = [self.retrieved_passages[0]]
+        seen = {self.retrieved_passages[0].get_text(): 1}
+
+        for passage in self.retrieved_passages[1:]:
+            text = passage.get_text()
+            if text not in seen:
+                seen[text] = 1
+                keep_passages.append(passage)
+
+        self.retrieved_passages = keep_passages
+
+    def _remove_rouge_duplicates(self, threshold: float) -> None:
+        """Remove passages that are similar based on ROUGE score."""
+        if not self.retrieved_passages:
+            return
+        from rouge_score.rouge_scorer import RougeScorer
+
+        if self.rouge_scorer is None:
+            self.rouge_scorer = RougeScorer(['rouge1'], use_stemmer=True)
+
+        keep_passages = [self.retrieved_passages[0]]
+
+        for passage in self.retrieved_passages[1:]:
+            if not self._is_similar_to_any(passage, keep_passages, threshold):
+                keep_passages.append(passage)
+
+        self.retrieved_passages = keep_passages
+
+    def _is_similar_to_any(self, passage: SearchDatum, passages: List[SearchDatum],
+                           threshold: float) -> bool:
+        """Check if a passage is similar to any passage in the given list."""
+        text = passage.get_text()
+        for existing_passage in passages:
+            score = self.rouge_scorer.score(existing_passage.get_text(), text)
+            if score['rouge1'].fmeasure >= threshold:
+                return True
+        return False
+
+    def _remove_key_duplicates(self, duplicate_removal: str) -> None:
+        """Remove passages with duplicate values for a specific key."""
+        key = duplicate_removal.replace("key:", "")
+        seen = set()
+        keep_passages = []
+
+        for passage in self.retrieved_passages:
+            try:
+                val = get_param(passage, key, None)
+                if val is None or val not in seen:
+                    if val is not None:
+                        seen.add(val)
+                    keep_passages.append(passage)
+            except Exception as e:
+                print(f"Error on {getattr(passage, 'metadata', 'unknown')}: {e}")
+
+        self.retrieved_passages = keep_passages
+
+    # def remove_duplicates(self, duplicate_removal: str = "none",
+    #                       rouge_duplicate_threshold: float = -1.0):
+    #     if (duplicate_removal is None or
+    #             duplicate_removal == "none" or
+    #             self.retrieved_passages == []
+    #     ):
+    #         return
+    #     # ret = SearchResult(question=self.question, data=[])
+    #     keep_passages = []
+    #     if duplicate_removal == "exact":
+    #         seen = {self.retrieved_passages[0].get_text(): 1}
+    #         ret = [self.retrieved_passages[0]]
+    #         for r in self.retrieved_passages[1:]:
+    #             text_ = r.get_text()
+    #             if text_ not in seen:
+    #                 seen[text_] = 1
+    #                 keep_passages.append(r)
+    #     elif duplicate_removal == "rouge":
+    #         from rouge_score.rouge_scorer import RougeScorer
+    #         if self.rouge_scorer is None:
+    #             self.rouge_scorer = RougeScorer(['rouge1'],
+    #                                             use_stemmer=True)
+    #
+    #         for r in self.retrieved_passages[1:]:
+    #             found = False
+    #             text_ = r.get_text()
+    #             for c in keep_passages:
+    #                 scr = self.rouge_scorer.score(c.get_text(), text_)
+    #                 if scr['rouge1'].fmeasure >= rouge_duplicate_threshold:
+    #                     found = True
+    #                     break
+    #             if not found:
+    #                 keep_passages.append(r)
+    #                 # ret.append(r)
+    #     elif duplicate_removal.startswith("key:"):
+    #         key = duplicate_removal.replace("key:","")
+    #         seen = set()
+    #         for i, r in enumerate(self.retrieved_passages):
+    #             try:
+    #                 # print(f"it={i}")
+    #                 val = get_param(r, key, None)
+    #                 # print(f"val={val}")
+    #                 if val is None:
+    #                     keep_passages.append(r)
+    #                 else:
+    #                     if val not in seen:
+    #                         seen.add(val)
+    #                         keep_passages.append(r)
+    #
+    #             except Exception as e:
+    #                 print(f"Error on {r.metadata}: {e}")
+    #     self.retrieved_passages = keep_passages
 
     def top_k(self, k: int):
         return self.retrieved_passages[:k] if k>0 else self.retrieved_passages

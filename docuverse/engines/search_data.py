@@ -604,7 +604,7 @@ class SearchData:
                     #             doc[key] = val.replace("[", "").replace("]", "").replace(",","").replace("'","").split(" ")
                     def convert_to_list(val):
                         try:
-                            val = ast.literal_eval(val)
+                            val = [str(s) for s in ast.literal_eval(val)]
                         except:
                             pass
                         return val

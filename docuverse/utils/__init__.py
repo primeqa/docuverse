@@ -471,3 +471,28 @@ def save_command_line(args, output="logfile"):
     with open(output, "a") as cmdlog:
         cmdlog.write(f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')} - {os.getenv('USER')} - "
                      f"python {' '.join(args)}\n")
+
+
+def _trim_json(data, max_string_len: int=9999):
+    """
+    Trims JSON-compatible data structures to ensure string values do not exceed a
+    specified length. This function recursively traverses dictionaries, lists,
+    and strings, limiting string values to a maximum length of 9999 characters.
+
+    Args:
+        data: The JSON-compatible data structure to be trimmed. This can be a
+            dictionary, list, or string.
+
+    Returns:
+        The trimmed JSON-compatible data structure with string values limited to a
+        maximum length of 9999 characters.
+
+    """
+    if isinstance(data, dict):
+        for k, v in data.items():
+            data[k] = _trim_json(v)
+    elif isinstance(data, list):
+        data = [_trim_json(v) for v in data]
+    elif isinstance(data, str):
+        data = data[:max_string_len]
+    return data

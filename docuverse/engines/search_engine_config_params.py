@@ -186,19 +186,19 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
-    text_field: Optional[str] = field(
-        default="text",
-        metadata={
-            "help": "Defines the text field name in the document json line (default: 'text')."
-        }
-    )
-
-    title_field: Optional[str] = field(
-        default="title",
-        metadata={
-            "help": "Defines the title field name in the document json line (default: 'title')."
-        }
-    )
+    # text_field: Optional[str] = field(
+    #     default="text",
+    #     metadata={
+    #         "help": "Defines the text field name in the document json line (default: 'text')."
+    #     }
+    # )
+    #
+    # title_field: Optional[str] = field(
+    #     default="title",
+    #     metadata={
+    #         "help": "Defines the title field name in the document json line (default: 'title')."
+    #     }
+    # )
 
     filters: Optional[str] | None = field(
         default=None,

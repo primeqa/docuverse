@@ -1,4 +1,6 @@
 from docuverse.engines.retrieval.elastic import ElasticEngine
+from docuverse.utils import get_param
+
 
 class ElasticElserEngine(ElasticEngine):
     def __init__(self, config_params, **kwargs):
@@ -28,7 +30,8 @@ class ElasticElserEngine(ElasticEngine):
                 "must": {
                     "multi_match": {
                         "query": text,
-                        "fields": [self.config.text_field, self.config.title_field]
+                        "fields": [get_param(self.config.data_header_format, "text_header", "text"),
+                                   get_param(self.config.data_header_format, "title_header", "title")]
                     }
                 }
             }}

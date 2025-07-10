@@ -1,17 +1,12 @@
-import json
 import sys
 from typing import Union
 
-from pymilvus.exceptions import ConnectionNotExistException, CollectionNotExistException, IndexNotExistException, \
-    MilvusException
-# from onnx.reference.custom_element_types importp; bfloat16
-from scipy.sparse import spmatrix
-from scipy.sparse._csr import csr_array
-from tqdm import tqdm, trange
-from docuverse import SearchCorpus
+from pymilvus.exceptions import ConnectionNotExistException, CollectionNotExistException, IndexNotExistException
+from tqdm import tqdm
+from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.retrieval.retrieval_servers import RetrievalServers, Server
 from docuverse.engines.search_queries import SearchQueries
-from docuverse.engines import SearchData, RetrievalEngine
+from docuverse.engines import RetrievalEngine
 from docuverse.utils.timer import timer
 
 try:
@@ -27,10 +22,11 @@ except:
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_engine_config_params import SearchEngineConfig
-from docuverse.utils import get_param, read_config_file, vector_is_empty
+from docuverse.utils import get_param, read_config_file, vector_is_empty, _trim_json
+import json
 
 import os
-from dotenv import load_dotenv
+from scipy.sparse import csr_array
 
 class MilvusEngine(RetrievalEngine):
     """MilvusEngine class
@@ -217,6 +213,35 @@ class MilvusEngine(RetrievalEngine):
     def _analyze_data(self, corpus):
         pass
 
+    def _create_data(self, corpus, texts, tq_instance=None, **kwargs):
+        passage_vectors = [[]] * len(corpus)
+        if tq_instance is not None:
+            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=False)
+            tq_instance.update(len(texts))
+        else:
+            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=True)
+        data = []
+        for i, (item, vector) in enumerate(zip(corpus, passage_vectors)):
+            if vector_is_empty(vector):
+                continue
+            keys = ['text', 'title', 'id'] if self.config.store_text_in_index else ['title', 'id']
+            dt = {key: item[key] for key in keys}
+            if 'text' in dt and len(dt['text']) > self.config.max_text_size > 0:  # Trim to avoid
+                dt['text'] = dt['text'][:self.config.max_text_size] + " [...]"
+
+            if isinstance(vector, csr_array):
+                if len(vector.shape) == 1:
+                    vector.resize((1, vector.shape[0]))
+            dt[self.embeddings_name] = vector
+
+            for f in self.config.data_template.extra_fields:
+                if isinstance(item[f], dict | list):
+                    dt[f] = json.dumps(_trim_json(item[f]))
+                else:
+                    dt[f] = str(item[f])
+            data.append(dt)
+        return data
+
     def _insert_data(self, data, show_progress_bar=True, tq_instance=None, **kwargs):
         if tq_instance is None:
             tq_instance = tqdm(total=len(data), desc="Ingesting documents", leave=False, disable=not show_progress_bar)
@@ -237,39 +262,6 @@ class MilvusEngine(RetrievalEngine):
             ingested_items = res["row_count"]
             print(f"{tm.time_since_beginning()}: Currently ingested items: {ingested_items}")
             time.sleep(10)
-
-    def _create_data(self, corpus, texts, tq_instance=None, **kwargs):
-        if tq_instance is not None:
-            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=False)
-            tq_instance.update(len(texts))
-        data = []
-        for i, (item, vector) in enumerate(zip(corpus, passage_vectors)):
-            # if isinstance(vector, spmatrix) and vector.getnnz() == 0:
-            if vector_is_empty(vector):
-                continue
-            keys = ['text', 'title', 'id'] if self.config.store_text_in_index else ['title', 'id']
-            dt = {key: item[key] for key in keys}
-            if 'text' in dt and len(dt['text']) > self.config.max_text_size > 0: # Trim to avoid
-                dt['text'] = dt['text'][:self.config.max_text_size]+" [...]"
-            # dt[self.embeddings_name] = vector.reshape(1, vector.shape[0])
-            if isinstance(vector, csr_array):
-                if len(vector.shape) == 1:
-                    vector.resize((1, vector.shape[0]))
-            dt[self.embeddings_name] = vector
-
-            for f in self.config.data_template.extra_fields:
-                if isinstance(item[f], dict|list):
-                    dt[f] = json.dumps(self._trim_json(item[f]))
-                else:
-                    dt[f] = str(item[f])
-            data.append(dt)
-        # if tq_instance:
-        #     max_val_text = 0
-        #     for d in data:
-        #         if 'text' in d and len(d['text']) > max_val_text:
-        #             max_val_text = len(d['text'])
-        #     tq_instance.write(f"Max text length: {max_val_text}")
-        return data
 
     def encode_data(self, texts, batch_size, **kwargs):
         passage_vectors = self.model.encode(texts,
@@ -367,14 +359,3 @@ class MilvusEngine(RetrievalEngine):
         Creates a search request, based on the type of the engine - used in hybrid/multi-index search
         """
         pass
-
-    @staticmethod
-    def _trim_json(data):
-        if isinstance(data, dict):
-            for k, v in data.items():
-                data[k] = MilvusEngine._trim_json(v)
-        elif isinstance(data, list):
-            data = [MilvusEngine._trim_json(v) for v in data]
-        elif isinstance(data, str):
-            data = data[:9999]
-        return data

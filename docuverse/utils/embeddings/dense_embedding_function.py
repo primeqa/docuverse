@@ -21,8 +21,8 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             self.num_devices = torch.cuda.device_count()
             if torch.cuda.is_available():
                 gpus = simple_colors.red([torch.cuda.get_device_name(i) for i in range(self.num_devices)], ['bold'])
-                attn = simple_colors.blue(get_param(kwargs, 'attn_implementation', "sdpa"))
-                print(f"Running on the gpus:{gpus}, attention: {simple_colors.blue(attn)}")
+                attn = simple_colors.yellow(get_param(kwargs, 'attn_implementation', "sdpa"))
+                print(f"Running on the gpus:{gpus}, attention: {attn}")
             elif torch.backends.mps.is_available():
                 print(f"Running on the {simple_colors.red('mps')} ")
 
