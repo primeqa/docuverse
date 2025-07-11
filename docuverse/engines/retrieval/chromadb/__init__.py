@@ -1,3 +1,3 @@
-from docuverse.engines.retrieval.chromadb.old_chromadb import ChromaDBEngine
+from docuverse.engines.retrieval.chromadb.chromadb_engine import ChromaDBEngine
 
 __all__ = ['ChromaDBEngine']

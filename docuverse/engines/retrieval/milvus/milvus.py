@@ -200,7 +200,8 @@ class MilvusEngine(RetrievalEngine):
         tq = tqdm(desc="Creating data", total=len(texts), leave=True)
         tq1 = tqdm(desc="  * Encoding data", total=len(texts), leave=False)
         tq2 = tqdm(desc="  * Milvusing data", total=len(texts), leave=False)
-        ingestion_batch = 5*self.ingestion_batch_size
+        ingestion_batch = self.ingestion_batch_size
+        tq.write(f"Ingesting with a batch size of {ingestion_batch}")
         for i in range(0, len(texts), ingestion_batch):
             last = min(i+ingestion_batch, len(texts))
             data = self._create_data(corpus[i:last], texts[i:last], tq_instance=tq1, **kwargs)
