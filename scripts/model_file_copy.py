@@ -39,7 +39,7 @@ def create_model_files(input_file_name):
             modified_data = copy.deepcopy(template_data)
 
             change_param(modified_data, "model_name", new_model_name)
-            change_param(modified_data, "short_model_name", new_short_name.replace("-", "_"))
+            change_param(modified_data, "short_model_name", new_short_name.replace("-", "_").replace(".","p"))
 
             # Update the 'short_model_name' parameter, assuming it's a top-level key
             # Define output file name
