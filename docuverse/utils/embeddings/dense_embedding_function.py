@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Union, List
+from typing import Union, List, Any
 
 from docuverse.utils import get_param, detect_device
 from docuverse.utils.embeddings.embedding_function import EmbeddingFunction
@@ -70,8 +70,14 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                      attn_implementation="sdpa"):
         from sentence_transformers import SentenceTransformer
         if attn_implementation is not None:
-            model_args = {"attn_implementation": attn_implementation}
-            self.model = SentenceTransformer(model_or_directory_name, device=device, trust_remote_code=True,
+            model_args: dict[str, Any] = {"attn_implementation": attn_implementation}
+            if attn_implementation.find("flash") >= 0:
+                import torch
+                model_args["torch_dtype"] = torch.bfloat16
+
+            self.model = SentenceTransformer(model_or_directory_name,
+                                             device=device,
+                                             trust_remote_code=True,
                                              model_kwargs=model_args)
         else:
             self.model = SentenceTransformer(model_or_directory_name, device=device, trust_remote_code=True)

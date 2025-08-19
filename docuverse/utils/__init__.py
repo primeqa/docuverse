@@ -1,11 +1,12 @@
-import copy
 import itertools
-import json
 import os
 import queue
-import re
 import time
 import sys
+import re
+import copy
+import json
+
 if sys.platform == "darwin":
     print("We're on a Mac !!")
     from multiprocess import Queue, Manager, Process, Lock, Value
@@ -14,7 +15,7 @@ else:
     from multiprocessing import Queue, Manager, Process, Lock, Value
     import multiprocessing as mp
 
-from typing import List, Union
+from typing import List, Union, Any
 from jinja2 import Template, Undefined
 
 # from .embedding_function import DenseEmbeddingFunction
@@ -130,68 +131,172 @@ class NullUndefined(Undefined):
 #     return config
 
 
-def read_config_file(config_file):
-    patt = re.compile(r"{{(.*?)}}")
-    if not os.path.exists(config_file):
-        config_file = os.path.join(get_config_dir(os.path.dirname(config_file)), os.path.basename(config_file))
-    def replace(local_dict:dict, global_dict:dict, parent_key: str=""):
-        def get_value_recursive(global_dict, val, parent_key):
-            parents = parent_key.split(".")
-            rr = None
-            while rr is None:
-                if len(parents) > 0:
-                    skey = f"{'.'.join(parents)}.{val}"
-                else:
-                    skey = val
-                rr = get_param(global_dict, skey)
-                if rr is not None:
-                    return rr
-                if len(parents) == 0:
-                    return "None"
-                parents = parents[:-1]
+# Constants
+
+def resolve_variable(global_dict, variable_name, parent_key):
+    """
+    Resolve a variable by searching through parent keys in the configuration.
+    
+    Args:
+        global_dict (dict): The full configuration dictionary
+        variable_name (str): The variable name to resolve. The key can be multi-level - levels are split with '.'.
+        parent_key (str): The parent key path to start searching from
+        
+    Returns:
+        The resolved value or "None" as a string if not found
+    """
+    variable_name = variable_name.replace(" ", "")
+    parents = parent_key.split(".")
+
+    while True:
+        if parents:
+            search_key = f"{'.'.join(parents)}.{variable_name}"
+        else:
+            search_key = variable_name
+
+        result = get_param(global_dict, search_key)
+        if result is not None:
+            return result
+
+        if not parents:
             return "None"
 
-        not_done = False
-        for key, val in local_dict.items():
-            if isinstance(val, str):
-                m = re.search(patt, val)
-                while m:
-                    rr = get_value_recursive(global_dict, m.group(1).replace(" ",""), parent_key)
-                    start="{{"
-                    end="}}"
-                    if not isinstance(rr, str) or rr.find("{{") < 0:
-                        val = val.replace(f"{start}{m.group(1)}{end}", str(rr))
-                    else:
-                        not_done = True
+        parents = parents[:-1]
 
-                    m=re.search(patt, val)
-                local_dict[key] = val
-            elif isinstance(val, dict):
-                # Call recursively
-                not_done |= replace(local_dict=val, global_dict=global_dict,
-                                    parent_key=f"{parent_key}.{key}" if parent_key != "" else key)
-        return not_done
 
-    config = {}
-    if config_file.endswith(".yml") or config_file.endswith(".yaml"):
-        with open(config_file, "r") as f:
-            config = yaml.safe_load(f)
-    elif config_file.endswith(".json"):
-        with open(config_file, "r") as f:
-            config = json.load(f)
+def process_dictionary(local_dict, global_dict, parent_key=""):
+    """
+    Process a dictionary to resolve templated variables.
+    
+    Args:
+        local_dict (dict): The dictionary to process
+        global_dict (dict): The full configuration dictionary
+        parent_key (str): The parent key path for variable resolution
+        
+    Returns:
+        bool: True if some variables couldn't be fully resolved yet
+    """
+    VARIABLE_PATTERN = re.compile(r"{{(.*?)}}")
+    has_unresolved = False
+
+    for key, value in local_dict.items():
+        if isinstance(value, str):
+            # Process string values that may contain variables
+            new_value = value
+            match = re.search(VARIABLE_PATTERN, new_value)
+
+            while match:
+                var_name = match.group(1)
+                resolved_value = resolve_variable(global_dict, var_name, parent_key)
+
+                # Check if the resolved value itself contains variables
+                if isinstance(resolved_value, str) and "{{" in resolved_value:
+                    has_unresolved = True
+                    break
+
+                # Replace the variable with its resolved value
+                new_value = new_value.replace(f"{{{{{var_name}}}}}", str(resolved_value))
+                match = re.search(VARIABLE_PATTERN, new_value)
+
+            local_dict[key] = new_value
+
+        elif isinstance(value, dict):
+            # Process nested dictionaries
+            next_parent = f"{parent_key}.{key}" if parent_key else key
+            nested_unresolved = process_dictionary(value, global_dict, next_parent)
+            has_unresolved = has_unresolved or nested_unresolved
+
+    return has_unresolved
+
+
+def load_config_from_file(file_path):
+    """
+    Load configuration from a YAML or JSON file.
+    
+    Args:
+        file_path (str): Path to the configuration file
+        
+    Returns:
+        dict: The loaded configuration
+        
+    Raises:
+        RuntimeError: If the file type is not supported
+    """
+    if file_path.endswith((".yml", ".yaml")):
+        with open(file_path, "r") as f:
+            return yaml.safe_load(f)
+    elif file_path.endswith(".json"):
+        with open(file_path, "r") as f:
+            return json.load(f)
     else:
-        raise RuntimeError(f"Config file type not supported: {config_file}")
-    # Hack to resolve variables
-    not_done = True
-    num_iters=0
-    while not_done:
-        tconfig = copy.deepcopy(config)
-        not_done = replace(local_dict=config, global_dict=config, parent_key="")
-        num_iters += 1
-        if tconfig==config:
+        raise RuntimeError(f"Config file type not supported: {file_path}")
+
+def is_scalar(value):
+    """Check if a value is a scalar (non-iterable or string). A bit of a over-caution, but better safe than sorry."""
+    scalar_types = (int, float, str, bool, complex, type(None))
+    return isinstance(value, scalar_types)
+
+
+def replace_leaf_keys(config: dict[str, Any], override_vals: dict[str, str]) -> dict[str, Any]:
+    for key, value in config.items():
+        if isinstance(value, dict):
+            config[key] = replace_leaf_keys(value, override_vals)
+        elif is_scalar(value):
+            if key in override_vals:
+                config[key] = override_vals[key]
+    return config
+
+
+def read_config_file(config_file, override_vals: dict[str, str]=None) -> dict[str, Any]:
+    """
+    Reads a configuration file, resolves templated variables within the file, and returns the
+    parsed configuration as a dictionary.
+
+    The function supports YAML and JSON configuration files. Variables within the configuration
+    file are expressed using the syntax `{{variable}}` and are resolved by recursively searching
+    through the configuration dictionary, considering the current and parent keys.
+
+    Args:
+        override_vals:
+        config_file (str): Path to the configuration file to read. The file may contain
+            variables to be resolved.
+
+    Returns:
+        dict: A dictionary representation of the processed and resolved configuration file.
+
+    Raises:
+        RuntimeError: If the file type is not supported or if variable resolution exceeds the
+            allowed number of iterations (10).
+    """
+    MAX_RESOLUTION_ITERATIONS = 10
+
+    # Resolve file path if it doesn't exist
+    if not os.path.exists(config_file):
+        config_file = os.path.join(get_config_dir(os.path.dirname(config_file)),
+                                   os.path.basename(config_file))
+
+    # Load configuration from file
+    config = load_config_from_file(config_file)
+    if override_vals is not None:
+        config = replace_leaf_keys(config, override_vals)
+
+    # Resolve variables in the configuration
+    iterations = 0
+    has_unresolved = True
+
+    while has_unresolved and iterations < MAX_RESOLUTION_ITERATIONS:
+        previous_config = copy.deepcopy(config)
+        has_unresolved = process_dictionary(config, config)
+        iterations += 1
+
+        # If no changes were made in this iteration, we're done
+        if previous_config == config:
             break
-        if num_iters > 10:
-            raise RuntimeError(f"Could not resolve the variables in {config_file}")
+
+    # Check if we hit the maximum number of iterations
+    if iterations >= MAX_RESOLUTION_ITERATIONS and has_unresolved:
+        raise RuntimeError(f"Could not resolve the variables in {config_file}")
+
     return config
 
 class Limiter:
@@ -227,8 +332,10 @@ def open_stream(file_name: str, write: bool = False, binary=False):
         mode = "r"
         if not os.path.exists(file_name):
             raise RuntimeError(f"File {file_name} does not exist!")
-    if binary:
+    if binary: # or file_is_of_type(file_name, ['bz2', 'xz', 'gz']):
         mode = f"{mode}b"
+    else:
+        mode = f"{mode}t"
 
     input_stream = None
     if file_name.endswith(".bz2"):

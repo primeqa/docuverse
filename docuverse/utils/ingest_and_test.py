@@ -54,7 +54,8 @@ def main_cli():
         if output is None:
             output = engine.read_output(config.output_file)
         results = scorer.compute_score(queries, output, model_name=engine.get_output_name())
-        metrics_file = config.output_file.replace(".json", ".metrics")
+        metrics_file = config.output_file[:config.output_file.find(
+            '.json')] + '.metrics' if '.json' in config.output_file else config.output_file + '.metrics'
         tm.add_timing("evaluate")
         ostring = io.StringIO()
         # print(timer.display_timing)

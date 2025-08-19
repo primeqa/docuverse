@@ -142,7 +142,8 @@ class SearchEngine:
         if file_is_of_type(output_file, extensions=".json"):
             if not os.path.exists(os.path.dirname(output_file)):
                 os.makedirs(os.path.dirname(output_file), exist_ok=True)
-            with open(output_file, "w") as outfile:
+            # with open(output_file, "w") as outfile:
+            with open_stream(output_file, write=True) as outfile:
                 outp = [r.as_dict() for r in output]
                 outfile.write(json.dumps(outp, indent=2))
         elif file_is_of_type(output_file, extensions=".pkl"):

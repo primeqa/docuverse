@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Union
 
 import yaml
 
@@ -20,12 +20,23 @@ from docuverse.engines.data_template import (
 )
 
 
+@dataclass
 class GenericArguments:
     def get(self, key: str, default=None):
         return self.__dict__[key] if key in self.__dict__ else default
 
     def __getitem__(self, item, default=None):
         return self.get(item, default)
+
+    def is_default(self, field_name):
+        return field_name not in self._provided_fields
+
+    def __post_init__(self):
+        # parse the query_header_template
+        self._provided_fields = set()
+        for field in self.__dataclass_fields__:
+            if field in self.__dict__:
+                self._provided_fields.add(field)
 
 
 @dataclass
@@ -441,8 +452,8 @@ class RetrievalArguments(GenericArguments):
     index_params: dict = None
 
     def __post_init__(self):
+        super().__post_init__()
         # parse the query_header_template
-
         if self.data_format is not None:
             self.data_template, self.query_template = read_doc_query_format(self.data_format)
         else:
@@ -477,7 +488,8 @@ class RetrievalArguments(GenericArguments):
             self.filter_on = res
         if self.max_text_size == 0:
             self.store_text_in_index = False
-        if self.hybrid == "":
+        if self.is_default('hybrid') or self.hybrid == "":
+        # if self.hybrid == "":
             self.hybrid = {}
         if self.db_engine in ['milvus-bm25', 'milvus_bm25'] and self.milvus_idf_file is None:
             self.milvus_idf_file = os.path.join(self.project_dir, f"{self.index_name}.idf")
@@ -719,13 +731,13 @@ class SearchEngineConfig:
         return getattr(self, key) if hasattr(self, key) else default
 
 
-class RunConfig(GenericArguments):
+@dataclass
+class RunConfig(EngineArguments):
     pass
 
-
+@dataclass
 class RerankerConfig(RerankerArguments):
     pass
-
 
 class EvaluationConfig:
     def __init__(self, config, **kwargs):
@@ -776,7 +788,7 @@ class DocUVerseConfig(GenericArguments):
     default_eval_config = EvaluationArguments()
     default_run_config = EngineArguments()
 
-    def __init__(self, config: dict | str = None):
+    def __init__(self, config: dict | str = None, parent: dict=None):
         self.evaluate = None
         self.output_file = None
         self.input_queries = None
@@ -790,7 +802,7 @@ class DocUVerseConfig(GenericArguments):
         self.retriever_config: SearchEngineConfig | None = None
         self.run_config: RunConfig | None = None
         if isinstance(config, str | dict):
-            self.config = self.read_configs(config)
+            self.config = self.read_configs(config, parent=parent)
 
     def read_dict(self, kwargs):
         self._process_params(self.params.parse_dict, kwargs, allow_extra_keys=True)
@@ -815,11 +827,12 @@ class DocUVerseConfig(GenericArguments):
             for key, value in _dict.__dict__.items():
                 self.__setattr__(key, value)
 
-    def read_configs(self, config_or_path: str) -> GenericArguments | None:
+    def read_configs(self, config_or_path: Union[str, dict, GenericArguments],
+                     parent: dict[str, str] = None) -> GenericArguments | None:
         if isinstance(config_or_path, str):
             if os.path.exists(config_or_path):
                 try:
-                    vals = read_config_file(config_or_path)
+                    vals = read_config_file(config_or_path, parent)
                     self._flatten_and_read_dict(vals)
                 except Exception as exc:
                     raise exc
@@ -857,20 +870,78 @@ class DocUVerseConfig(GenericArguments):
                 if value != default.__dict__[key]:
                     output_class.__dict__[key] = value
 
+    @staticmethod
+    def parse_args_to_dict(args=None):
+        """
+        Convert command line arguments from sys.argv to a dictionary.
+
+        Args:
+            args (list, optional): List of command line arguments. Defaults to sys.argv[1:].
+
+        Returns:
+            dict: A dictionary with argument keys and values.
+
+        Examples:
+            For command: python script.py --model_name bert --top_k 10 --verbose
+            Returns: {'model_name': 'bert', 'top_k': '10', 'verbose': True}
+        """
+        def cast_arg(arg):
+            if isinstance(arg, str):
+                try:
+                    return int(arg)
+                except ValueError:
+                    pass
+                try:
+                    return float(arg)
+                except ValueError:
+                    pass
+
+            return arg
+        import sys
+
+        if args is None:
+            args = sys.argv[1:]
+
+        result = {}
+        i = 0
+
+        while i < len(args):
+            arg = args[i]
+
+            # Handle arguments that start with - or --
+            if arg.startswith('--') or arg.startswith('-'):
+                key = arg.lstrip('-')
+
+                # Check if the next argument is a value or another flag
+                if i + 1 < len(args) and not args[i + 1].startswith('-'):
+                    result[key] = cast_arg(args[i + 1])
+                    i += 2  # Skip the value
+                else:
+                    # Flag without value (boolean flag)
+                    result[key] = True
+                    i += 1
+            else:
+                # Positional argument (no flag)
+                result[f"arg{i}"] = cast_arg(arg)
+                i += 1
+
+        return result
 
     @staticmethod
     def get_stdargs_config():
         config = DocUVerseConfig()
         config.read_args()
         if get_param(config.run_config, 'config'):
-            config1 = DocUVerseConfig(config.run_config.config)
+            given_params = DocUVerseConfig.parse_args_to_dict()
+            del given_params['config']
+            config1 = DocUVerseConfig(config.run_config.config, parent=given_params)
             # config1.update(config)
-            DocUVerseConfig._update(config1.retriever_config, config.retriever_config,
-                                    DocUVerseConfig.default_retriever_config)
-            DocUVerseConfig._update(config1.reranker_config, config.reranker_config,
-                                    DocUVerseConfig.default_reranker_config)
-            DocUVerseConfig._update(config1.eval_config, config.eval_config, DocUVerseConfig.default_eval_config)
-            DocUVerseConfig._update(config1.run_config, config.run_config, DocUVerseConfig.default_run_config)
+            # DocUVerseConfig._update(config1.retriever_config, config.retriever_config,
+            #                         DocUVerseConfig.default_retriever_config)
+            # DocUVerseConfig._update(config1.reranker_config, config.reranker_config,
+            #                         DocUVerseConfig.default_reranker_config)
+            # DocUVerseConfig._update(config1.eval_config, config.eval_config, DocUVerseConfig.default_eval_config)
+            # DocUVerseConfig._update(config1.run_config, config.run_config, DocUVerseConfig.default_run_config)
             config = config1
             config.ingest_params()
         if config.retriever_config.num_preprocessor_threads > 1:

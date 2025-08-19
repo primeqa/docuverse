@@ -1,14 +1,10 @@
 import torch
 from docuverse.utils import detect_device
-from sentence_transformers import SentenceTransformerModelCardData, SentenceTransformer
 from tqdm import tqdm
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 from .reranker import Reranker
 from docuverse.engines.search_engine_config_params import RerankerConfig as RerankerConfig
 from sentence_transformers.cross_encoder import CrossEncoder
-from docuverse.engines.search_result import SearchResult
-import numpy as np
 
 class CrossEncoderModel:
     """
