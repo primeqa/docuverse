@@ -650,6 +650,13 @@ class RerankerArguments(GenericArguments):
         }
     )
 
+    reranker_attn_implementation: Optional[str] = field(
+        default="sdpa",
+        metadata={
+            "help": "The model attention type to use for reranking (default is sdpa)."
+        }
+    )
+
 
 @dataclass
 class EvaluationArguments(GenericArguments):

@@ -293,7 +293,7 @@ class MilvusEngine(RetrievalEngine):
         pass
 
     def search(self, question: SearchQueries.Query, **kwargs) -> SearchResult:
-        tm = timer("ingest_and_test::search")
+        tm = timer("ingest_and_test::search::retrieve")
         self.check_client()
         search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'

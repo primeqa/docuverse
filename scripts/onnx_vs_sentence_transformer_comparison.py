@@ -3,7 +3,6 @@ import json
 
 import numpy as np
 # import onnxruntime as ort
-import onnxmlir as ort
 from sentence_transformers import SentenceTransformer
 from typing import List, Tuple
 import time

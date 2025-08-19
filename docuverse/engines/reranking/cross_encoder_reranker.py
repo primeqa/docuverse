@@ -21,7 +21,8 @@ class CrossEncoderModel:
     tokenizer : Tokenizer associated with the model for input processing.
 
     """
-    def __init__(self, model_name_or_path, device=None):
+    def __init__(self, model_name_or_path, device=None,
+                 attn_implementation=None, **kwargs):
         """
         Initializes the object with a language model and its associated tokenizer. The model is configured
         for sequence classification tasks and is set up to run on the specified device.
@@ -35,8 +36,16 @@ class CrossEncoderModel:
         # self.model = AutoModel.from_pretrained(model_name)
         if device is None:
             device = detect_device()
+        model_kwargs = {}
+        if attn_implementation is not None:
+            model_kwargs['attn_implementation'] = attn_implementation
+            if attn_implementation.find("flash") >= 0:
+                import torch
+                model_kwargs["torch_dtype"] = torch.bfloat16
+
         self.model = CrossEncoder(model_name_or_path, device=device,
-                                  tokenizer_kwargs={'model_max_length': 512})
+                                  tokenizer_kwargs={'model_max_length': 512},
+                                  model_kwargs=model_kwargs)
         # self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
         # self.model.to(device)
         # self.tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -92,7 +101,8 @@ class CrossEncoderReranker(Reranker):
     """
     def __init__(self, reranking_config: RerankerConfig|dict, **kwargs):
         super().__init__(reranking_config, **kwargs)
-        self.model = CrossEncoderModel(reranking_config.reranker_model)
+        self.model = CrossEncoderModel(reranking_config.reranker_model,
+                                       attn_implementation=reranking_config.reranker_attn_implementation)
 
     def _rerank(self, answer_list, show_progress):
         """
@@ -122,11 +132,12 @@ class CrossEncoderReranker(Reranker):
         output = []
         for answer in tqdm(answer_list, desc="Computing cross-encodings",
                                 total=num_docs, disable=not show_progress):
+            self.tm.mark()
             similarity_scores = self.model.predict([[answer.question.text, t.text] for t in answer.top_k(self.top_k)])
             self.tm.add_timing("similarity_computation")
             # sorted_similarities = sorted(zip(answer, similarity_scores),
             #                              key=lambda pair: pair[1], reverse=True)
             output.append(self._build_sorted_list(answer, similarity_scores))
-            self.tm.add_timing("cosine::reorder")
+            # self.tm.add_timing("cosine::reorder")
         return output
 
