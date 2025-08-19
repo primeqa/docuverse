@@ -30,19 +30,19 @@ def main_cli():
     tm = timer("ingest_and_test")
     config = DocUVerseConfig.get_stdargs_config()
     #    config = DocUVerseConfig("experiments/clapnq/setup.yaml")
-    engine = SearchEngine(config)
-    tm.add_timing("initialize")
+    engine = SearchEngine(config, name="ingest_and_test")
+    # tm.add_timing("initialize")
     if config.ingest or config.update:
         corpus = engine.read_data(config.input_passages)
         engine.ingest(corpus, update=config.update, skip=config.skip)
-        tm.add_timing("ingest")
+        # tm.add_timing("ingest")
     output = None
     if config.retrieve:
         queries = engine.read_questions(config.input_queries)
         output = engine.search(queries)
-        tm.add_timing("search")
+        # tm.add_timing("search")
         engine.write_output(output)
-        tm.add_timing("write_output")
+        # tm.add_timing("write_output")
     else:
         output = None
         queries = None
@@ -56,7 +56,7 @@ def main_cli():
         results = scorer.compute_score(queries, output, model_name=engine.get_output_name())
         metrics_file = config.output_file[:config.output_file.find(
             '.json')] + '.metrics' if '.json' in config.output_file else config.output_file + '.metrics'
-        tm.add_timing("evaluate")
+        # tm.add_timing("evaluate")
         ostring = io.StringIO()
         # print(timer.display_timing)
         timer.display_timing(tm.milliseconds_since_beginning(), keys={'queries': len(queries)}, sorted_by="%",

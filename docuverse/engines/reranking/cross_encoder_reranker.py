@@ -1,5 +1,7 @@
 import torch
-from docuverse.utils import detect_device
+from cv2.gapi.onnx.ep import OpenVINO
+
+from docuverse.utils import detect_device, get_param
 from tqdm import tqdm
 
 from .reranker import Reranker
@@ -42,6 +44,9 @@ class CrossEncoderModel:
             if attn_implementation.find("flash") >= 0:
                 import torch
                 model_kwargs["torch_dtype"] = torch.bfloat16
+        backend = get_param(kwargs, 'reranker_backend', None)
+        if backend is not None:
+            model_kwargs['backend'] = backend
 
         self.model = CrossEncoder(model_name_or_path, device=device,
                                   tokenizer_kwargs={'model_max_length': 512},
@@ -102,7 +107,8 @@ class CrossEncoderReranker(Reranker):
     def __init__(self, reranking_config: RerankerConfig|dict, **kwargs):
         super().__init__(reranking_config, **kwargs)
         self.model = CrossEncoderModel(reranking_config.reranker_model,
-                                       attn_implementation=reranking_config.reranker_attn_implementation)
+                                       attn_implementation=reranking_config.reranker_attn_implementation,
+                                       backend=reranking_config.reranker_backend)
 
     def _rerank(self, answer_list, show_progress):
         """

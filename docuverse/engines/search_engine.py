@@ -10,7 +10,7 @@ from docuverse.utils import (
     open_stream,
     file_is_of_type,
     parallel_process,
-    ask_for_confirmation, prepare_for_save_and_backup
+    ask_for_confirmation, prepare_for_save_and_backup, get_param
 )
 from docuverse.engines import SearchData
 
@@ -22,11 +22,12 @@ from docuverse.utils.evaluation_output import EvaluationOutput
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.engines.reranking.bi_encoder_reranker import BiEncoderReranker
 from docuverse.utils.text_tiler import TextTiler
-# from docuverse.utils.timer import timer
+from docuverse.utils.timer import timer
 
 
 class SearchEngine:
     DEFAULT_CACHE_DIR = os.path.join(f"{os.getenv('HOME')}", ".local", "share", "elastic_ingestion")
+    __name = "SearchEngine"
 
     def __init__(self, config_or_path: DocUVerseConfig | str = None, **kwargs):
         self.write_necessary = False
@@ -34,8 +35,15 @@ class SearchEngine:
         self.retriever = None
         self.reranker = None
         self.scorer = None
+        self.name = get_param(kwargs, "name", self.__name)
+        SearchEngine.__name = self.name
+        self.tm = timer(f"{self.name}")
         self.create(config_or_path=config_or_path, **kwargs)
         self.tiler = None
+
+    @staticmethod
+    def get_name():
+        return SearchEngine.__name
 
     def create(self, config_or_path, **kwargs):
         if isinstance(config_or_path, str | dict):
@@ -44,7 +52,12 @@ class SearchEngine:
             self.config = config_or_path
 
         self.reranker = self._create_reranker()
+        if self.reranker is not None:
+            self.tm.add_timing("initialization::reranker")
         self.retriever = self._create_retriever()
+        if self.retriever is not None:
+            self.tm.add_timing("initialization::retriever")
+
 
     def _create_retriever(self) -> RetrievalEngine:
         from docuverse.utils.retrievers import create_retrieval_engine
@@ -125,7 +138,9 @@ class SearchEngine:
             if not os.path.exists(self.config.cache_dir):
                 os.makedirs(self.config.cache_dir)
             try:
+                self.tm.mark()
                 self.write_output(values, cache_file)
+                self.tm.add_timing("write_output")
             except Exception as e:
                 print(f"Failed to write cache file {cache_file}: {e}")
 

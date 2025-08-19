@@ -5,13 +5,13 @@ from typing import List
 from tqdm import tqdm
 
 
-from docuverse import SearchResult, SearchQueries
+from docuverse import SearchResult, SearchQueries, SearchEngine
 from docuverse.engines import SearchData
 from docuverse.engines.search_engine_config_params import EvaluationArguments, DocUVerseConfig
 from . import get_param, get_orig_docid
 from .evaluation_output import EvaluationOutput
 from rouge_score.rouge_scorer import RougeScorer
-
+from docuverse.utils.timer import timer
 
 class EvaluationEngine:
     def __init__(self, config):
@@ -44,6 +44,7 @@ class EvaluationEngine:
     def compute_score(self, input_queries: SearchQueries|List[SearchQueries.Query], system: List[SearchResult],
                       model_name="model", **kwargs) -> EvaluationOutput:
         data_id_header = 'id'
+        tm = timer(f"{SearchEngine.get_name()}")
         # if 'data_template'in kwargs:
         data_text_header = get_param(get_param(kwargs, 'data_template', self.data_template),
                                      'text_header', 'text')
@@ -153,7 +154,7 @@ class EvaluationEngine:
         if self.config.compute_rouge:
             _result['rouge_scores'] = \
                 {r: int(1000 * rouge_scores[r] / num_eval_questions) / 1000.0 for r in ranks}
-
+        tm.add_timing("evaluate_time")
         return _result
 
     def __str__(self):

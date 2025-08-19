@@ -10,6 +10,7 @@ from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines.search_result import SearchResult
+from docuverse.engines.search_engine import SearchEngine
 from docuverse.utils import get_param, _trim_json
 from docuverse.utils.timer import timer
 from docuverse.utils.embeddings.dense_embedding_function import DenseEmbeddingFunction
@@ -195,7 +196,7 @@ class ChromaDBEngine(RetrievalEngine):
 
         self.load_or_create_index()
 
-        tm = timer("ingest_and_test::ingest")
+        tm = timer(f"{SearchEngine.__name}::ingest")
         tm.add_timing("data_analysis")
         
         corpus_size = len(corpus)

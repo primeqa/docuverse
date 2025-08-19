@@ -657,6 +657,13 @@ class RerankerArguments(GenericArguments):
         }
     )
 
+    reranker_backend: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "The backend to use for SentenceTransformer reranking (options are openvino, onnx)."
+        }
+    )
+
 
 @dataclass
 class EvaluationArguments(GenericArguments):
