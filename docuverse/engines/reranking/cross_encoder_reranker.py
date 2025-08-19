@@ -1,5 +1,4 @@
 import torch
-from cv2.gapi.onnx.ep import OpenVINO
 
 from docuverse.utils import detect_device, get_param
 from tqdm import tqdm
