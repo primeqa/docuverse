@@ -1,3 +1,5 @@
+import os
+
 import torch
 
 from docuverse.utils import detect_device, get_param
@@ -46,6 +48,14 @@ class CrossEncoderModel:
         backend = get_param(kwargs, 'reranker_backend', None)
         if backend is not None:
             model_kwargs['backend'] = backend
+            if backend == "openvino":
+                if os.path.isfile(model_name_or_path):
+                    path_parts = os.path.split(model_name_or_path)
+                    file = os.path.join(*path_parts[-2:])
+                    orig_path = model_name_or_path
+                    model_name_or_path = os.path.join(*path_parts[:-2])
+                    print(f"The model_name_or_path param {orig_path} is a file - splitting into two: {model_name_or_path} and {file}")
+                    model_kwargs['file_name'] = file
 
         self.model = CrossEncoder(model_name_or_path, device=device,
                                   tokenizer_kwargs={'model_max_length': 512},
