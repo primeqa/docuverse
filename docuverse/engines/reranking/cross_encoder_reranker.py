@@ -45,21 +45,26 @@ class CrossEncoderModel:
             if attn_implementation.find("flash") >= 0:
                 import torch
                 model_kwargs["torch_dtype"] = torch.bfloat16
-        backend = get_param(kwargs, 'reranker_backend', None)
+        backend = get_param(kwargs, 'backend', None)
         if backend is not None:
-            model_kwargs['backend'] = backend
             if backend == "openvino":
-                if os.path.isfile(model_name_or_path):
-                    path_parts = os.path.split(model_name_or_path)
-                    file = os.path.join(*path_parts[-2:])
-                    orig_path = model_name_or_path
-                    model_name_or_path = os.path.join(*path_parts[:-2])
-                    print(f"The model_name_or_path param {orig_path} is a file - splitting into two: {model_name_or_path} and {file}")
+                # look for the openvino model file
+                dir = os.path.join(model_name_or_path, "openvino")
+                if os.path.isdir(dir):
+                    xml_files = [f for f in os.listdir(dir) if f.endswith('.xml')]
+                    if len(xml_files) == 1:
+                        file = os.path.join("openvino", xml_files[0])
+                    else:
+                        print (f"WARNING: found {len(xml_files)} xml files in {dir}, using the first one")
+                        file = os.path.join("openvino", xml_files[0])
                     model_kwargs['file_name'] = file
+        else:
+            backend = 'torch'
 
         self.model = CrossEncoder(model_name_or_path, device=device,
                                   tokenizer_kwargs={'model_max_length': 512},
-                                  model_kwargs=model_kwargs)
+                                  model_kwargs=model_kwargs,
+                                  backend=backend)
         # self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
         # self.model.to(device)
         # self.tokenizer = AutoTokenizer.from_pretrained(model_name)
