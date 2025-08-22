@@ -297,7 +297,8 @@ class SearchData:
     def read_cache_file_if_needed(cache_file_name, input_file):
         passages = []
 
-        if os.path.exists(cache_file_name) and os.path.getmtime(cache_file_name) > os.path.getmtime(input_file):
+        if (input_file is None or
+                os.path.exists(cache_file_name) and os.path.getmtime(cache_file_name) > os.path.getmtime(input_file)):
             input_stream = open_stream(cache_file_name, write=False, binary=True)
             # for line in tqdm(input_stream, desc="Reading cache file:"):
             #     passages.append(orjson.loads(line.decode('utf-8'))
