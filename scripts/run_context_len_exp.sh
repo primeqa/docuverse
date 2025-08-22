@@ -80,7 +80,7 @@ echo "Tasks: $tasks"
 for task in "${tasks[@]}"; do
   for weight in "${weights[@]}"; do
     filename=$task
-    runCmd "python docuverse/utils/ingest_and_test.py --config $filename --max_doc_length $weight"
+    runCmd "CUDA_VISIBLE_DEVICES=1 python docuverse/utils/ingest_and_test.py --config $filename --max_doc_length $weight --max_text_size 5000"
     checkError "Failed to run with task $task, weight $weight" "run command" "python docuverse/utils/ingest_and_test.py --config $filename" "" ""
   done
 done
