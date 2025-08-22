@@ -60,7 +60,7 @@ config=$1
 eval=$2
 
 IFS=', ' read -r -a weights <<< "$weights";
-IFS=', ' read -r -a tasks <<< "$tasks"
+IFS=', ' read -r -a tasks <<< "$*"
 
 if [[ $eval != "" ]]; then
   eval="--input_queries $eval"

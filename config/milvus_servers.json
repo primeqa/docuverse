@@ -13,14 +13,5 @@
 	"host": "cauchy.watson.ibm.com",
 	"port": 19530,
 	"user": ""
-    },
-    "ibm_datamaze": {
-	"user": "usr934466897",
-	"password": "96nnD$s#EUwW@FV",
-	"host": "9.208.167.9",
-	"port":19530,
-	"server_pem_path": "/home/raduf/sandbox2/docuverse/config/datamaze_milvus_server.pem",
-	"server_name": "localhost",
-	"secure": true
     }
 }
