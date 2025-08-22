@@ -29,13 +29,10 @@ def main_cli():
     save_command_line(args=sys.argv)
     tm = timer("ingest_and_test")
     config = DocUVerseConfig.get_stdargs_config()
-    #    config = DocUVerseConfig("experiments/clapnq/setup.yaml")
     engine = SearchEngine(config, name="ingest_and_test")
-    # tm.add_timing("initialize")
     if config.ingest or config.update:
         corpus = engine.read_data(config.input_passages)
         engine.ingest(corpus, update=config.update, skip=config.skip)
-        # tm.add_timing("ingest")
     output = None
     if config.retrieve:
         queries = engine.read_questions(config.input_queries)
@@ -44,8 +41,8 @@ def main_cli():
         engine.write_output(output)
         # tm.add_timing("write_output")
     else:
-        output = None
         queries = None
+
     if config.evaluate and config.eval_config is not None:
         scorer = EvaluationEngine(config)
         if queries is None:
