@@ -72,6 +72,9 @@ class SearchResult:
     def __iter__(self):
         return iter(self.retrieved_passages)
 
+    def __str__(self):
+        return self.as_json()
+
     def append(self, data: Union[Dict[str, str], SearchDatum], **kwargs) -> 'SearchResult':
         if isinstance(data, SearchResult.SearchDatum):
             self.retrieved_passages.append(data)

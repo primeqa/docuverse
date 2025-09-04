@@ -5,6 +5,7 @@ from docuverse.utils import get_param, get_config_dir
 
 class EmbeddingFunction:
     def __init__(self, model_or_directory_name: str, batch_size: int, **kwargs):
+        self.model = None
         self.batch_size = batch_size
         import torch
         torch.set_float32_matmul_precision('high')
@@ -52,9 +53,9 @@ class EmbeddingFunction:
     def encode_query(self, texts: Union[List[str], str], prompt_name:str|None=None, **kwargs):
         return []
 
-    def encode_query(self, texts:Union[List[str], str], _batch_size:int=-1,
-                     show_progress_bar=False, tqdm_instance=None, **kwargs):
-        return []
+    # def encode_query(self, texts:Union[List[str], str], _batch_size:int=-1,
+    #                  show_progress_bar=False, tqdm_instance=None, **kwargs):
+    #     return []
 
     @property
     def vocab_size(self):
