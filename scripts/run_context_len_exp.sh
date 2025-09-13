@@ -16,19 +16,21 @@ source ~/bin/common.sh
 
 ranks="20,100"
 actions="re"
+devices=0
 
 tasks="2wikimqa courtlistener_HTML courtlistener_Plain_Text gov_report legal_case_reports multifieldqa passage_retrieval qasper_abstract qasper_title qmsum stackoverflow summ_screen_fd"
 
 weights="128 256 512 1024 2048 4096 8192 16384 32768"
 base_config="experiments/unified_search/ibmsw_milvus_dense.granite-149m.w512.flash_attn.test.short.yaml"
 
-SHORT_FLAGS="-o r:a:t:w:b:v"
+SHORT_FLAGS="-o r:a:t:w:b:vd:"
 lng_flags=(
   "ranks:"
   "actions:"
   "weights:"
   "tasks:"
   "base_config:"
+  "devices:"
   "verbose"
 )
 LONG_FLAGS="--long "$(join_by "," ${lng_flags[*]})
@@ -40,6 +42,7 @@ while true; do
   echo "Processing flag $1, with opt arg $2"
   case "$1" in
   -r | --ranks) ranks=$2; shift 2;;
+  -d | --devices) devices=$2; shift 2;;
   -a | --actions) actions=$2; shift 2;;
   -w | --weights) weights=$2; shift 2;;
   -t | --tasks) tasks=$2; shift 2;;
@@ -80,7 +83,7 @@ echo "Tasks: $tasks"
 for task in "${tasks[@]}"; do
   for weight in "${weights[@]}"; do
     filename=$task
-    runCmd "CUDA_VISIBLE_DEVICES=1 python docuverse/utils/ingest_and_test.py --config $filename --max_doc_length $weight --max_text_size 5000"
+    runCmd "CUDA_VISIBLE_DEVICES=$devices python docuverse/utils/ingest_and_test.py --config $filename --max_doc_length $weight --max_text_size 5000"
     checkError "Failed to run with task $task, weight $weight" "run command" "python docuverse/utils/ingest_and_test.py --config $filename" "" ""
   done
 done
