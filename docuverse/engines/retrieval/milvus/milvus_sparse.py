@@ -40,15 +40,11 @@ class MilvusSparseEngine(MilvusEngine):
         build_configuration_name = get_param(self.config, 'sparse_config.sparse_build_config', 'SPLADE')
         build_config = get_param(self.config, 'index_params',
                                  self.milvus_defaults['index_params'][build_configuration_name])
+
+        if isinstance(build_config, str):
+            build_config = get_param(self.milvus_defaults['index_params'], build_config)
         index_params.add_index(field_name=embeddings_name,
                                **build_config
-#                                index_name="sparse_inverted_index",
-#                                index_type="SPARSE_INVERTED_INDEX",
-#                                metric_type="IP",
-#                                params={
-#                                   "drop_ratio_build": 0.2,
-# #                                   "inverted_index_algo": "DAAT_WAND"
-#                                    },
                                )
         return index_params
 
