@@ -229,7 +229,9 @@ class MilvusServerInstance:
         self.app = None
         self.server_thread = None
         self.running = False
-        
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
+
         # Server registry for cross-machine discovery
         self.registry = ServerRegistry(self.db_path)
         
@@ -241,9 +243,7 @@ class MilvusServerInstance:
         self._setup_flask_app()
         self._initialized = True
         
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
-    
+
     def _get_external_ip(self) -> str:
         """Get the external IP address of this machine"""
         if self.host != "0.0.0.0":
@@ -519,7 +519,7 @@ class MilvusServer:
         else:
             return self.client.list_collections()
     
-    def search(self, collection_name: str, query_vector: List[float], 
+    def search(self, collection_name: str, query_vector: List[float],
                limit: int = 10, output_fields: List[str] = None, 
                search_params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """
@@ -539,9 +539,9 @@ class MilvusServer:
             output_fields = ["*"]
         if search_params is None:
             search_params = {}
-            
+
         if self.use_api:
-            return self.api_client.search(collection_name, query_vector, limit, 
+            return self.api_client.search(collection_name, query_vector, limit,
                                         output_fields, search_params)
         else:
             try:
@@ -712,20 +712,20 @@ def list_running_servers(registry_dir: str = None) -> List[Dict[str, Any]]:
 if __name__ == "__main__":
     # Example: First instance (will start server)
     print("Creating first instance (server mode)...")
-    server1 = create_milvus_server("./test_db/milvus.db", host="0.0.0.0", port=8765)
+    server1 = create_milvus_server("./test_db/milvus.db", host="0.0.0.0", port=8765, use_api=True)
     
     print("Server info:", server1.get_server_info())
     print("Collections:", server1.list_collections())
     
     # Example: Second instance on same or different machine (will use API)
     print("\nCreating second instance (client mode)...")  
-    server2 = create_milvus_server("./test_db/milvus.db", use_api=True, start_server=False)
+    server2 = create_milvus_server("./test_db/milvus.db", use_api=True)
     
     print("Collections via API:", server2.list_collections())
     
     # List all running servers
     print("\nRunning servers:")
-    for server_info in list_running_servers():
+    for server_info in list_running_servers("./test_db/.milvus_servers"):
         print(f"  {server_info['host']}:{server_info['port']} - {server_info['db_path']}")
     
     # Cleanup
