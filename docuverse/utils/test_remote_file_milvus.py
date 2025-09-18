@@ -12,6 +12,7 @@ from tqdm.auto import tqdm
 
 from docuverse.utils.milvus_server_management import create_milvus_server
 from docuverse.utils import read_config_file, get_param
+from docuverse.utils.timer import timer
 
 
 @click.command()
@@ -30,7 +31,7 @@ from docuverse.utils import read_config_file, get_param
 @click.option('--server-only', is_flag=True, help='Start server and keep it running indefinitely')
 def process_queries(milvus_dir, queries_file, model_name, collection_name, config, output_file, server_only):
     """Run Milvus server and process queries from TSV file."""
-
+    tm = timer("Milvus File Server Test")
     cfg = read_config_file(config)['retriever']
     # Milvus does not accept '-' in the name, and docuverse replaces them with '_'
     collection_name = get_param(cfg, 'index_name', collection_name).replace("-","_")
@@ -43,8 +44,9 @@ def process_queries(milvus_dir, queries_file, model_name, collection_name, confi
         milvus_file_name = milvus_file_name.replace("file:", "")
     attn = get_param(cfg, 'attn_implementation', 'sdpa')
     # Initialize and start Milvus server
+    tm.add_timing("init::configuration_setup")
     server = create_milvus_server(db_path=milvus_file_name, port=8765, use_api=True)
-
+    tm.add_timing("init::milvus_server_init")
     try:
         if server_only:
             print("Server started. Press Ctrl+C to stop...")
@@ -65,26 +67,34 @@ def process_queries(milvus_dir, queries_file, model_name, collection_name, confi
             model = SentenceTransformer(model_name, device="cuda",
                                         model_kwargs=model_args,
                                         trust_remote_code=True)
-
+            tm.add_timing("init::sentence_transformer_init")
             # Read queries from TSV file
             queries_df = pd.read_csv(queries_file, sep='\t')
 
             if 'query' not in queries_df.columns:
                 raise ValueError("TSV file must contain a 'query' column")
 
+            firstQ = True
             # Process each query
             with open(output_file, 'w') as f:
                 for query in tqdm(queries_df['query'], desc="Processing queries", leave=False):
                     query_embedding = model.encode(query, show_progress_bar=False)
+                    if firstQ:
+                        tm.add_timing("decode::first_query")
+                        firstQ = False
+                    else:
+                        tm.add_timing("decode::subsequent_queries")
                     results = server.search(collection_name=collection_name,
                                             query_vector=query_embedding,
                                             limit=5,
                                             output_fields=['text'])
+                    tm.add_timing("decode::milvus_search")
                     result_entry = {
                         'query': query,
                         'results': results
                     }
                     f.write(json.dumps(result_entry) + '\n')
+                    tm.add_timing("decode::output_jsonl")
                     # print(f"Query: {query}")
                     # print(f"Results: {results}\n")
 

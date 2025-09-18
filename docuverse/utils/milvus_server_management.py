@@ -472,7 +472,7 @@ class MilvusServer:
             self._initialize_api_client(start_server)
         else:
             self._initialize_direct_client()
-    
+
     def _should_use_api(self) -> bool:
         """Determine whether to use API mode based on server availability"""
         # Check registry first
@@ -499,7 +499,7 @@ class MilvusServer:
     def _initialize_api_client(self, start_server: bool = True):
         """Initialize API client, starting server if needed"""
         server_info = self.registry.get_server_info()
-        
+
         # Check if we have a registered server and it's alive
         if server_info and self.registry.is_server_alive(server_info):
             self.host = server_info.host
@@ -516,6 +516,7 @@ class MilvusServer:
                 if server_info:
                     self.host = server_info.host
                     self.port = server_info.port
+                self.logger.info(f"Starting server {server_info} at {server_info.host}:{server_info.port}")
             else:
                 raise RuntimeError(f"No server running for database {self.db_path} and start_server=False")
         
