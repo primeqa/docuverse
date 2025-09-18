@@ -1,4 +1,3 @@
-
 import os
 import json
 import threading
@@ -12,6 +11,7 @@ from contextlib import contextmanager
 import logging
 from pathlib import Path
 
+import numpy
 from pymilvus import MilvusClient, Collection, connections, utility
 from pymilvus.exceptions import MilvusException
 import requests
@@ -29,8 +29,8 @@ class SearchRequest:
     collection_name: str
     query_vector: List[float]
     limit: int = 10
-    output_fields: List[str] = None
-    search_params: Dict[str, Any] = None
+    output_fields: Optional[List[str]] = None
+    search_params: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -38,6 +38,26 @@ class SearchResponse:
     results: List[Dict[str, Any]]
     status: str = "success"
     error: Optional[str] = None
+
+
+class Utils:
+    @staticmethod
+    def extract_hits(results, output_fields: List[str] = None) -> List[Dict]:
+        search_results = []
+        for hit in results:
+            hit_dict = {
+                'id': hit.get('id'),
+                'distance': hit.get('distance')
+            }
+            # Add output fields to the result
+            if output_fields:
+                vals = hit['entity']
+                for field in output_fields:
+                    if field in vals:
+                        hit_dict[field] = vals[field]
+            search_results.append(hit_dict)
+
+        return search_results
 
 
 @dataclass
@@ -72,8 +92,9 @@ class ServerRegistry:
         self.db_path = os.path.abspath(db_path)
         
         # Create a unique identifier for this database
-        self.db_hash = hashlib.md5(self.db_path.encode()).hexdigest()[:8]
-        
+        # self.db_hash = hashlib.md5(self.db_path.encode()).hexdigest()[:8]
+        self.db_hash = hashlib.sha256(self.db_path.encode()).hexdigest()[:16]
+
         # Default registry directory
         if registry_dir is None:
             registry_dir = os.path.join(os.path.dirname(self.db_path), '.milvus_servers')
@@ -120,8 +141,8 @@ class ServerRegistry:
                 try:
                     fcntl.flock(lock_fd, fcntl.LOCK_UN)
                     os.close(lock_fd)
-                except:
-                    pass
+                except OSError as e:  # Be more specific
+                    self.logger.warning(f"Failed to release file lock: {e}")
     
     def register_server(self, host: str, port: int, pid: int) -> ServerInfo:
         """Register a server instance"""
@@ -176,7 +197,11 @@ class ServerRegistry:
             )
             return response.status_code == 200
             
-        except:
+        except (requests.RequestException, requests.Timeout, ConnectionError) as e:
+            self.logger.debug(f"Server health check failed: {e}")
+            return False
+        except Exception as e:
+            self.logger.warning(f"Unexpected error in server health check: {e}")
             return False
     
     def cleanup_if_dead(self) -> bool:
@@ -219,16 +244,21 @@ class MilvusServerInstance:
             return cls._instances[db_path]
     
     def __init__(self, db_path: str, host: str = "0.0.0.0", port: int = 8765):
+        # Add double-check locking for thread safety
         if hasattr(self, '_initialized') and self._initialized:
             return
+        
+        with self.__class__._lock:  # Add lock here too
+            if hasattr(self, '_initialized') and self._initialized:
+                return
             
-        self.db_path = os.path.abspath(db_path)
-        self.host = host
-        self.port = port
-        self.client = None
-        self.app = None
-        self.server_thread = None
-        self.running = False
+            self.db_path = os.path.abspath(db_path)
+            self.host = host
+            self.port = port
+            self.client = None
+            self.app = None
+            self.server_thread = None
+            self.running = False
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
@@ -242,7 +272,6 @@ class MilvusServerInstance:
         self._initialize_client()
         self._setup_flask_app()
         self._initialized = True
-        
 
     def _get_external_ip(self) -> str:
         """Get the external IP address of this machine"""
@@ -272,7 +301,8 @@ class MilvusServerInstance:
         except Exception as e:
             self.logger.error(f"Failed to initialize Milvus client: {e}")
             raise
-    
+
+
     def _setup_flask_app(self):
         """Setup Flask application with API endpoints"""
         self.app = Flask(__name__)
@@ -333,19 +363,7 @@ class MilvusServerInstance:
                 
                 # Convert results to serializable format
                 search_results = []
-                for hit in results[0]:
-                    hit_dict = {
-                        'id': hit.get('id'),
-                        'distance': hit.get('distance'),
-                        'entity': hit.entity.to_dict() if hasattr(hit, 'entity') else {}
-                    }
-                    # Add output fields to the result
-                    for field in search_req.output_fields:
-                        if hasattr(hit, field):
-                            hit_dict[field] = getattr(hit, field)
-                        elif field in hit:
-                            hit_dict[field] = hit[field]
-                    search_results.append(hit_dict)
+                Utils.extract_hits(results[0], search_req.output_fields)
                 
                 response = SearchResponse(results=search_results)
                 return jsonify(response.__dict__)
@@ -354,7 +372,7 @@ class MilvusServerInstance:
                 self.logger.error(f"Search error: {e}")
                 response = SearchResponse(results=[], status="error", error=str(e))
                 return jsonify(response.__dict__), 500
-        
+
         @self.app.route('/collections/<collection_name>/stats', methods=['GET'])
         def collection_stats(collection_name):
             try:
@@ -519,7 +537,7 @@ class MilvusServer:
         else:
             return self.client.list_collections()
     
-    def search(self, collection_name: str, query_vector: List[float],
+    def search(self, collection_name: str, query_vector: List[float]|numpy.ndarray,
                limit: int = 10, output_fields: List[str] = None, 
                search_params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """
@@ -539,7 +557,8 @@ class MilvusServer:
             output_fields = ["*"]
         if search_params is None:
             search_params = {}
-
+        if isinstance(query_vector, numpy.ndarray):
+            query_vector = query_vector.tolist()
         if self.use_api:
             return self.api_client.search(collection_name, query_vector, limit,
                                         output_fields, search_params)
@@ -554,18 +573,8 @@ class MilvusServer:
                 )
                 
                 # Convert to consistent format
-                search_results = []
-                for hit in results[0]:
-                    hit_dict = {
-                        'id': hit.get('id'),
-                        'distance': hit.get('distance'),
-                    }
-                    # Add output fields
-                    for field in output_fields:
-                        if field in hit:
-                            hit_dict[field] = hit[field]
-                    search_results.append(hit_dict)
-                
+                search_results = Utils.extract_hits(results[0], output_fields)
+
                 return search_results
                 
             except Exception as e:
@@ -600,24 +609,101 @@ class MilvusAPIClient:
         url = f"{self.base_url}{endpoint}"
         
         try:
+            headers = {'Content-Type': 'application/json'}
+        
+        # Log the request for debugging
+            self.logger.debug(f"Making {method} request to {url}")
+            if data:
+                self.logger.debug(f"Request data keys: {list(data.keys())}")
+        
             if method.upper() == 'GET':
-                response = requests.get(url, timeout=timeout)
+                response = requests.get(url, timeout=timeout, headers=headers)
             elif method.upper() == 'POST':
-                response = requests.post(url, json=data, timeout=timeout)
+                # Validate data before sending
+                if data is not None:
+                    self._validate_request_data(data, endpoint)
+                response = requests.post(url, json=data, timeout=timeout, headers=headers)
             else:
                 raise ValueError(f"Unsupported method: {method}")
-            
+        
+            # Check if response is successful
+            if response.status_code == 500:
+                # Try to parse as JSON first
+                error_detail = "Unknown server error"
+                try:
+                    json_response = response.json()
+                    if isinstance(json_response, dict):
+                        error_detail = json_response.get('error', 'Unknown server error')
+                    else:
+                        error_detail = str(json_response)
+                except (ValueError, requests.exceptions.JSONDecodeError):
+                    # If response is not JSON, safely extract text content
+                    raw_text = response.text if response.text else "No error details available"
+                    # Clean up HTML content if present
+                    if '<html>' in raw_text.lower() or '<!doctype' in raw_text.lower():
+                        # It's likely an HTML error page, extract useful info
+                        if '<title>' in raw_text and '</title>' in raw_text:
+                            start = raw_text.find('<title>') + 7
+                            end = raw_text.find('</title>')
+                            error_detail = f"HTML Error Page: {raw_text[start:end]}"
+                        else:
+                            error_detail = "HTML Error Page (details unavailable)"
+                    else:
+                        # Truncate long text responses and sanitize
+                        error_detail = raw_text[:500].strip()
+                        # Remove any potentially problematic characters
+                        error_detail = ''.join(char for char in error_detail if ord(char) < 127 and char.isprintable())
+                        if not error_detail:
+                            error_detail = "Unreadable server error response"
+                
+                self.logger.error(f"Server error (500): {error_detail}")
+                raise RuntimeError(f"Server internal error: {error_detail}")
+        
             response.raise_for_status()
-            return response.json()
+        
+            # Validate response is JSON
+            try:
+                return response.json()
+            except (ValueError, requests.exceptions.JSONDecodeError) as e:
+                self.logger.error(f"Invalid JSON response: {response.text[:200]}")
+                raise RuntimeError(f"Invalid server response format: {str(e)}")
             
+        except requests.ConnectionError as e:
+            self.logger.error(f"Connection failed to {url}: {e}")
+            raise RuntimeError(f"Cannot connect to server at {url}: {e}")
+        except requests.Timeout as e:
+            self.logger.error(f"Request timeout for {url}: {e}")
+            raise RuntimeError(f"Request timeout after {timeout}s: {e}")
         except requests.RequestException as e:
             self.logger.error(f"API request failed: {e}")
             raise RuntimeError(f"API request failed: {e}")
-    
-    def has_collection(self, collection_name: str) -> bool:
-        """Check if collection exists"""
-        response = self._make_request('GET', f'/collections/{collection_name}/exists')
-        return response.get('exists', False)
+
+    def _validate_request_data(self, data: Dict, endpoint: str) -> None:
+        """Validate request data before sending to server"""
+        if endpoint == '/search':
+            required_fields = ['collection_name', 'query_vector', 'limit']
+            for field in required_fields:
+                if field not in data:
+                    raise ValueError(f"Missing required field '{field}' in search request")
+        
+            # Validate query_vector format
+            query_vector = data.get('query_vector')
+            if not isinstance(query_vector, list) or not query_vector:
+                raise ValueError("query_vector must be a non-empty list")
+        
+            # Validate all vector elements are numbers
+            if not all(isinstance(x, (int, float)) for x in query_vector):
+                raise ValueError("query_vector must contain only numeric values")
+        
+            # Validate limit
+            limit = data.get('limit')
+            if not isinstance(limit, int) or limit <= 0:
+                raise ValueError("limit must be a positive integer")
+        
+            # Validate output_fields if provided
+            output_fields = data.get('output_fields')
+            if output_fields is not None and not isinstance(output_fields, list):
+                raise ValueError("output_fields must be a list")
     
     def list_collections(self) -> List[str]:
         """List all collections"""
@@ -642,6 +728,46 @@ class MilvusAPIClient:
             raise RuntimeError(response.get('error', 'Unknown search error'))
         
         return response.get('results', [])
+    
+    def search(self, collection_name: str, query_vector: List[float], 
+               limit: int = 10, output_fields: List[str] = None,
+               search_params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        """Perform vector search via API"""
+        
+        # Validate inputs before making request
+        if not collection_name:
+            raise ValueError("collection_name cannot be empty")
+        
+        if not isinstance(query_vector, list) or not query_vector:
+            raise ValueError("query_vector must be a non-empty list")
+        
+        if not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        
+        data = {
+            'collection_name': collection_name,
+            'query_vector': query_vector,
+            'limit': limit,
+            'output_fields': output_fields or ["*"],
+            'search_params': search_params or {}
+        }
+    
+        try:
+            response = self._make_request('POST', '/search', data, timeout=60)
+        
+            if response.get('status') == 'error':
+                error_msg = response.get('error', 'Unknown search error')
+                self.logger.error(f"Search failed: {error_msg}")
+                raise RuntimeError(f"Search failed: {error_msg}")
+        
+            results = response.get('results', [])
+            self.logger.info(f"Search completed successfully, found {len(results)} results")
+            return results
+        
+        except Exception as e:
+            self.logger.error(f"Search request failed: {str(e)}")
+            # Re-raise with more context
+            raise RuntimeError(f"Search failed for collection '{collection_name}': {str(e)}")
     
     def get_collection_stats(self, collection_name: str) -> Dict[str, Any]:
         """Get collection statistics"""
