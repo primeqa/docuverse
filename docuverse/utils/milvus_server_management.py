@@ -458,7 +458,7 @@ class MilvusServer:
         # Server registry for cross-machine discovery
         self.registry = ServerRegistry(self.db_path, registry_dir)
 
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(level=logging.WARNING)
         self.logger = logging.getLogger(__name__)
         
         # Clean up dead servers first
