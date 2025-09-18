@@ -259,7 +259,9 @@ class MilvusServerInstance:
             self.app = None
             self.server_thread = None
             self.running = False
-        logging.basicConfig(level=logging.INFO)
+            logging.getLogger('werkzeug').setLevel(logging.ERROR)
+
+        logging.basicConfig(level=logging.WARN)
         self.logger = logging.getLogger(__name__)
 
         # Server registry for cross-machine discovery
@@ -297,7 +299,7 @@ class MilvusServerInstance:
             # Initialize file-based Milvus client
             self.client = MilvusClient(uri=self.db_path)
             self.logger.info(f"Milvus client initialized with database at: {self.db_path}")
-            
+
         except Exception as e:
             self.logger.error(f"Failed to initialize Milvus client: {e}")
             raise
@@ -306,7 +308,8 @@ class MilvusServerInstance:
     def _setup_flask_app(self):
         """Setup Flask application with API endpoints"""
         self.app = Flask(__name__)
-        
+        self.app.logger.setLevel(logging.ERROR)
+
         @self.app.route('/health', methods=['GET'])
         def health_check():
             return jsonify({
@@ -362,8 +365,7 @@ class MilvusServerInstance:
                 )
                 
                 # Convert results to serializable format
-                search_results = []
-                Utils.extract_hits(results[0], search_req.output_fields)
+                search_results = Utils.extract_hits(results[0], search_req.output_fields)
                 
                 response = SearchResponse(results=search_results)
                 return jsonify(response.__dict__)
@@ -384,7 +386,7 @@ class MilvusServerInstance:
     def start_server(self, threaded: bool = True):
         """Start the Flask server and register it"""
         if self.running:
-            self.logger.info(f"Server already running on {self.host}:{self.port}")
+            self.logger.warning(f"Server already running on {self.host}:{self.port}")
             return
         
         def run_server():
@@ -455,7 +457,7 @@ class MilvusServer:
         
         # Server registry for cross-machine discovery
         self.registry = ServerRegistry(self.db_path, registry_dir)
-        
+
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
         
@@ -505,7 +507,7 @@ class MilvusServer:
             self.logger.info(f"Using existing server at {server_info.host}:{server_info.port}")
         else:
             if start_server:
-                self.logger.info("No running server found, starting new instance...")
+                self.logger.warning("No running server found, starting new instance...")
                 self.server_instance = MilvusServerInstance(self.db_path, self.host, self.port)
                 self.server_instance.start_server(threaded=True)
                 
@@ -612,10 +614,10 @@ class MilvusAPIClient:
             headers = {'Content-Type': 'application/json'}
         
         # Log the request for debugging
-            self.logger.debug(f"Making {method} request to {url}")
+            self.logger.info(f"Making {method} request to {url}")
             if data:
-                self.logger.debug(f"Request data keys: {list(data.keys())}")
-        
+                self.logger.info(f"Request data keys: {list(data.keys())}")
+
             if method.upper() == 'GET':
                 response = requests.get(url, timeout=timeout, headers=headers)
             elif method.upper() == 'POST':
@@ -761,7 +763,7 @@ class MilvusAPIClient:
                 raise RuntimeError(f"Search failed: {error_msg}")
         
             results = response.get('results', [])
-            self.logger.info(f"Search completed successfully, found {len(results)} results")
+            self.logger.debug(f"Search completed successfully, found {len(results)} results")
             return results
         
         except Exception as e:
