@@ -78,7 +78,7 @@ def process_queries(milvus_dir, queries_file, model_name, collection_name, confi
             # Process each query
             with open(output_file, 'w') as f:
                 for query in tqdm(queries_df['query'], desc="Processing queries", leave=False):
-                    query_embedding = model.encode(query, show_progress_bar=False)
+                    query_embedding = model.encode(query, show_progress_bar=False, normalize_embeddings=True)
                     if firstQ:
                         tm.add_timing("decode::first_query")
                         firstQ = False
@@ -87,7 +87,7 @@ def process_queries(milvus_dir, queries_file, model_name, collection_name, confi
                     results = server.search(collection_name=collection_name,
                                             query_vector=query_embedding,
                                             limit=5,
-                                            output_fields=['text'])
+                                            output_fields=['text', 'id'])
                     tm.add_timing("decode::milvus_search")
                     result_entry = {
                         'query': query,

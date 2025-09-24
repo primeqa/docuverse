@@ -32,13 +32,15 @@ class MilvusServerConfig:
 @click.option('--collection-name', type=str, default='default_collection',
               help='Name of the Milvus collection to use')
 @click.option('--config', type=click.Path(exists=True, file_okay=True, dir_okay=False),
-              help='Configuration file')
+help='Configuration file')
 @click.option('--workers', type=int, default=1,
               help="Number of workers to run in parallel the Milvus server")
 @click.option('-o', '--output-file', type=click.Path(file_okay=True, dir_okay=False),
               help='Output JSONL file path', default='search_results.jsonl')
 @click.option('--server-only', is_flag=True, help='Start server and keep it running indefinitely')
-def process_queries(milvus_dir, queries_file, model_name, collection_name, config, workers, output_file, server_only):
+@click.option('-b', '--batch-size', type=int, default=256, help='Batch size for encoding queries')
+def process_queries(milvus_dir, queries_file, model_name, collection_name, config, workers, output_file, server_only,
+                    batch_size):
     """Run Milvus server and process queries from TSV file."""
     tm = timer("Milvus File Server Test")
     server_info = read_configuration(collection_name, config, milvus_dir, model_name)
@@ -58,7 +60,7 @@ def process_queries(milvus_dir, queries_file, model_name, collection_name, confi
         model = create_st_model(server_info)
         queries_df = pd.read_csv(queries_file, sep='\t')
         queries_text = queries_df['query'].tolist()
-        queries = [l for l in model.encode(queries_text, batch_size=256, show_progress_bar=True)]
+        queries = [l for l in model.encode(queries_text, batch_size=batch_size, show_progress_bar=True, normalize_embeddings=True)]
         tm.add_timing("encode::sentence_transformer_encode")
         if workers > 1:
             from multiprocessing import Pool
