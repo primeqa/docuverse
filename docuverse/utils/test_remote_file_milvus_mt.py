@@ -44,6 +44,7 @@ def process_queries(milvus_dir, queries_file, model_name, collection_name, confi
     """Run Milvus server and process queries from TSV file."""
     tm = timer("Milvus File Server Test")
     server_info = read_configuration(collection_name, config, milvus_dir, model_name)
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     tm.add_timing("init::milvus_server_init")
     if server_only:
@@ -65,7 +66,7 @@ def process_queries(milvus_dir, queries_file, model_name, collection_name, confi
         if workers > 1:
             from multiprocessing import Pool
             with Pool(workers) as p:
-                num_q = sum(p.starmap(run_queries, [(i, f"output_file_{i}", queries_text, queries, server_info, tm) for i in range(workers)]))
+                num_q = sum(p.starmap(run_queries, [(i, f"{output_file}_{i}", queries_text, queries, server_info, tm) for i in range(workers)]))
         else:
             num_q = run_queries(0, output_file, queries_text, queries, server_info, tm)
 

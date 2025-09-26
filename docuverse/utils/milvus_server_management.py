@@ -5,6 +5,7 @@ import time
 import socket
 import hashlib
 import fcntl
+import random
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from contextlib import contextmanager
@@ -261,7 +262,7 @@ class MilvusServerInstance:
             self.running = False
             logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
-        logging.basicConfig(level=logging.WARN)
+        logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
         # Server registry for cross-machine discovery
@@ -458,7 +459,7 @@ class MilvusServer:
         # Server registry for cross-machine discovery
         self.registry = ServerRegistry(self.db_path, registry_dir)
 
-        logging.basicConfig(level=logging.WARNING)
+        logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
         
         # Clean up dead servers first
@@ -497,28 +498,46 @@ class MilvusServer:
             raise
     
     def _initialize_api_client(self, start_server: bool = True):
-        """Initialize API client, starting server if needed"""
-        server_info = self.registry.get_server_info()
+        num_tries = 4
+        trial = 1
+        pid = os.getpid()
 
-        # Check if we have a registered server and it's alive
-        if server_info and self.registry.is_server_alive(server_info):
-            self.host = server_info.host
-            self.port = server_info.port
-            self.logger.info(f"Using existing server at {server_info.host}:{server_info.port}")
-        else:
-            if start_server:
-                self.logger.warning("No running server found, starting new instance...")
-                self.server_instance = MilvusServerInstance(self.db_path, self.host, self.port)
-                self.server_instance.start_server(threaded=True)
-                
-                # Update host/port with the registered server info
-                server_info = self.registry.get_server_info()
-                if server_info:
-                    self.host = server_info.host
-                    self.port = server_info.port
-                self.logger.info(f"Starting server {server_info} at {server_info.host}:{server_info.port}")
+        while trial <= num_tries:
+            """Initialize API client, starting server if needed"""
+            nap_time = random.randint(10, 500) / 1000
+            self.logger.info(f"Process id {pid} sleeping for {nap_time} seconds.")
+            time.sleep(nap_time)  # Sleep 10-200ms
+            server_info = self.registry.get_server_info()
+
+            # Check if we have a registered server and it's alive
+            if server_info and self.registry.is_server_alive(server_info):
+                self.host = server_info.host
+                self.port = server_info.port
+                self.logger.info(f"Using existing server at {server_info.host}:{server_info.port}")
+                break
             else:
-                raise RuntimeError(f"No server running for database {self.db_path} and start_server=False")
+                if start_server:
+                    self.logger.warning(
+                        f"Process: {pid}, trial {trial}: No running server found, starting new instance...")
+                    try:
+                        self.server_instance = MilvusServerInstance(self.db_path, self.host, self.port)
+                        self.server_instance.start_server(threaded=True)
+                        # Update host/port with the registered server info
+                        server_info = self.registry.get_server_info()
+                        if server_info:
+                            self.host = server_info.host
+                            self.port = server_info.port
+                        self.logger.info(f"Starting server {server_info} at {server_info.host}:{server_info.port}")
+                    except Exception as e:
+                        self.logger.warning(f"Received an error: {e} in process {pid}, "
+                                            f"this is the try number {trial}, {num_tries-trial+1} remaining.")
+                        time.sleep(1)
+                        trial += 1
+                        if trial > num_tries:
+                            raise RuntimeError(f"Failed {trial} times: no server running for database {self.db_path} and start_server=False")
+                else:
+                    if trial >= num_tries:
+                        raise RuntimeError(f"No server running for database {self.db_path} and start_server=False")
         
         self.api_client = MilvusAPIClient(self.host, self.port)
     
