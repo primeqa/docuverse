@@ -108,7 +108,9 @@ class ServerRegistry:
         self.lock_file = f"{self.registry_file}.lock"
         
         self.logger = logging.getLogger(__name__)
-    
+        self.lock_fd = None
+        self._acquire_lock()
+
     def _get_machine_id(self) -> str:
         """Get a unique identifier for this machine"""
         try:
@@ -128,23 +130,34 @@ class ServerRegistry:
         except:
             # Last resort: just use hostname
             return socket.gethostname()
-    
+
     @contextmanager
-    def _file_lock(self):
-        """File-based locking for cross-process synchronization"""
-        lock_fd = None
+    def _acquire_lock(self):
+        """Acquire file lock as context manager"""
         try:
-            lock_fd = os.open(self.lock_file, os.O_CREAT | os.O_WRONLY | os.O_TRUNC)
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            self.lock_fd = os.open(self.lock_file, os.O_CREAT | os.O_WRONLY | os.O_TRUNC)
+            fcntl.flock(self.lock_fd, fcntl.LOCK_EX)
             yield
+        except OSError as e:
+            self.logger.error(f"Failed to acquire file lock: {e}")
+            raise
         finally:
-            if lock_fd is not None:
+            if self.lock_fd is not None:
                 try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                    os.close(lock_fd)
-                except OSError as e:  # Be more specific
+                    fcntl.flock(self.lock_fd, fcntl.LOCK_UN)
+                    os.close(self.lock_fd)
+                except OSError as e:
                     self.logger.warning(f"Failed to release file lock: {e}")
-    
+
+    def __del__(self):
+        """Release file lock on destruction"""
+        if self.lock_fd is not None:
+            try:
+                fcntl.flock(self.lock_fd, fcntl.LOCK_UN)
+                os.close(self.lock_fd)
+            except OSError as e:
+                self.logger.warning(f"Failed to release file lock: {e}")
+
     def register_server(self, host: str, port: int, pid: int) -> ServerInfo:
         """Register a server instance"""
         server_info = ServerInfo(
@@ -155,11 +168,10 @@ class ServerRegistry:
             start_time=time.time(),
             machine_id=self._get_machine_id()
         )
-        
-        with self._file_lock():
-            with open(self.registry_file, 'w') as f:
-                json.dump(server_info.to_dict(), f, indent=2)
-        
+
+        with open(self.registry_file, 'w') as f:
+            json.dump(server_info.to_dict(), f, indent=2)
+
         self.logger.info(f"Registered server {host}:{port} for database {self.db_path}")
         return server_info
     
@@ -169,10 +181,9 @@ class ServerRegistry:
             return None
         
         try:
-            with self._file_lock():
-                with open(self.registry_file, 'r') as f:
-                    data = json.load(f)
-                return ServerInfo.from_dict(data)
+            with open(self.registry_file, 'r') as f:
+                data = json.load(f)
+            return ServerInfo.from_dict(data)
         except (json.JSONDecodeError, FileNotFoundError, KeyError):
             # Registry file is corrupted or missing, clean it up
             self._cleanup_registry()
@@ -229,52 +240,140 @@ class ServerRegistry:
 
 
 class MilvusServerInstance:
-    """Singleton server instance that manages the Milvus database and serves API requests"""
-    
-    _instances = {}  # One instance per database path
-    _lock = threading.Lock()
-    
+    """Singleton server instance that manages the Milvus database and serves API requests.
+
+    Use create_instance() static method to create new instances. Direct instantiation
+    is not allowed to ensure proper singleton pattern implementation.
+    """
+
+    _instance = None
+    _lock_file = None
+    _lock_fd = None
+
+    @staticmethod
+    def create_instance(db_path: str, host: str = "0.0.0.0", port: int = 8765):
+        """Create a new MilvusServerInstance with thread-safety
+
+        Args:
+            db_path: Path to Milvus database file
+            host: Host address to bind server to
+            port: Port to run server on
+
+        Returns:
+            New or existing MilvusServerInstance
+
+        Raises:
+            RuntimeError: If server is already running
+        """
+        # Create lock file path
+        lock_dir = os.path.dirname(os.path.abspath(db_path))
+        lock_file = os.path.join(lock_dir, ".milvus_instance.lock")
+        MilvusServerInstance._lock_file = lock_file
+
+        # Acquire file lock
+        try:
+            MilvusServerInstance._lock_fd = os.open(lock_file, os.O_CREAT | os.O_WRONLY | os.O_EXCL)
+
+            print(f"Process {os.getpid()} locking Milvus instance")
+            fcntl.flock(MilvusServerInstance._lock_fd, fcntl.LOCK_EX)
+
+            if not MilvusServerInstance._instance:
+                MilvusServerInstance._instance = MilvusServerInstance(db_path, host, port)
+
+            print(f"Process {os.getpid()} finished creating Milvus instance (server not started yet).", flush=True)
+            return MilvusServerInstance._instance
+
+        except FileExistsError:
+            try:
+                MilvusServerInstance._attempt_lock_cleanup(lock_file)
+                return None
+            except OSError:
+                return None
+
+
+        except OSError as e:
+            raise RuntimeError(f"Failed to acquire instance lock: {e}")
+        finally:
+            if MilvusServerInstance._lock_fd is not None:
+                fcntl.flock(MilvusServerInstance._lock_fd, fcntl.LOCK_UN)
+                os.close(MilvusServerInstance._lock_fd)
+                MilvusServerInstance._lock_fd = None
+
+    @staticmethod
+    def _attempt_lock_cleanup(lock_file: str):
+        if os.path.exists(lock_file):
+            file_age = time.time() - os.path.getmtime(lock_file)
+            if file_age > 10:  # Lock file older than 10 seconds
+                try:
+                    os.remove(lock_file)
+                    print(f"Removed stale lock file (age: {file_age:.1f}s)")
+                    return True
+                except OSError:
+                    pass  # Ignore errors during cleanup
+        return False
+
+    @staticmethod
+    def remove_creation_lock():
+        """Remove the MilvusServerInstance lock"""
+        try:
+            os.remove(MilvusServerInstance._lock_file)
+        except OSError:
+            pass
+
+    @staticmethod
+    def creation_in_progress():
+        if MilvusServerInstance._lock_fd is not None:
+            MilvusServerInstance._attempt_lock_cleanup(MilvusServerInstance._lock_file)
+            return os.path.exists(MilvusServerInstance._lock_file)
+        else:
+            return False
+
     def __new__(cls, db_path: str, host: str = "0.0.0.0", port: int = 8765):
         db_path = os.path.abspath(db_path)
-        
-        with cls._lock:
-            if db_path not in cls._instances:
-                instance = super().__new__(cls)
-                instance._initialized = False
-                cls._instances[db_path] = instance
-            return cls._instances[db_path]
-    
+        instance = super().__new__(cls)
+        instance._initialized = False
+        instance.registry = ServerRegistry(db_path)
+
+        # Check if server already exists
+        server_info = instance.registry.get_server_info()
+        if server_info and instance.registry.is_server_alive(server_info):
+            raise RuntimeError(f"Server already running at {server_info.host}:{server_info.port}")
+
+        return instance
+
     def __init__(self, db_path: str, host: str = "0.0.0.0", port: int = 8765):
-        # Add double-check locking for thread safety
+        """Initialize MilvusServerInstance (private constructor)"""
         if hasattr(self, '_initialized') and self._initialized:
             return
-        
-        with self.__class__._lock:  # Add lock here too
-            if hasattr(self, '_initialized') and self._initialized:
-                return
-            
-            self.db_path = os.path.abspath(db_path)
-            self.host = host
-            self.port = port
-            self.client = None
-            self.app = None
-            self.server_thread = None
-            self.running = False
-            logging.getLogger('werkzeug').setLevel(logging.ERROR)
+
+        self.logger = logging.getLogger(__name__)
+        self.logger.info("Initializing MilvusServerInstance")
+
+        self.db_path = os.path.abspath(db_path)
+        self.host = host
+        self.port = port
+        self.client = None
+        self.app = None
+        self.server_thread = None
+        self.running = False
+        logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
         logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
 
         # Server registry for cross-machine discovery
         self.registry = ServerRegistry(self.db_path)
-        
+
         # Ensure Flask is available for server mode
         if not FLASK_AVAILABLE:
             raise RuntimeError("Flask is required for server mode. Install with: pip install flask")
-            
-        self._initialize_client()
-        self._setup_flask_app()
-        self._initialized = True
+
+        # Initialize under registry lock
+        with self.registry._acquire_lock():
+            if hasattr(self, '_initialized') and self._initialized:
+                return
+            self._initialize_client()
+            self._setup_flask_app()
+            self._initialized = True
 
     def _get_external_ip(self) -> str:
         """Get the external IP address of this machine"""
@@ -507,27 +606,39 @@ class MilvusServer:
             nap_time = random.randint(10, 500) / 1000
             self.logger.info(f"Process id {pid} sleeping for {nap_time} seconds.")
             time.sleep(nap_time)  # Sleep 10-200ms
-            server_info = self.registry.get_server_info()
+            existing_server_info = self.registry.get_server_info()
 
             # Check if we have a registered server and it's alive
-            if server_info and self.registry.is_server_alive(server_info):
-                self.host = server_info.host
-                self.port = server_info.port
-                self.logger.info(f"Using existing server at {server_info.host}:{server_info.port}")
+            if existing_server_info and self.registry.is_server_alive(existing_server_info):
+                self.host = existing_server_info.host
+                self.port = existing_server_info.port
+                self.logger.info(f"Using existing server at {existing_server_info.host}:{existing_server_info.port}")
                 break
             else:
                 if start_server:
-                    self.logger.warning(
-                        f"Process: {pid}, trial {trial}: No running server found, starting new instance...")
+                    if MilvusServerInstance.creation_in_progress():
+                        self.logger.warning(
+                            f"Process: {pid}, trial {trial}: Creation in progress...")
+                        time.sleep(2)
+                        continue
+                    else:
+                        self.logger.warning(
+                            f"Process: {pid}, trial {trial}: No running server found, starting new instance...")
                     try:
-                        self.server_instance = MilvusServerInstance(self.db_path, self.host, self.port)
+                        self.server_instance = MilvusServerInstance.create_instance(self.db_path, self.host, self.port)
+                        if self.server_instance is None:
+                            trial += 1 # initialization in progress
+                            time.sleep(2)
+                            continue
                         self.server_instance.start_server(threaded=True)
                         # Update host/port with the registered server info
-                        server_info = self.registry.get_server_info()
-                        if server_info:
-                            self.host = server_info.host
-                            self.port = server_info.port
-                        self.logger.info(f"Starting server {server_info} at {server_info.host}:{server_info.port}")
+                        existing_server_info = self.registry.get_server_info()
+                        if existing_server_info:
+                            self.host = existing_server_info.host
+                            self.port = existing_server_info.port
+                        self.logger.info(f"Starting server {existing_server_info} at {existing_server_info.host}:{existing_server_info.port}")
+                        # MilvusServerInstance.remove_creation_lock()
+                        break
                     except Exception as e:
                         self.logger.warning(f"Received an error: {e} in process {pid}, "
                                             f"this is the try number {trial}, {num_tries-trial+1} remaining.")
@@ -634,9 +745,9 @@ class MilvusAPIClient:
             headers = {'Content-Type': 'application/json'}
         
         # Log the request for debugging
-            self.logger.info(f"Making {method} request to {url}")
+            self.logger.debug(f"Making {method} request to {url}")
             if data:
-                self.logger.info(f"Request data keys: {list(data.keys())}")
+                self.logger.debug(f"Request data keys: {list(data.keys())}")
 
             if method.upper() == 'GET':
                 response = requests.get(url, timeout=timeout, headers=headers)

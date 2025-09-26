@@ -32,7 +32,7 @@ class MilvusServerConfig:
 @click.option('--collection-name', type=str, default='default_collection',
               help='Name of the Milvus collection to use')
 @click.option('--config', type=click.Path(exists=True, file_okay=True, dir_okay=False),
-help='Configuration file')
+              help='Configuration file')
 @click.option('--workers', type=int, default=1,
               help="Number of workers to run in parallel the Milvus server")
 @click.option('-o', '--output-file', type=click.Path(file_okay=True, dir_okay=False),
@@ -65,13 +65,15 @@ def process_queries(milvus_dir, queries_file, model_name, collection_name, confi
         tm.add_timing("encode::sentence_transformer_encode")
         if workers > 1:
             from multiprocessing import Pool
+            server = create_milvus_server(db_path=server_info.milvus_file_name, use_api=True, port=8765)
             with Pool(workers) as p:
                 num_q = sum(p.starmap(run_queries, [(i, f"{output_file}_{i}", queries_text, queries, server_info, tm) for i in range(workers)]))
+            server.close()
         else:
             num_q = run_queries(0, output_file, queries_text, queries, server_info, tm)
 
-    tm.display_timing(tm.milliseconds_since_beginning(), keys={'queries': num_q}, sorted_by="%", reverse=True)
-    print(f"Results written to {output_file}")
+        tm.display_timing(tm.milliseconds_since_beginning(), keys={'queries': num_q}, sorted_by="%", reverse=True)
+        print(f"Results written to {output_file}")
 
 def read_queries(queries_file):
     queries_df = pd.read_csv(queries_file, sep='\t')
@@ -87,7 +89,8 @@ def run_queries(thread_number, output_file, queries_text, queries, server_info: 
         first_q = True
         # Process each query
         with open(output_file, 'w') as f:
-            for qtext, query in tqdm(zip(queries_text, queries), desc=f"Processing queries [{thread_number}]",
+            for qtext, query in tqdm(zip(queries_text, queries), total=len(queries),
+                                     desc=f"Processing queries [{thread_number}]",
                                      leave=False, position=thread_number):
                 results = server.search(collection_name=server_info.collection_name,
                                         query_vector=query,
