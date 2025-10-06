@@ -1,6 +1,6 @@
 # Granite Embedding R2: Setting New Standards for Enterprise Retrieval
 
-*IBM Research introduces next-generation embedding models that don't compromise between speed and accuracy*
+*IBM Research AI introduces next-generation embedding models that don't compromise between speed and accuracy*
 
 ---
 
@@ -21,6 +21,8 @@ These models deliver three critical improvements over our first-generation relea
 1. **16x expanded context length** from 512 to 8,192 tokens—meeting modern document processing requirements
 2. **19-44% faster inference** than comparable models, without sacrificing accuracy
 3. **State-of-the-art performance** across text, code, long-documents, conversational queries, and tabular data
+
+*(Too impatient to read about training pipelines and benchmarks? We get it—skip straight to the [code examples](#getting-started-with-code-examples) and start embedding things.)*
 
 ## Built on Modern Foundations
 
@@ -50,43 +52,23 @@ This pipeline enables a single model family to excel across remarkably diverse t
 
 ## Performance That Speaks for Itself
 
-We evaluated Granite R2 across comprehensive benchmarks, and the results demonstrate clear leadership in both accuracy and speed.
+We evaluated Granite R2 on six open source retrieval benchmarks part of MTEB benchmarks (MTEB v2, CoIR, TableIR, LongEmbed, MTRAG, and MLDR), and the results demonstrate clear leadership in both accuracy and speed.
 
 ### Accuracy: State-of-the-Art Across the Board
 
-![Average Retrieval Performance across 6 Benchmarks](performance_chart.png)
+![Average Retrieval Performance across 6 Benchmarks](R2AveragePerformance.png)
 
-As the chart shows, **granite-embedding-english-r2 achieves the highest average performance at 59.5 NDCG@10**, outperforming all comparable open-source models. Even our efficient **granite-embedding-small-english-r2 scores 55.6**, surpassing many larger competitors.
+As the chart shows, **granite-embedding-english-r2 achieves the highest average performance at 59.5 NDCG@10**, outperforming all comparable open-source models - including models that are twice its size. Even our efficient **granite-embedding-small-english-r2 scores 55.6**, surpassing many larger open-source competitors.
 
-Key benchmark results:
-
-**General Retrieval (MTEB-v2)**
-- granite-english-r2: 56.4 average score
-- granite-small-r2: 53.9 average score
-
-**Code Retrieval (COIR)**
-- 54.8 / 53.4 across text-to-code, code-to-text, and hybrid tasks
-- Zero-shot evaluation (no COIR training data used)
-
-**Long-Context (MLDR, LongEmbed)**
-- granite-english-r2: 41.6 MLDR, 67.8 LongEmbed
-- granite-small-r2: 40.1 MLDR, 61.9 LongEmbed
-- State-of-the-art on LongEmbed benchmark
-
-**Table Retrieval**
-- 78.5 / 75.5 across OpenWikiTables, NQTables, OTT-QA, MultiHierTT, and AIT-QA
-
-**Multi-Turn Conversational (MT-RAG)**
-- granite-english-r2: 57.6 Recall@5
-- Substantial improvement over first-generation models
+For a comprehensive analysis of results, please refer to our [research paper](https://arxiv.org/abs/2508.21085).
 
 ### Speed: Industry-Leading Efficiency
 
-![Encoding Speed Comparison](speed_chart.png)
+![Encoding Speed Comparison](R2SpeedComparison.png)
 
 Performance benchmarks often overlook a critical real-world constraint: encoding speed. When you're ingesting millions of documents with frequent updates, speed directly impacts operational costs and user experience.
 
-We benchmarked encoding speed using 23,000 IBM technical documents (averaging 6,393 characters, ranging from 10 to 475,001 characters):
+We benchmarked encoding speed using 23,000 IBM technical documents (averaging 6,393 characters, ranging from 10 to 475,001 characters, details in the [research paper](https://arxiv.org/abs/2508.21085)):
 
 - **granite-english-r2**: 144 documents/second
 - **granite-small-r2**: 199 documents/second (fastest in its class)
