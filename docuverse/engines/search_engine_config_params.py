@@ -3,7 +3,7 @@ import os
 from typing import Optional, List, Literal, Union
 
 import yaml
-
+import torch
 from docuverse.engines.sparse_config import SparseConfig
 # from optimum.utils.runs import RunConfig, Run
 
@@ -63,6 +63,13 @@ class RetrievalArguments(GenericArguments):
     model_name: str = field(
         default="",
         metadata={"help": "Pre-trained model name or path if not the same as model_name"}
+    )
+
+    model_torch_dtype: str = field(
+        default="torch.float32",
+        metadata={
+            "help": "PyTorch dtype to use for model"
+        }
     )
 
     attn_implementation: Optional[str]|None = field(
@@ -476,6 +483,9 @@ class RetrievalArguments(GenericArguments):
             if self.data_template is None:
                 self.data_template = default_data_template
 
+        # Convert model_dtorch_type to the proper type:
+
+
         if self.filter_on is not None:
             res = []
             for name, _filter in self.filter_on.items():
@@ -512,6 +522,7 @@ class RetrievalArguments(GenericArguments):
                     self.trim_text_count_type = 'token'
             else:
                 self.trim_text_count_type = 'token'
+
 
 @dataclass
 class EngineArguments(GenericArguments):

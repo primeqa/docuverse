@@ -603,3 +603,18 @@ def _trim_json(data, max_string_len: int=9999):
     elif isinstance(data, str):
         data = data[:max_string_len]
     return data
+
+def convert_to_type(model_torch_dtype = None):
+    import torch
+    dtype_mapping = {
+        "torch.float32": torch.float32,
+        "torch.float64": torch.float64,
+        "torch.float16": torch.float16,
+        "torch.bfloat16": torch.bfloat16,
+        "torch.complex64": torch.complex64,
+        "torch.complex128": torch.complex128,
+    }
+    if model_torch_dtype is None:
+        return torch.float32
+    else:
+        return dtype_mapping.get(model_torch_dtype, torch.float32)

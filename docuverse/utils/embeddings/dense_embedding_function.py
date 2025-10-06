@@ -1,7 +1,8 @@
 import numpy as np
+import torch
 from typing import Union, List, Any
 
-from docuverse.utils import get_param, detect_device
+from docuverse.utils import get_param, detect_device, convert_to_type
 from docuverse.utils.embeddings.embedding_function import EmbeddingFunction
 import simple_colors
 
@@ -65,18 +66,41 @@ class DenseEmbeddingFunction(EmbeddingFunction):
 
 
     def __del__(self):
+        # Clean up multiprocess pool
         if self.emb_pool is not None:
-            self.stop_pool()
+            try:
+                self.stop_pool()
+            except:
+                pass
             self.emb_pool = None
+
+        # Clean up model and free GPU memory
+        if hasattr(self, 'model') and self.model is not None:
+            try:
+                # Move model to CPU to free GPU memory
+                if hasattr(self.model, 'to'):
+                    self.model = self.model.to('cpu')
+                # Delete model reference
+                del self.model
+                self.model = None
+                # Clear CUDA cache
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except:
+                pass
 
     def create_model(self, model_or_directory_name: str=None, device: str='cpu',
                      attn_implementation="sdpa"):
         from sentence_transformers import SentenceTransformer
+
         if attn_implementation is not None:
             model_args: dict[str, Any] = {"attn_implementation": attn_implementation}
             if attn_implementation.find("flash") >= 0:
                 import torch
-                model_args["torch_dtype"] = torch.bfloat16
+                model_args["dtype"] = torch.bfloat16
+            else:
+                model_args['dtype'] = self.torch_dtype
 
             self.model = SentenceTransformer(model_or_directory_name,
                                              device=device,
@@ -96,7 +120,8 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         self.model.stop_multi_process_pool(self.emb_pool)
         self.emb_pool = None
 
-    def encode(self, texts: Union[str, List[str]], _batch_size: int = -1,
+    def encode(self,
+               texts: Union[str, List[str]], _batch_size: int = -1,
                show_progress_bar=None,
                tqdm_instance=None,
                prompt_name=None,
@@ -118,15 +143,18 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                     tems = self._encode_data(texts=stexts[i:i_end], _batch_size=_batch_size,
                                              show_progress_bar=False)
                     embs.extend(tems)
+                    del tems  # Free memory immediately
                     tqdm_instance.update(i_end - i)
             else:
                 embs = self._encode_data(texts=stexts, _batch_size=_batch_size,
                                          show_progress_bar=show_progress_bar,
                                          prompt_name=prompt_name)
-            tmp_embs = [None] * len(texts)
+            # Optimize memory by reordering in-place where possible
+            result_embs = [None] * len(texts)
             for i in range(len(texts)):
-                tmp_embs[sorted_inds[i]] = embs[i]
-            embs = tmp_embs
+                result_embs[sorted_inds[i]] = embs[i]
+            del embs  # Free original list memory
+            embs = result_embs
         else:
             raise NotImplemented
             # if batch_size < 0:
@@ -144,22 +172,65 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             #     embs = self.queries_to_vectors(self.tokenizer, self.model, texts, max_query_length=500).tolist()
         return embs
 
-    def _encode_data(self, texts, _batch_size, show_progress_bar, prompt_name=None):
+    def _encode_data(self, texts, _batch_size,
+                     show_progress_bar,
+                     prompt_name=None):
+        embs = []
         if isinstance(texts, list) and len(texts) > 30 and self.num_devices > 1:
-            if self.emb_pool is None:
-                self.start_pool()
-            embs = self.model.encode_multi_process(pool=self.emb_pool,
-                                                   sentences=texts,
-                                                   batch_size=_batch_size,
-                                                   prompt_name=prompt_name)
-            embs = self.normalize(embs)
+            try:
+                if self.emb_pool is None:
+                    self.start_pool()
+                embs = self.model.encode_multi_process(pool=self.emb_pool,
+                                                       sentences=texts,
+                                                       batch_size=_batch_size,
+                                                       prompt_name=prompt_name)
+                embs = self.normalize(embs)
+            except Exception as e:
+                # Ensure pool is cleaned up on error
+                if self.emb_pool is not None:
+                    try:
+                        self.stop_pool()
+                    except:
+                        pass
+                raise e
         else:
-            embs = self.model.encode(texts,
-                                     show_progress_bar=show_progress_bar,
-                                     normalize_embeddings=True,
-                                     batch_size=_batch_size,
-                                     prompt_name=prompt_name
-                                     ).tolist()
+            _batch_size = _batch_size
+            _with_torch = torch.cuda.is_available()
+            while _batch_size >= 1:
+                try:
+                    embs = self.model.encode(texts,
+                                             show_progress_bar=show_progress_bar,
+                                             normalize_embeddings=True,
+                                             batch_size=_batch_size,
+                                             prompt_name=prompt_name
+                                             ).tolist()
+                    return embs
+                except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
+                    print(f"Got an error: {e}, reducing batch size to {_batch_size // 2}")
+                    if "out of memory" in str(e):
+                        print(f"GPU out of memory, reducing batch size from {_batch_size} to {_batch_size // 2}")
+                        # Clear CUDA cache to free GPU memory
+                        if _with_torch:
+                            torch.cuda.empty_cache()
+                        if _batch_size <= 1:
+                            print("Using CPU for current batch only, will continue on GPU")
+                            # Temporarily move model to CPU for this batch only
+                            original_device = self.model.device
+                            cpu_model = self.model.to('cpu')
+                            embs = cpu_model.encode(texts,
+                                                     show_progress_bar=show_progress_bar,
+                                                     normalize_embeddings=True,
+                                                     batch_size=1,
+                                                     prompt_name=prompt_name
+                                                     ).tolist()
+                            # Move model back to original device
+                            self.model = cpu_model.to(original_device)
+                            del cpu_model
+                            if _with_torch:
+                                torch.cuda.empty_cache()
+                            return embs
+                    _batch_size = _batch_size // 2
+            raise RuntimeError("Out of memory, you're out of luck...")
         return embs
 
     @staticmethod

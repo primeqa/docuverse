@@ -1,7 +1,7 @@
 import os
 
 from typing import Union, List
-from docuverse.utils import get_param, get_config_dir
+from docuverse.utils import get_param, get_config_dir, convert_to_type
 
 class EmbeddingFunction:
     def __init__(self, model_or_directory_name: str, batch_size: int, **kwargs):
@@ -9,6 +9,8 @@ class EmbeddingFunction:
         self.batch_size = batch_size
         import torch
         torch.set_float32_matmul_precision('high')
+        self.torch_dtype = convert_to_type(kwargs.get("model_torch_dtype", None))
+
 
     @staticmethod
     def pull_from_dmf(name):
