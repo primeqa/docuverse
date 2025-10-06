@@ -54,7 +54,7 @@ We evaluated Granite R2 across comprehensive benchmarks, and the results demonst
 
 ### Accuracy: State-of-the-Art Across the Board
 
-![Average Retrieval Performance across 6 Benchmarks](performance_chart.png)
+![Average Retrieval Performance across 6 Benchmarks](R2AveragePerformance.png)
 
 As the chart shows, **granite-embedding-english-r2 achieves the highest average performance at 59.5 NDCG@10**, outperforming all comparable open-source models. Even our efficient **granite-embedding-small-english-r2 scores 55.6**, surpassing many larger competitors.
 
@@ -82,7 +82,7 @@ Key benchmark results:
 
 ### Speed: Industry-Leading Efficiency
 
-![Encoding Speed Comparison](speed_chart.png)
+![Encoding Speed Comparison](R2SpeedComparison.png)
 
 Performance benchmarks often overlook a critical real-world constraint: encoding speed. When you're ingesting millions of documents with frequent updates, speed directly impacts operational costs and user experience.
 
