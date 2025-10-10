@@ -62,6 +62,10 @@ def main_cli():
 
         print(f"Results:\n{results}\n")
         write_metrics_file(metrics_file, results, timing, config)
+        if results.gold_values is not None:
+            from docuverse.utils.ece_brier.ece import plot_reliability_diagram
+            diagram_name =  metrics_file.replace(".metrics", ".png")
+            plot_reliability_diagram(results.system_probs, results.gold_values, save_path=diagram_name)
         print(f"Timing: ")
         print(timing)
 

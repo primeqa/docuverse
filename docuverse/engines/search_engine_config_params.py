@@ -697,11 +697,12 @@ class EvaluationArguments(GenericArguments):
 
     iranks: List[int] | None = None
 
-    eval_measure: Optional[str] = field(
+    eval_measure: str= field(
         default="match",
         metadata={
-            "help": "Defines the evaluation measure to use (default: match). Can be 'match' or 'ndcg' "
-                    "- more to be added"
+            "help": "Defines the evaluation measures to use (default: match). "
+                    "Can be a comma separated list of ['match', 'mrr', 'ndcg', 'ece', 'brier']. "
+                    "- More to be added"
         }
     )
 
