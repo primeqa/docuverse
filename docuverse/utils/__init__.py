@@ -28,49 +28,73 @@ def detect_device():
     device = 'cuda' if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else 'cpu'
     return device
 
-def get_param(dictionary: dict|list[dict]|object, key: str, default: str | None | bool | int | float | dict= None):
-    def recursive_get(_dictionary, key, default):
-        if _dictionary is None:
-            return default
-        elif isinstance(_dictionary, dict) and key in _dictionary:
-            return _dictionary.get(key)
-        elif key.find(".") >= 0:
-            keys = key.split(".")
-            res = default
-            if isinstance(_dictionary, dict):
-                dd = _dictionary
-            else:
-                dd = _dictionary.__dict__
-            for k in keys:
-                if not isinstance(dd, dict):
-                    dd = dd.__dict__
-                if k in dd:
-                    dd = dd[k]
-                else:
-                    return res
-            return dd
-        else:
-            return _dictionary.get(key, default)
 
-    weird_value = ":+:+"
+from typing import Any, Union
+
+# Extract constant
+_SENTINEL = object()
+
+
+def _is_number(k: str) -> Union[int, None]:
+    """Extract helper function - convert string to int or return None"""
+    try:
+        return int(k)
+    except ValueError:
+        return None
+
+
+def _recursive_get(dictionary: Any, key: str, default: Any) -> Any:
+    """Extract helper function - recursively get value from nested structures"""
+    if dictionary is None:
+        return default
+    elif isinstance(dictionary, dict) and key in dictionary:
+        return dictionary.get(key)
+    elif "." in key:
+        keys = key.split(".")
+        current = dictionary if isinstance(dictionary, dict) else dictionary.__dict__
+
+        for k in keys:
+            if isinstance(current, list):
+                index = _is_number(k)
+                if index is not None:  # Fix bug: was 'val' instead of 'vv'
+                    current = current[index]
+                    continue
+                else:
+                    raise RuntimeError(f"Could not find key {k} in list: {current}")
+            if not isinstance(current, dict):
+                current = current.__dict__
+            if k in current:
+                current = current[k]
+            else:
+                return default
+        return current
+    else:
+        return dictionary.get(key, default) if hasattr(dictionary, 'get') else default
+
+
+def get_param(dictionary: Union[dict, list[dict], object], key: str,
+              default: Union[str, None, bool, int, float, dict] = None) -> Any:
+    """Get parameter from dictionary with support for nested keys and fallback options"""
     if key is None:
         return default
-    elif key.find("|") > 0:
+    elif "|" in key:
+        # Handle fallback keys separated by |
         keys = key.split("|")
         for k in keys:
-            k = recursive_get(dictionary, k, weird_value)
-            if k != weird_value:
-                return k
+            result = _recursive_get(dictionary, k, _SENTINEL)
+            if result is not _SENTINEL:
+                return result
         return default
     else:
         if isinstance(dictionary, list):
+            # Search through list of dictionaries
             for dct in dictionary:
-                val = recursive_get(dct, key, weird_value)
-                if val != weird_value:
+                val = _recursive_get(dct, key, _SENTINEL)
+                if val is not _SENTINEL:
                     return val
             return default
         else:
-            return recursive_get(dictionary, key, default)
+            return _recursive_get(dictionary, key, default)
 
 def get_config_dir(config_path: str | None = None) -> str:
     def find_docuverse_base(path: str, basename="docuverse"):
