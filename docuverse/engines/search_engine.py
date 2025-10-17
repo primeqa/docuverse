@@ -154,13 +154,17 @@ class SearchEngine:
         prepare_for_save_and_backup(self.config.output_file, overwrite)
         if output_file is None:
             output_file = self.config.output_file
+        if not os.path.exists(os.path.dirname(output_file)):
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
         if file_is_of_type(output_file, extensions=".json"):
-            if not os.path.exists(os.path.dirname(output_file)):
-                os.makedirs(os.path.dirname(output_file), exist_ok=True)
             # with open(output_file, "w") as outfile:
             with open_stream(output_file, write=True) as outfile:
                 outp = [r.as_dict() for r in output]
                 outfile.write(json.dumps(outp, indent=2))
+        elif file_is_of_type(output_file, extensions=".jsonl"):
+            with open_stream(output_file, write=True) as outfile:
+                for r in output:
+                    outfile.write(json.dumps(r.as_dict()) + "\n")
         elif file_is_of_type(output_file, extensions=".pkl"):
             with open_stream(output_file, write=True, binary=True) as outfile:
                 pickle.dump(output, outfile)
@@ -176,6 +180,12 @@ class SearchEngine:
                 output = orjson.loads("".join(inp.readlines()))
                 res = [SearchResult(SearchQueries.Query(template=query_template, **o['question']),
                                     o['retrieved_passages']) for o in output]
+        elif file_is_of_type(filename, ".jsonl"):
+            with open(filename, "r") as inp:
+                for line in inp:
+                    o = orjson.loads(line)
+                    res.append(SearchResult(SearchQueries.Query(template=query_template, **o['question']),
+                                            o['retrieved_passages']))
         elif file_is_of_type(filename, ".pkl"):
             res = pickle.load(open_stream(filename, binary=True))
         return res
