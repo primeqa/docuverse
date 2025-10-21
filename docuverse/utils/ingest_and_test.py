@@ -29,23 +29,20 @@ def main_cli():
     save_command_line(args=sys.argv)
     tm = timer("ingest_and_test")
     config = DocUVerseConfig.get_stdargs_config()
-    #    config = DocUVerseConfig("experiments/clapnq/setup.yaml")
-    engine = SearchEngine(config)
-    tm.add_timing("initialize")
+    engine = SearchEngine(config, name="ingest_and_test")
     if config.ingest or config.update:
         corpus = engine.read_data(config.input_passages)
         engine.ingest(corpus, update=config.update, skip=config.skip)
-        tm.add_timing("ingest")
     output = None
     if config.retrieve:
         queries = engine.read_questions(config.input_queries)
         output = engine.search(queries)
-        tm.add_timing("search")
+        # tm.add_timing("search")
         engine.write_output(output)
-        tm.add_timing("write_output")
+        # tm.add_timing("write_output")
     else:
-        output = None
         queries = None
+
     if config.evaluate and config.eval_config is not None:
         scorer = EvaluationEngine(config)
         if queries is None:
@@ -54,8 +51,9 @@ def main_cli():
         if output is None:
             output = engine.read_output(config.output_file)
         results = scorer.compute_score(queries, output, model_name=engine.get_output_name())
-        metrics_file = config.output_file.replace(".json", ".metrics")
-        tm.add_timing("evaluate")
+        metrics_file = config.output_file[:config.output_file.find(
+            '.json')] + '.metrics' if '.json' in config.output_file else config.output_file + '.metrics'
+        # tm.add_timing("evaluate")
         ostring = io.StringIO()
         # print(timer.display_timing)
         timer.display_timing(tm.milliseconds_since_beginning(), keys={'queries': len(queries)}, sorted_by="%",
@@ -64,6 +62,10 @@ def main_cli():
 
         print(f"Results:\n{results}\n")
         write_metrics_file(metrics_file, results, timing, config)
+        if results.gold_values is not None:
+            from docuverse.utils.ece_brier.ece import plot_reliability_diagram
+            diagram_name =  metrics_file.replace(".metrics", ".png")
+            plot_reliability_diagram(results.system_probs, results.gold_values, save_path=diagram_name)
         print(f"Timing: ")
         print(timing)
 

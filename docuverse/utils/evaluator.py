@@ -5,16 +5,17 @@ from typing import List
 from tqdm import tqdm
 
 
-from docuverse import SearchResult, SearchQueries
+from docuverse import SearchResult, SearchQueries, SearchEngine
 from docuverse.engines import SearchData
 from docuverse.engines.search_engine_config_params import EvaluationArguments, DocUVerseConfig
 from . import get_param, get_orig_docid
 from .evaluation_output import EvaluationOutput
 from rouge_score.rouge_scorer import RougeScorer
-
+from docuverse.utils.timer import timer
 
 class EvaluationEngine:
     def __init__(self, config):
+        self.score_pairs = None
         self.relevant = None
         self.rouge_scorer = None
         self.compute_rouge_score = None
@@ -44,6 +45,7 @@ class EvaluationEngine:
     def compute_score(self, input_queries: SearchQueries|List[SearchQueries.Query], system: List[SearchResult],
                       model_name="model", **kwargs) -> EvaluationOutput:
         data_id_header = 'id'
+        tm = timer(f"{SearchEngine.get_name()}")
         # if 'data_template'in kwargs:
         data_text_header = get_param(get_param(kwargs, 'data_template', self.data_template),
                                      'text_header', 'text')
@@ -103,6 +105,7 @@ class EvaluationEngine:
 
         num_eval_questions = 0
         self.relevant = []
+        self.score_pairs = []
         num_gold = []
         for rid, record in tqdm(enumerate(system),
                                 total=len(system),
@@ -119,18 +122,14 @@ class EvaluationEngine:
             tmp_scores = {r: 0 for r in ranks}
             tmp_pscores = {r: 0 for r in ranks}
             self.relevant.append([])
+            self.score_pairs.append([])
             for aid, answer in enumerate(record.retrieved_passages):
                 if aid >= ranks[-1]:
                     break
                 docid = get_orig_docid(get_param(answer, f"id|{data_id_header}"))
 
-                # if str(docid) in gt[qid]:  # Great, we found a match.
-                #     update_scores(ranks, aid, 1, sum, tmp_scores)
-                #     self.relevant[rid].append(1)
-                # else:
-                #     self.relevant[rid].append(1)
                 self.relevant[rid].append(str(docid) in gt[qid])
-
+                self.score_pairs[rid].append([answer.score, 1.0*(str(docid) in gt[qid])])
                 if not self.config.compute_rouge:
                     continue
                 if len(query['passages']) == 0:
@@ -143,6 +142,7 @@ class EvaluationEngine:
         _result = EvaluationOutput(num_ranked_queries=num_eval_questions,
                                    num_judged_queries=num_eval_questions,
                                    doc_scores=self.relevant,
+                                   score_pairs=self.score_pairs,
                                    num_gold=num_gold,
                                    ranks=self.config.iranks,
                                    rouge_scores=rouge_scores,
@@ -153,7 +153,7 @@ class EvaluationEngine:
         if self.config.compute_rouge:
             _result['rouge_scores'] = \
                 {r: int(1000 * rouge_scores[r] / num_eval_questions) / 1000.0 for r in ranks}
-
+        tm.add_timing("evaluate_time")
         return _result
 
     def __str__(self):

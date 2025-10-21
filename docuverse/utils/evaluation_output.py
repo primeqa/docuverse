@@ -1,10 +1,15 @@
 import math
 import itertools
 import operator
+from docuverse.utils.ece_brier.ece import expected_calibration_error
+from docuverse.utils.ece_brier.brier_score import brier_score
 
 class EvaluationOutput:
     mappable_metrics = ['match', 'mrr', 'ndcg', 'map']
-    def __init__(self, num_ranked_queries, num_judged_queries, doc_scores,
+    single_metrics = ['ece', 'brier']
+    def __init__(self, num_ranked_queries, num_judged_queries,
+                 doc_scores,
+                 score_pairs,
                  ranks,
                  model_name="model",
                  rouge_scores=None,
@@ -12,33 +17,41 @@ class EvaluationOutput:
                  compute_macro_scores=True,
                  metrics="match"):
         """
+        Initializes an instance of the EvaluationOutput class to compute and store various
+        evaluation metrics for ranked and judged queries, document scores, and other
+        relevant parameters. Metrics include MAP, MRR, NDCG, and ROUGE scores, among
+        others.
 
-        Initializes an EvaluationOutput object.
+        Attributes:
+            model_name: The name of the model being evaluated.
+            num_ranked_queries (int): The number of queries for which ranking has been computed.
+            num_judged_queries (int): The number of queries for which relevance judgment is available.
+            doc_scores (Any): The document scores generated for the queries by the model.
+            score_pairs (list[[float,float]]): The paired scores specific to the evaluation setup (per example a list of
+                               [output_score, gold_score] pairs).
+            ranks (Any): The ranks assigned to the documents by the model output system.
+            rouge_scores (Optional): ROUGE scores, if applicable, provided for the evaluation.
+            num_gold (Optional[int]): The number of gold-relevant documents available per query.
+            compute_macro_scores (bool): Indicates whether macro-averaged scores need to be computed.
+            display_metrics (List[str]): A list of selected metrics to display during evaluation.
 
-        :param num_ranked_queries: The total number of queries for which ranking was done.
-        :param num_judged_queries: The total number of queries that were judged.
-        :param doc_scores: A dictionary mapping document IDs to their corresponding scores.
-        :param ranks: A dictionary mapping query IDs to a list of document IDs in ranked order.
-        :param model_name: The name of the model used for ranking (default is "model").
-        :param rouge_scores: A dictionary mapping query IDs to their corresponding Rouge scores (default is None).
-        :param num_gold: The number of gold standard documents per query (default is None).
-        :param compute_macro_scores: A boolean indicating whether to compute macro scores (default is True).
-        :param metrics: The metrics to be computed, separated by commas (default is "match").
-
-        :returns: None
-
+        Raises:
+            No specific errors documented. Implementation assumes proper inputs.
         """
+        self.ece = None
+        self.brier = None
         self.model_name = model_name
         self.map = None
         self.mrr = None
         self.ndcg = None
         self.match = None
         self.idcg = None
-        for i in EvaluationOutput.mappable_metrics:
-            setattr(self, i, None)
+        # for metric in EvaluationOutput.mappable_metrics+EvaluationOutput.single_metrics:
+        #     setattr(self, metric, None)
         self.num_ranked_queries = num_ranked_queries
         self.num_judged_queries = num_judged_queries
         self.doc_scores = doc_scores
+        self.score_pairs = score_pairs
         self.ranks = ranks
         self.rouge_scores = rouge_scores
         self.display_metrics = metrics.split(",")
@@ -59,6 +72,9 @@ class EvaluationOutput:
         self.ndcg = get_zero_dict()
         self.mrr = get_zero_dict()
         self.map = get_zero_dict()
+
+        self.ece = 0
+        self.brier = 0
 
         max_rank = self.ranks[-1]
         self.idcg = get_zeros(max_rank)
@@ -132,27 +148,43 @@ class EvaluationOutput:
         if self.rouge_scores:
             self.rouge_match = {}
 
+        # Flatten the nested structure
+        flattened = list(itertools.chain.from_iterable(self.score_pairs))
+
+        # Unzip into two separate lists
+        first_values, second_values = zip(*flattened)
+
+        # Convert to lists if needed
+        self.system_probs = list(first_values)
+        self.gold_values = list(second_values)
+        self.ece = expected_calibration_error(self.system_probs, self.gold_values)
+        self.brier = brier_score(self.system_probs, self.gold_values)
+
 
     def __str__(self):
-
         def display_metric(_metric, display_string=False):
-            mappable_metrics = ['match', 'ndcg', 'mrr']
+            mappable_metrics = ['match', 'ndcg', 'mrr', 'map']
             display_map = {m:("M" if m=='match' else m.upper())+"@" for m in mappable_metrics}
-            metric_map = {m:getattr(self,m) for m in mappable_metrics}
+
+            metric_map = {m:getattr(self, m) for m in mappable_metrics}
 
             if display_string:
                 if _metric in mappable_metrics:
                     return "".join([f"{display_map[_metric] + str(val):10}" for val in ranks])
+                else:
+                    return f"{_metric:10}"
             else:
                 if _metric in mappable_metrics:
                     return "".join([f"{metric_map[_metric][i]:<10.3}" for i in ranks])
+                else:
+                    return f"{getattr(self, _metric):<10.3}"
         name = self.model_name
         ranks = self.ranks
         model_name_length = len(self.model_name)+4
 
-        headline = f"{'Model':{model_name_length}s}" + "".join([
-            display_metric(metric, True) for metric in self.display_metrics
-        ])
+        headline = (f"{'Model':{model_name_length}s}" +
+                    "".join([display_metric(metric, True) for metric in self.display_metrics
+        ]))
 
         res = f"{name:{model_name_length}s}" + "".join([
             display_metric(metric, False) for metric in self.display_metrics

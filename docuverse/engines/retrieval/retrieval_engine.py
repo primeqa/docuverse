@@ -2,6 +2,7 @@ import inspect
 from datetime import datetime
 from typing import Tuple, Dict, Union
 
+
 from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_engine_config_params import SearchEngineConfig, RetrievalArguments
 from docuverse.utils import get_param, ask_for_confirmation
@@ -36,9 +37,12 @@ class RetrievalEngine:
     """
 
     def __init__(self, config_params, **kwargs):
+        self.ingestion_batch_size = get_param(config_params, "ingestion_batch_size", default=None)
+        self.embeddings_name = get_param(config_params, "embeddings_name", None)
         self.last_access = None
         self.args = kwargs
         self.config = None
+        self.client = None
         # self.engine = self.create_engine(retriever_config=config_params)
 
     def search(self, query, **kwargs):
@@ -56,13 +60,17 @@ class RetrievalEngine:
     def init_client(self):
         pass
 
+    def check_client(self):
+        if self.client is None:
+            raise RuntimeError("MilvusEngine server is not defined/initialized.")
+
     def has_index(self, index_name):
         return False
 
     def delete_index(self, index_name, **kwargs):
         pass
 
-    def check_index_rebuild(self, **kwargs) -> bool:
+    def check_index_rebuild(self, **kwargs) -> bool|str:
         """
         check_index_rebuild(**kwargs) -> bool
 
@@ -109,7 +117,11 @@ class RetrievalEngine:
                     self.delete_index(index_name=self.config.index_name, **kwargs)
             else:
                 print(f"This will overwrite your existent index {self.config.index_name} - use --actions 'u' instead.")
-                return self.check_index_rebuild()
+                result = self.check_index_rebuild()
+                if result in ['update', False]:
+                    return result
+                else:
+                    self.delete_index(index_name=self.config.index_name, **kwargs)
         else:
             if do_update:
                 print(f"You are trying to update an index ({self.config.index_name}) that does not exist "
@@ -151,6 +163,14 @@ class RetrievalEngine:
 
         self.config = config_params
 
+    def encode_data(self, texts, batch_size, show_progress_bar=False):
+        pass
+
+    def _analyze_data(self, texts):
+        pass
+
+    def _create_data(self, **kwargs):
+        pass
 
 
 

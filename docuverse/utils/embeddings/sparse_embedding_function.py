@@ -99,11 +99,6 @@ class SparseSentenceTransformer:
                     csr_matrix((vals, (np.zeros(len(ind)), ind)), shape=(1, max_size))
                     for vals, ind in zip(topk_n, inds)
                 ]
-                # embeddings = torch.zeros_like(maxdim1)
-                # embeddings = embeddings.scatter(1, indices, topk)
-                # # embeddings = embeddings.to_sparse_csr().unbind(dim=0)
-                # shp = embeddings.shape
-                # embeddings = [e.to_sparse_coo() for e in embeddings.view(-1,1,shp[1]).unbind(dim=0)]
             else: # No query encoding, just map the tokens to 1.0
                 max_size = self.tokenizer.vocab_size
                 keys = [torch.unique(input_dict['input_ids'][i], sorted=True).tolist() for i in range(b,b+this_batch_size)]
@@ -175,6 +170,9 @@ class SparseEmbeddingFunction(EmbeddingFunction):
     def __call__(self, texts: Union[List[str], str], **kwargs) -> \
             Union[Dict[str, float|int], List[Dict[str, float|int]]]:
         return self.encode(texts)
+
+    def encode_documents(self, *args, **kwargs) -> Union[Dict[str, float|int], List[Dict[str, float|int]]]:
+        return self.encode(*args, **kwargs)
 
     def encode(self, texts: Union[str, List[str]], _batch_size: int = -1,
                show_progress_bar=None,

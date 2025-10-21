@@ -34,7 +34,9 @@ class MilvusDenseEngine(MilvusEngine):
         self.storage_rep = self.STORAGE_MAP[self.storage_size]
 
     def init_model(self, **kwargs):
-        self.model = DenseEmbeddingFunction(self.config.model_name)
+        self.model = DenseEmbeddingFunction(self.config.model_name,
+                                            **self.config.__dict__
+                                            )
         self.hidden_dim = len(self.model.encode(['text'], show_progress_bar=False)[0])
         self.normalize_embs = get_param(kwargs, 'normalize_embs', False)
 
@@ -99,12 +101,16 @@ class MilvusDenseEngine(MilvusEngine):
         return search_params
 
     def encode_data(self, texts, batch_size, **kwargs):
-        passage_vectors = super().encode_data(texts=texts, batch_size=batch_size, **kwargs)
+        if 'prompt_name' not in kwargs:
+            kwargs['prompt_name'] = "document"
+        passage_vectors = super().encode_data(texts=texts, batch_size=batch_size,
+                                              **kwargs)
         if self.storage_size != "fp32":
             passage_vectors = [np.array(p, dtype=self.storage_rep[1]) for p in passage_vectors]
         return passage_vectors
 
     def encode_query(self, question):
-        return  self.encode_data([question.text], batch_size=1, prompt_name=self.config.query_prompt_name)[0]
+        return  self.encode_data([question.text], batch_size=1,
+                                        prompt_name="query")[0]
 
 

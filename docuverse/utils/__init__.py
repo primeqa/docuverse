@@ -1,11 +1,12 @@
-import copy
 import itertools
-import json
 import os
 import queue
-import re
 import time
 import sys
+import re
+import copy
+import json
+
 if sys.platform == "darwin":
     print("We're on a Mac !!")
     from multiprocess import Queue, Manager, Process, Lock, Value
@@ -14,7 +15,7 @@ else:
     from multiprocessing import Queue, Manager, Process, Lock, Value
     import multiprocessing as mp
 
-from typing import List, Union
+from typing import List, Union, Any
 from jinja2 import Template, Undefined
 
 # from .embedding_function import DenseEmbeddingFunction
@@ -27,49 +28,73 @@ def detect_device():
     device = 'cuda' if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else 'cpu'
     return device
 
-def get_param(dictionary: dict|list[dict]|object, key: str, default: str | None | bool | int | float | dict= None):
-    def recursive_get(_dictionary, key, default):
-        if _dictionary is None:
-            return default
-        elif isinstance(_dictionary, dict) and key in _dictionary:
-            return _dictionary.get(key)
-        elif key.find(".") >= 0:
-            keys = key.split(".")
-            res = default
-            if isinstance(_dictionary, dict):
-                dd = _dictionary
-            else:
-                dd = _dictionary.__dict__
-            for k in keys:
-                if not isinstance(dd, dict):
-                    dd = dd.__dict__
-                if k in dd:
-                    dd = dd[k]
-                else:
-                    return res
-            return dd
-        else:
-            return _dictionary.get(key, default)
 
-    weird_value = ":+:+"
+from typing import Any, Union
+
+# Extract constant
+_SENTINEL = object()
+
+
+def _is_number(k: str) -> Union[int, None]:
+    """Extract helper function - convert string to int or return None"""
+    try:
+        return int(k)
+    except ValueError:
+        return None
+
+
+def _recursive_get(dictionary: Any, key: str, default: Any) -> Any:
+    """Extract helper function - recursively get value from nested structures"""
+    if dictionary is None:
+        return default
+    elif isinstance(dictionary, dict) and key in dictionary:
+        return dictionary.get(key)
+    elif "." in key:
+        keys = key.split(".")
+        current = dictionary if isinstance(dictionary, dict) else dictionary.__dict__
+
+        for k in keys:
+            if isinstance(current, list):
+                index = _is_number(k)
+                if index is not None:  # Fix bug: was 'val' instead of 'vv'
+                    current = current[index]
+                    continue
+                else:
+                    raise RuntimeError(f"Could not find key {k} in list: {current}")
+            if not isinstance(current, dict):
+                current = current.__dict__
+            if k in current:
+                current = current[k]
+            else:
+                return default
+        return current
+    else:
+        return dictionary.get(key, default) if hasattr(dictionary, 'get') else default
+
+
+def get_param(dictionary: Union[dict, list[dict], object], key: str,
+              default: Union[str, None, bool, int, float, dict] = None) -> Any:
+    """Get parameter from dictionary with support for nested keys and fallback options"""
     if key is None:
         return default
-    elif key.find("|") > 0:
+    elif "|" in key:
+        # Handle fallback keys separated by |
         keys = key.split("|")
         for k in keys:
-            k = recursive_get(dictionary, k, weird_value)
-            if k != weird_value:
-                return k
+            result = _recursive_get(dictionary, k, _SENTINEL)
+            if result is not _SENTINEL:
+                return result
         return default
     else:
         if isinstance(dictionary, list):
+            # Search through list of dictionaries
             for dct in dictionary:
-                val = recursive_get(dct, key, weird_value)
-                if val != weird_value:
+                val = _recursive_get(dct, key, _SENTINEL)
+                if val is not _SENTINEL:
                     return val
             return default
         else:
-            return recursive_get(dictionary, key, default)
+            return _recursive_get(dictionary, key, default)
 
 def get_config_dir(config_path: str | None = None) -> str:
     def find_docuverse_base(path: str, basename="docuverse"):
@@ -130,68 +155,172 @@ class NullUndefined(Undefined):
 #     return config
 
 
-def read_config_file(config_file):
-    patt = re.compile(r"{{(.*?)}}")
-    if not os.path.exists(config_file):
-        config_file = os.path.join(get_config_dir(os.path.dirname(config_file)), os.path.basename(config_file))
-    def replace(local_dict:dict, global_dict:dict, parent_key: str=""):
-        def get_value_recursive(global_dict, val, parent_key):
-            parents = parent_key.split(".")
-            rr = None
-            while rr is None:
-                if len(parents) > 0:
-                    skey = f"{'.'.join(parents)}.{val}"
-                else:
-                    skey = val
-                rr = get_param(global_dict, skey)
-                if rr is not None:
-                    return rr
-                if len(parents) == 0:
-                    return "None"
-                parents = parents[:-1]
+# Constants
+
+def resolve_variable(global_dict, variable_name, parent_key):
+    """
+    Resolve a variable by searching through parent keys in the configuration.
+    
+    Args:
+        global_dict (dict): The full configuration dictionary
+        variable_name (str): The variable name to resolve. The key can be multi-level - levels are split with '.'.
+        parent_key (str): The parent key path to start searching from
+        
+    Returns:
+        The resolved value or "None" as a string if not found
+    """
+    variable_name = variable_name.replace(" ", "")
+    parents = parent_key.split(".")
+
+    while True:
+        if parents:
+            search_key = f"{'.'.join(parents)}.{variable_name}"
+        else:
+            search_key = variable_name
+
+        result = get_param(global_dict, search_key)
+        if result is not None:
+            return result
+
+        if not parents:
             return "None"
 
-        not_done = False
-        for key, val in local_dict.items():
-            if isinstance(val, str):
-                m = re.search(patt, val)
-                while m:
-                    rr = get_value_recursive(global_dict, m.group(1).replace(" ",""), parent_key)
-                    start="{{"
-                    end="}}"
-                    if not isinstance(rr, str) or rr.find("{{") < 0:
-                        val = val.replace(f"{start}{m.group(1)}{end}", str(rr))
-                    else:
-                        not_done = True
+        parents = parents[:-1]
 
-                    m=re.search(patt, val)
-                local_dict[key] = val
-            elif isinstance(val, dict):
-                # Call recursively
-                not_done |= replace(local_dict=val, global_dict=global_dict,
-                                    parent_key=f"{parent_key}.{key}" if parent_key != "" else key)
-        return not_done
 
-    config = {}
-    if config_file.endswith(".yml") or config_file.endswith(".yaml"):
-        with open(config_file, "r") as f:
-            config = yaml.safe_load(f)
-    elif config_file.endswith(".json"):
-        with open(config_file, "r") as f:
-            config = json.load(f)
+def process_dictionary(local_dict, global_dict, parent_key=""):
+    """
+    Process a dictionary to resolve templated variables.
+    
+    Args:
+        local_dict (dict): The dictionary to process
+        global_dict (dict): The full configuration dictionary
+        parent_key (str): The parent key path for variable resolution
+        
+    Returns:
+        bool: True if some variables couldn't be fully resolved yet
+    """
+    VARIABLE_PATTERN = re.compile(r"{{(.*?)}}")
+    has_unresolved = False
+
+    for key, value in local_dict.items():
+        if isinstance(value, str):
+            # Process string values that may contain variables
+            new_value = value
+            match = re.search(VARIABLE_PATTERN, new_value)
+
+            while match:
+                var_name = match.group(1)
+                resolved_value = resolve_variable(global_dict, var_name, parent_key)
+
+                # Check if the resolved value itself contains variables
+                if isinstance(resolved_value, str) and "{{" in resolved_value:
+                    has_unresolved = True
+                    break
+
+                # Replace the variable with its resolved value
+                new_value = new_value.replace(f"{{{{{var_name}}}}}", str(resolved_value))
+                match = re.search(VARIABLE_PATTERN, new_value)
+
+            local_dict[key] = new_value
+
+        elif isinstance(value, dict):
+            # Process nested dictionaries
+            next_parent = f"{parent_key}.{key}" if parent_key else key
+            nested_unresolved = process_dictionary(value, global_dict, next_parent)
+            has_unresolved = has_unresolved or nested_unresolved
+
+    return has_unresolved
+
+
+def load_config_from_file(file_path):
+    """
+    Load configuration from a YAML or JSON file.
+    
+    Args:
+        file_path (str): Path to the configuration file
+        
+    Returns:
+        dict: The loaded configuration
+        
+    Raises:
+        RuntimeError: If the file type is not supported
+    """
+    if file_path.endswith((".yml", ".yaml")):
+        with open(file_path, "r") as f:
+            return yaml.safe_load(f)
+    elif file_path.endswith(".json"):
+        with open(file_path, "r") as f:
+            return json.load(f)
     else:
-        raise RuntimeError(f"Config file type not supported: {config_file}")
-    # Hack to resolve variables
-    not_done = True
-    num_iters=0
-    while not_done:
-        tconfig = copy.deepcopy(config)
-        not_done = replace(local_dict=config, global_dict=config, parent_key="")
-        num_iters += 1
-        if tconfig==config:
+        raise RuntimeError(f"Config file type not supported: {file_path}")
+
+def is_scalar(value):
+    """Check if a value is a scalar (non-iterable or string). A bit of a over-caution, but better safe than sorry."""
+    scalar_types = (int, float, str, bool, complex, type(None))
+    return isinstance(value, scalar_types)
+
+
+def replace_leaf_keys(config: dict[str, Any], override_vals: dict[str, str]) -> dict[str, Any]:
+    for key, value in config.items():
+        if isinstance(value, dict):
+            config[key] = replace_leaf_keys(value, override_vals)
+        elif is_scalar(value):
+            if key in override_vals:
+                config[key] = override_vals[key]
+    return config
+
+
+def read_config_file(config_file, override_vals: dict[str, str]=None) -> dict[str, Any]:
+    """
+    Reads a configuration file, resolves templated variables within the file, and returns the
+    parsed configuration as a dictionary.
+
+    The function supports YAML and JSON configuration files. Variables within the configuration
+    file are expressed using the syntax `{{variable}}` and are resolved by recursively searching
+    through the configuration dictionary, considering the current and parent keys.
+
+    Args:
+        override_vals:
+        config_file (str): Path to the configuration file to read. The file may contain
+            variables to be resolved.
+
+    Returns:
+        dict: A dictionary representation of the processed and resolved configuration file.
+
+    Raises:
+        RuntimeError: If the file type is not supported or if variable resolution exceeds the
+            allowed number of iterations (10).
+    """
+    MAX_RESOLUTION_ITERATIONS = 10
+
+    # Resolve file path if it doesn't exist
+    if not os.path.exists(config_file):
+        config_file = os.path.join(get_config_dir(os.path.dirname(config_file)),
+                                   os.path.basename(config_file))
+
+    # Load configuration from file
+    config = load_config_from_file(config_file)
+    if override_vals is not None:
+        config = replace_leaf_keys(config, override_vals)
+
+    # Resolve variables in the configuration
+    iterations = 0
+    has_unresolved = True
+
+    while has_unresolved and iterations < MAX_RESOLUTION_ITERATIONS:
+        previous_config = copy.deepcopy(config)
+        has_unresolved = process_dictionary(config, config)
+        iterations += 1
+
+        # If no changes were made in this iteration, we're done
+        if previous_config == config:
             break
-        if num_iters > 10:
-            raise RuntimeError(f"Could not resolve the variables in {config_file}")
+
+    # Check if we hit the maximum number of iterations
+    if iterations >= MAX_RESOLUTION_ITERATIONS and has_unresolved:
+        raise RuntimeError(f"Could not resolve the variables in {config_file}")
+
     return config
 
 class Limiter:
@@ -227,8 +356,10 @@ def open_stream(file_name: str, write: bool = False, binary=False):
         mode = "r"
         if not os.path.exists(file_name):
             raise RuntimeError(f"File {file_name} does not exist!")
-    if binary:
+    if binary: # or file_is_of_type(file_name, ['bz2', 'xz', 'gz']):
         mode = f"{mode}b"
+    else:
+        mode = f"{mode}t"
 
     input_stream = None
     if file_name.endswith(".bz2"):
@@ -471,3 +602,43 @@ def save_command_line(args, output="logfile"):
     with open(output, "a") as cmdlog:
         cmdlog.write(f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')} - {os.getenv('USER')} - "
                      f"python {' '.join(args)}\n")
+
+
+def _trim_json(data, max_string_len: int=9999):
+    """
+    Trims JSON-compatible data structures to ensure string values do not exceed a
+    specified length. This function recursively traverses dictionaries, lists,
+    and strings, limiting string values to a maximum length of 9999 characters.
+
+    Args:
+        data: The JSON-compatible data structure to be trimmed. This can be a
+            dictionary, list, or string.
+
+    Returns:
+        The trimmed JSON-compatible data structure with string values limited to a
+        maximum length of 9999 characters.
+
+    """
+    if isinstance(data, dict):
+        for k, v in data.items():
+            data[k] = _trim_json(v)
+    elif isinstance(data, list):
+        data = [_trim_json(v) for v in data]
+    elif isinstance(data, str):
+        data = data[:max_string_len]
+    return data
+
+def convert_to_type(model_torch_dtype = None):
+    import torch
+    dtype_mapping = {
+        "torch.float32": torch.float32,
+        "torch.float64": torch.float64,
+        "torch.float16": torch.float16,
+        "torch.bfloat16": torch.bfloat16,
+        "torch.complex64": torch.complex64,
+        "torch.complex128": torch.complex128,
+    }
+    if model_torch_dtype is None:
+        return torch.float32
+    else:
+        return dtype_mapping.get(model_torch_dtype, torch.float32)

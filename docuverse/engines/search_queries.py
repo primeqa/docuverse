@@ -100,10 +100,11 @@ class SearchQueries(SearchData):
                 for gs in goldstandard:
                     qid = get_param(gs, query_template.truth_id)
                     doc_id = get_param(gs, query_template.truth_label)
+                    # Make sure all relevant items are strings - otherwise, there might be an issue computing scores.
                     if qid in gs_map:
-                        gs_map[qid].append(doc_id)
+                        gs_map[qid].append(str(doc_id))
                     else:
-                        gs_map[qid] = [doc_id]
+                        gs_map[qid] = [str(doc_id)]
                 qfile = get_filename(in_file, question_data['question_file'])
                 tquestions = cls.read_question_data(qfile, fields=fields,
                                                     lang=lang,

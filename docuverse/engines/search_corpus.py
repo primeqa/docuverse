@@ -1,4 +1,16 @@
 class SearchCorpus(object):
+    """
+    A class for processing and managing a corpus of documents.
+
+    This class reads, parses, and provides utility functions for handling document
+    corpora. It supports reading and parsing files (*.tsv) containing text data
+    such as passages or questions with schema fields like `id`, `text`, `title`, etc.
+    The documents can be accessed via indexing, iteration, or length-based operations.
+
+    Attributes:
+        filepaths (List[str]): The paths to the files that contain the document corpus.
+        Documents (List[dict]): A list of parsed documents from the provided file paths.
+    """
     def __init__(self, filepaths):
         self.filepaths = filepaths
         self.documents = []
@@ -7,6 +19,9 @@ class SearchCorpus(object):
     
     def __getitem__(self, index):
         return self.documents[index]
+
+    def __len__(self):
+        return len(self.documents)
 
     @classmethod
     def parse_document(cls, filepath, **kwargs):

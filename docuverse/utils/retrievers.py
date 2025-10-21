@@ -1,10 +1,5 @@
 from typing import Any
-
-from docuverse.engines.reranking.cross_encoder_reranker import CrossEncoderReranker
-from docuverse.engines.reranking.dense_reranker import DenseReranker
-from docuverse.engines.reranking.splade_reranker import SpladeReranker
 from docuverse.engines.search_engine_config_params import RerankerArguments
-
 
 def create_retrieval_engine(retriever_config: dict):
    """
@@ -31,10 +26,10 @@ def create_retrieval_engine(retriever_config: dict):
        pass
    elif name == 'chromadb':
        try:
-           from docuverse.engines.retrieval.vectordb.chromadb import ChromaDBEngine
+           from docuverse.engines.retrieval.chromadb.chromadb_engine import ChromaDBEngine
            engine = ChromaDBEngine(retriever_config)
        except ImportError as e:
-           print("You need to install docuverse_chomadb package.")
+           print("You need to install docuverse_chomadb package (run `pip install -r requirements-chromadb.txt`).")
            raise e
    elif name.startswith('milvus'):
        import docuverse.engines.retrieval.milvus as milvus
@@ -65,10 +60,13 @@ def create_reranker_engine(reranker_config: dict|RerankerArguments):
     if reranker_config.reranker_model is None or name == "none":
         return None
     if name == 'dense':
+        from docuverse.engines.reranking.dense_reranker import DenseReranker
         return DenseReranker(reranker_config)
     elif name == "splade":
+        from docuverse.engines.reranking.splade_reranker import SpladeReranker
         return SpladeReranker(reranker_config)
     elif name == "cross-encoder":
+        from docuverse.engines.reranking.cross_encoder_reranker import CrossEncoderReranker
         return CrossEncoderReranker(reranker_config)
     else:
         raise RuntimeError("The available reranking engine types are 'dense', 'splade', and 'none'.")

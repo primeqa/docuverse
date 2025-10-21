@@ -6,11 +6,13 @@ import os
 
 from copy import deepcopy
 
+from tqdm.auto import tqdm
+
 from docuverse.utils import (
     open_stream,
     file_is_of_type,
     parallel_process,
-    ask_for_confirmation, prepare_for_save_and_backup
+    ask_for_confirmation, prepare_for_save_and_backup, get_param
 )
 from docuverse.engines import SearchData
 
@@ -22,11 +24,12 @@ from docuverse.utils.evaluation_output import EvaluationOutput
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.engines.reranking.bi_encoder_reranker import BiEncoderReranker
 from docuverse.utils.text_tiler import TextTiler
-# from docuverse.utils.timer import timer
+from docuverse.utils.timer import timer
 
 
 class SearchEngine:
     DEFAULT_CACHE_DIR = os.path.join(f"{os.getenv('HOME')}", ".local", "share", "elastic_ingestion")
+    __name = "SearchEngine"
 
     def __init__(self, config_or_path: DocUVerseConfig | str = None, **kwargs):
         self.write_necessary = False
@@ -34,8 +37,15 @@ class SearchEngine:
         self.retriever = None
         self.reranker = None
         self.scorer = None
+        self.name = get_param(kwargs, "name", self.__name)
+        SearchEngine.__name = self.name
+        self.tm = timer(f"{self.name}")
         self.create(config_or_path=config_or_path, **kwargs)
         self.tiler = None
+
+    @staticmethod
+    def get_name():
+        return SearchEngine.__name
 
     def create(self, config_or_path, **kwargs):
         if isinstance(config_or_path, str | dict):
@@ -44,7 +54,12 @@ class SearchEngine:
             self.config = config_or_path
 
         self.reranker = self._create_reranker()
+        if self.reranker is not None:
+            self.tm.add_timing("initialization::reranker")
         self.retriever = self._create_retriever()
+        if self.retriever is not None:
+            self.tm.add_timing("initialization::retriever")
+
 
     def _create_retriever(self) -> RetrievalEngine:
         from docuverse.utils.retrievers import create_retrieval_engine
@@ -125,7 +140,9 @@ class SearchEngine:
             if not os.path.exists(self.config.cache_dir):
                 os.makedirs(self.config.cache_dir)
             try:
+                self.tm.mark()
                 self.write_output(values, cache_file)
+                self.tm.add_timing("write_output")
             except Exception as e:
                 print(f"Failed to write cache file {cache_file}: {e}")
 
@@ -139,12 +156,17 @@ class SearchEngine:
         prepare_for_save_and_backup(self.config.output_file, overwrite)
         if output_file is None:
             output_file = self.config.output_file
+        if not os.path.exists(os.path.dirname(output_file)):
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
         if file_is_of_type(output_file, extensions=".json"):
-            if not os.path.exists(os.path.dirname(output_file)):
-                os.makedirs(os.path.dirname(output_file), exist_ok=True)
-            with open(output_file, "w") as outfile:
+            # with open(output_file, "w") as outfile:
+            with open_stream(output_file, write=True) as outfile:
                 outp = [r.as_dict() for r in output]
                 outfile.write(json.dumps(outp, indent=2))
+        elif file_is_of_type(output_file, extensions=".jsonl"):
+            with open_stream(output_file, write=True) as outfile:
+                for r in output:
+                    outfile.write(json.dumps(r.as_dict()) + "\n")
         elif file_is_of_type(output_file, extensions=".pkl"):
             with open_stream(output_file, write=True, binary=True) as outfile:
                 pickle.dump(output, outfile)
@@ -157,9 +179,24 @@ class SearchEngine:
         res = []
         if file_is_of_type(filename, ".json"):
             with open(filename, "r") as inp:
-                output = orjson.loads("".join(inp.readlines()))
-                res = [SearchResult(SearchQueries.Query(template=query_template, **o['question']),
-                                    o['retrieved_passages']) for o in output]
+                try:
+                    output = orjson.loads("".join(inp.readlines()))
+                    res = [SearchResult(SearchQueries.Query(template=query_template, **o['question']),
+                                        o['retrieved_passages']) for o in output]
+                except orjson.JSONDecodeError as e:
+                    print(f"Error parsing JSON file {filename}: {str(e)}")
+                    raise
+        elif file_is_of_type(filename, ".jsonl"):
+            with open(filename, "r") as inp:
+                for i, line in tqdm(enumerate(inp), desc="Reading output"):
+                    try:
+                        o = json.loads(line)
+                        res.append(SearchResult(SearchQueries.Query(template=query_template, **o['question']),
+                                                o['retrieved_passages']))
+                    except json.JSONDecodeError as e:
+                        print(f"Error parsing JSONL line {i}, error: {str(e)}, json: {line}")
+                        continue
+
         elif file_is_of_type(filename, ".pkl"):
             res = pickle.load(open_stream(filename, binary=True))
         return res

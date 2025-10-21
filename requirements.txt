@@ -6,10 +6,10 @@ python-dotenv~=1.0.1
 numpy~=2.2.5
 # urllib3~=1.26.18
 urllib3~=2.4.0
-torch~=2.7.1
+torch~=2.9.0
 multiprocess~=0.70.18;platform_system=="Darwin"
 tqdm~=4.67.1
-transformers~=4.52.4
+transformers~=4.56.2
 orjson~=3.10.18
 pydantic_core~=2.27.2
 simple_colors~=0.1.5

@@ -3,5 +3,15 @@
 	"host": "localhost",
 	"port": 19530,
 	"user": ""
+    },
+    "euler": {
+	"host": "euler.watson.ibm.com",
+	"port": 19530,
+	"user": ""
+    },
+    "cauchy": {
+	"host": "cauchy.watson.ibm.com",
+	"port": 19530,
+	"user": ""
     }
 }

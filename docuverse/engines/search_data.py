@@ -297,7 +297,8 @@ class SearchData:
     def read_cache_file_if_needed(cache_file_name, input_file):
         passages = []
 
-        if os.path.exists(cache_file_name) and os.path.getmtime(cache_file_name) > os.path.getmtime(input_file):
+        if (input_file is None or
+                os.path.exists(cache_file_name) and os.path.getmtime(cache_file_name) > os.path.getmtime(input_file)):
             input_stream = open_stream(cache_file_name, write=False, binary=True)
             # for line in tqdm(input_stream, desc="Reading cache file:"):
             #     passages.append(orjson.loads(line.decode('utf-8'))
@@ -595,13 +596,28 @@ class SearchData:
         try:
             with open_stream(filename) as in_file:
                 if file_is_of_type(filename, extensions=".tsv"):
-                    csv_reader = csv.DictReader(in_file, delimiter="\t")
-                    data = [doc for doc in at_most(csv_reader, max_num_docs)]
-                    # Try to address some list formatting within tsv
-                    for doc in data:
-                        for key, val in doc.items():
-                            if val.find("[") >= 0:
-                                doc[key] = val.replace("[", "").replace("]", "").replace(",","").replace("'","")
+                    # csv_reader = csv.DictReader(in_file, delimiter="\t")
+                    # data = [doc for doc in at_most(csv_reader, max_num_docs)]
+                    # # Try to address some list formatting within tsv
+                    # for doc in data:
+                    #     for key, val in doc.items():
+                    #         if val.find("[") >= 0:
+                    #             doc[key] = val.replace("[", "").replace("]", "").replace(",","").replace("'","").split(" ")
+                    def convert_to_list(val):
+                        try:
+                            val = [str(s) for s in ast.literal_eval(val)]
+                        except:
+                            pass
+                        return val
+                    import pandas as pd
+                    import ast
+                    indata = pd.read_csv(filename, sep="\t")
+                    for key in indata.keys():
+                        if isinstance(indata[key], str) and indata[key].find("[") >= 0:
+                            indata[key] = indata[key].map(convert_to_list)
+                        # if '[' in " ".join(indata[key][:10]):
+                        #     indata[key] = indata[key].map(lambda x: ast.literal_eval(x))
+                    data = indata.to_dict(orient="records")
                 elif file_is_of_type(filename, extensions=".csv"):
                     csv_reader = csv.DictReader(in_file, delimiter=",")
                     data = [doc for doc in at_most(csv_reader, max_num_docs)]
