@@ -6,6 +6,8 @@ import os
 
 from copy import deepcopy
 
+from tqdm.auto import tqdm
+
 from docuverse.utils import (
     open_stream,
     file_is_of_type,
@@ -177,15 +179,24 @@ class SearchEngine:
         res = []
         if file_is_of_type(filename, ".json"):
             with open(filename, "r") as inp:
-                output = orjson.loads("".join(inp.readlines()))
-                res = [SearchResult(SearchQueries.Query(template=query_template, **o['question']),
-                                    o['retrieved_passages']) for o in output]
+                try:
+                    output = orjson.loads("".join(inp.readlines()))
+                    res = [SearchResult(SearchQueries.Query(template=query_template, **o['question']),
+                                        o['retrieved_passages']) for o in output]
+                except orjson.JSONDecodeError as e:
+                    print(f"Error parsing JSON file {filename}: {str(e)}")
+                    raise
         elif file_is_of_type(filename, ".jsonl"):
             with open(filename, "r") as inp:
-                for line in inp:
-                    o = orjson.loads(line)
-                    res.append(SearchResult(SearchQueries.Query(template=query_template, **o['question']),
-                                            o['retrieved_passages']))
+                for i, line in tqdm(enumerate(inp), desc="Reading output"):
+                    try:
+                        o = json.loads(line)
+                        res.append(SearchResult(SearchQueries.Query(template=query_template, **o['question']),
+                                                o['retrieved_passages']))
+                    except json.JSONDecodeError as e:
+                        print(f"Error parsing JSONL line {i}, error: {str(e)}, json: {line}")
+                        continue
+
         elif file_is_of_type(filename, ".pkl"):
             res = pickle.load(open_stream(filename, binary=True))
         return res
