@@ -15,6 +15,7 @@ from scipy.optimize import minimize
 from scipy.special import expit
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import KFold
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -116,7 +117,7 @@ class TemperatureScaling:
             return nll
         
         # Find optimal temperature
-        result = minimize(objective, x0=1.0, bounds=[(0.01, 10.0)], method='L-BFGS-B')
+        result = minimize(objective, x0=1.0, bounds=[(0.01, 1000.0)], method='L-BFGS-B')
         self.temperature = result.x[0]
         
         return self
@@ -266,65 +267,132 @@ class ProbabilityCalibrator:
         self.best_method = None
         self.results = {}
     
-    def calibrate(self, probs, labels, method='auto'):
+    def calibrate(self, probs, labels, dev_probs=None, dev_labels=None, method='auto'):
         """
-        Calibrate probabilities using the specified method
-        
+        Calibrates the given probability predictions using the specified method or chooses the best
+        method automatically using 10-fold cross validation. The method adjusts the predicted 
+        probabilities to better match the empirical likelihood of the outcomes.
+
         Args:
-            probs: Predicted probabilities (numpy array)
-            labels: True labels (numpy array)
-            method: Calibration method to use. Options:
-                   'auto' - automatically choose best method (default)
-                   'temperature_scaling' - use temperature scaling
-                   'platt_scaling' - use Platt scaling
-                   'isotonic' - use isotonic regression
-        
+            probs (np.ndarray): Array of predicted probabilities. It should be a 1-dimensional
+                array or will be flattened to 1D.
+            labels (np.ndarray): Array of true labels corresponding to the predicted probabilities.
+                It should be a 1-dimensional array or will be flattened to 1D.
+            dev_probs (np.ndarray, optional): Array of development set predicted probabilities.
+                Default is None. If None, the `probs` array is used instead.
+            dev_labels (np.ndarray, optional): Array of development set true labels corresponding
+                to the development set predicted probabilities. Default is None. If None, the
+                `labels` array is used instead.
+            method (str, optional): Method to use for calibration. If 'auto', all available methods
+                will be evaluated and the best one will be selected. If a specific method name is
+                provided, only that method will be used. Default is 'auto'.
+
         Returns:
-            Calibrated probabilities (numpy array)
+            dict: A dictionary containing the calibrated probabilities for each method evaluated.
+                If 'auto' is specified for the method, it also includes the best-calibrated
+                probabilities and cross-validation scores.
+
+        Raises:
+            ValueError: If a method is specified that is not recognized or supported.
         """
         probs = np.asarray(probs).flatten()
         labels = np.asarray(labels).flatten()
-        
+        if dev_probs is not None:
+            dev_probs = np.asarray(dev_probs).flatten()
+            dev_labels = np.asarray(dev_labels).flatten()
+        else:
+            dev_probs = probs
+            dev_labels = labels
+
         # Calculate original ECE
         original_ece = self.ece_calc.calculate(probs, labels)
-        
+
         if method == 'auto':
-            # Try all methods and choose the best
+            # Try all methods with cross validation
             best_ece = original_ece
             best_calibrated = probs.copy()
-            
+            calibrated_dev_probs = {}
+            calibrated_test_probs = {}
+            calibrated_test_ece = {}
+            calibrated_dev_ece = {}
+            cv_scores = {}
+
+            kf = KFold(n_splits=10, shuffle=True, random_state=42)
+
             for method_name, calibrator in self.methods.items():
                 try:
-                    calibrated = calibrator.fit_transform(probs, labels)
-                    ece = self.ece_calc.calculate(calibrated, labels)
-                    
+                    # Perform cross validation
+                    fold_scores = []
+                    for train_idx, val_idx in kf.split(dev_probs):
+                        # Split data
+                        train_probs = dev_probs[train_idx]
+                        train_labels = dev_labels[train_idx]
+                        val_probs = dev_probs[val_idx]
+                        val_labels = dev_labels[val_idx]
+
+                        # Train on fold
+                        calibrator.fit(train_probs, train_labels)
+
+                        # Evaluate on validation
+                        val_calibrated = calibrator.transform(val_probs)
+                        fold_ece = self.ece_calc.calculate(val_calibrated, val_labels)
+                        fold_scores.append(fold_ece)
+
+                    # Store cross validation scores
+                    cv_scores[method_name] = {
+                        'mean': np.mean(fold_scores),
+                        'std': np.std(fold_scores),
+                        'scores': fold_scores
+                    }
+
+                    # Fit on full dev set and transform test set
+                    calibrated_dev_probs[method_name] = calibrator.fit_transform(dev_probs, dev_labels)
+                    calibrated_dev_ece[method_name] = self.ece_calc.calculate(calibrated_dev_probs[method_name],
+                                                                              dev_labels)
+                    calibrated_test_probs[method_name] = calibrator.transform(probs)
+                    calibrated_test_ece[method_name] = self.ece_calc.calculate(calibrated_test_probs[method_name],
+                                                                               labels)
+
+                    # Use mean CV score for method selection
+                    ece = cv_scores[method_name]['mean']
+
                     self.results[method_name] = {
                         'ece': ece,
-                        'improvement': original_ece - ece
+                        'improvement': original_ece - ece,
+                        'cv_scores': cv_scores[method_name]
                     }
-                    
+
                     if ece < best_ece:
                         best_ece = ece
-                        best_calibrated = calibrated
+                        best_calibrated = calibrated_test_probs[method_name]
                         self.best_method = method_name
+
                 except Exception as e:
                     print(f"Warning: {method_name} failed with error: {e}")
-                    self.results[method_name] = {'ece': np.inf, 'improvement': -np.inf}
-            
+                    self.results[method_name] = {
+                        'ece': np.inf,
+                        'improvement': -np.inf,
+                        'cv_scores': {'mean': np.inf, 'std': np.inf, 'scores': []}
+                    }
+
             if self.best_method is None:
                 self.best_method = 'none (original)'
                 best_calibrated = probs
-            
+
             self.results['original'] = {'ece': original_ece, 'improvement': 0.0}
-            
-            return best_calibrated
+
+            return {
+                'test': {'probs': calibrated_test_probs, 'ece': calibrated_test_ece},
+                'dev': {'probs': calibrated_dev_probs, 'ece': calibrated_dev_ece},
+                'cv_scores': cv_scores
+            }
         else:
             # Use specified method
             if method not in self.methods:
                 raise ValueError(f"Unknown method: {method}. Choose from {list(self.methods.keys())} or 'auto'")
-            
-            calibrated = self.methods[method].fit_transform(probs, labels)
-            calibrated_ece = self.ece_calc.calculate(calibrated, labels)
+
+            calibrated_probs = {method: self.methods[method].fit_transform(probs, labels)}
+            calibrated_ece = {method: self.ece_calc.calculate(calibrated_probs, labels)}
             
             self.results = {
                 'original': {'ece': original_ece, 'improvement': 0.0},
@@ -332,7 +400,7 @@ class ProbabilityCalibrator:
             }
             self.best_method = method
             
-            return calibrated
+            return {'test': {'probs': calibrated_probs, 'ece': calibrated_ece}}
     
     def print_results(self):
         """Print calibration results"""
@@ -428,7 +496,7 @@ if __name__ == "__main__":
     
     # Perform calibration (automatically chooses best method)
     print("\nPerforming calibration...")
-    calibrated_probs = calibrator.calibrate(raw_probs, true_labels, method='auto')
+    calibrated_probs = calibrator.calibrate(raw_probs, true_labels, method='auto')['test']['probs']
     
     # Print results
     calibrator.print_results()

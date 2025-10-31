@@ -128,36 +128,9 @@ class NullUndefined(Undefined):
   def __getattr__(self, key):
     return ''
 
-# def read_config_file(config_file):
-#     if not os.path.exists(config_file):
-#         config_file = os.path.join(get_config_dir(os.path.dirname(config_file)), os.path.basename(config_file))
-#     config = {}
-#     if config_file.endswith(".yml") or config_file.endswith(".yaml"):
-#         with open(config_file, "r") as f:
-#             config = yaml.safe_load(f)
-#     elif config_file.endswith(".json"):
-#         with open(config_file, "r") as f:
-#             config = json.load(f)
-#     else:
-#         raise RuntimeError(f"Config file type not supported: {config_file}")
-#     # Hack to resolve variables
-#     not_done = True
-#     num_iters=0
-#     config = Template(config, undefined=NullUndefined).render()
-#     # while not_done:
-#     #     tconfig = copy.deepcopy(config)
-#     #     not_done = replace(local_dict=config, global_dict=config, parent_key="")
-#     #     num_iters += 1
-#     #     if tconfig==config:
-#     #         break
-#     #     if num_iters > 10:
-#     #         raise RuntimeError(f"Could not resolve the variables in {config_file}")
-#     return config
-
-
 # Constants
 
-def resolve_variable(global_dict, variable_name, parent_key):
+def _resolve_variable(global_dict, variable_name, parent_key):
     """
     Resolve a variable by searching through parent keys in the configuration.
     
@@ -188,7 +161,7 @@ def resolve_variable(global_dict, variable_name, parent_key):
         parents = parents[:-1]
 
 
-def process_dictionary(local_dict, global_dict, parent_key=""):
+def _process_dictionary(local_dict, global_dict, parent_key=""):
     """
     Process a dictionary to resolve templated variables.
     
@@ -211,7 +184,7 @@ def process_dictionary(local_dict, global_dict, parent_key=""):
 
             while match:
                 var_name = match.group(1)
-                resolved_value = resolve_variable(global_dict, var_name, parent_key)
+                resolved_value = _resolve_variable(global_dict, var_name, parent_key)
 
                 # Check if the resolved value itself contains variables
                 if isinstance(resolved_value, str) and "{{" in resolved_value:
@@ -227,7 +200,7 @@ def process_dictionary(local_dict, global_dict, parent_key=""):
         elif isinstance(value, dict):
             # Process nested dictionaries
             next_parent = f"{parent_key}.{key}" if parent_key else key
-            nested_unresolved = process_dictionary(value, global_dict, next_parent)
+            nested_unresolved = _process_dictionary(value, global_dict, next_parent)
             has_unresolved = has_unresolved or nested_unresolved
 
     return has_unresolved
@@ -255,17 +228,34 @@ def load_config_from_file(file_path):
     else:
         raise RuntimeError(f"Config file type not supported: {file_path}")
 
-def is_scalar(value):
+def _is_scalar(value):
     """Check if a value is a scalar (non-iterable or string). A bit of a over-caution, but better safe than sorry."""
     scalar_types = (int, float, str, bool, complex, type(None))
     return isinstance(value, scalar_types)
 
 
-def replace_leaf_keys(config: dict[str, Any], override_vals: dict[str, str]) -> dict[str, Any]:
+def _replace_leaf_keys(config: dict[str, Any], override_vals: dict[str, str]) -> dict[str, Any]:
+    """
+    Recursively replaces scalar leaf values in a nested dictionary with values
+    from the override_vals dictionary. If a key in the override_vals dictionary
+    matches a scalar leaf key in the config dictionary, the leaf value in config
+    will be replaced with the corresponding value from override_vals.
+
+    Args:
+        config (dict[str, Any]): A nested dictionary with scalar leaf values
+            that may be replaced.
+        override_vals (dict[str, str]): A dictionary where keys correspond
+            to the scalar keys in the config dictionary that need to be
+            replaced, and values are the new values to assign.
+
+    Returns:
+        dict[str, Any]: The updated dictionary with the specified scalar
+        leaf values replaced by the override values.
+    """
     for key, value in config.items():
         if isinstance(value, dict):
-            config[key] = replace_leaf_keys(value, override_vals)
-        elif is_scalar(value):
+            config[key] = _replace_leaf_keys(value, override_vals)
+        elif _is_scalar(value):
             if key in override_vals:
                 config[key] = override_vals[key]
     return config
@@ -302,7 +292,7 @@ def read_config_file(config_file, override_vals: dict[str, str]=None) -> dict[st
     # Load configuration from file
     config = load_config_from_file(config_file)
     if override_vals is not None:
-        config = replace_leaf_keys(config, override_vals)
+        config = _replace_leaf_keys(config, override_vals)
 
     # Resolve variables in the configuration
     iterations = 0
@@ -310,7 +300,7 @@ def read_config_file(config_file, override_vals: dict[str, str]=None) -> dict[st
 
     while has_unresolved and iterations < MAX_RESOLUTION_ITERATIONS:
         previous_config = copy.deepcopy(config)
-        has_unresolved = process_dictionary(config, config)
+        has_unresolved = _process_dictionary(config, config)
         iterations += 1
 
         # If no changes were made in this iteration, we're done
@@ -391,6 +381,41 @@ def file_is_of_type(input_file, extensions: Union[str, List[str]]):
     return any(input_file.endswith(f"{ext[0]}{ext[1]}")
                for ext in itertools.product(extensions, ['', ".bz2", ".gz", ".xz"]))
 
+def _parallel_process_worker(inqueue, d, thread_number, size, curr_size, lock, process_func, post_func, post_label, msg):
+    """Module-level worker function for parallel_process to enable pickling."""
+    import multiprocessing as mp
+    from tqdm import tqdm
+    import queue
+
+    pid = mp.current_process().pid
+    with tqdm(desc=f"{msg}/thread {thread_number}", leave=False,
+              position=thread_number+1, total=2*size) as tk1:
+        while True:
+            try:
+                id, text = inqueue.get(block=True, timeout=1)
+                with lock:
+                    curr_size.value -= 1
+            except queue.Empty:
+                break
+            except Exception as e:
+                break
+            try:
+                result = process_func(text)
+                if post_func is not None:
+                    if isinstance(result[0], dict):
+                        result = [{**item,
+                                  post_label: post_func(item)}
+                                 for item in result]
+                    else:
+                        setattr(result, post_label, post_func(result))
+                d[id] = result
+                tk1.update(1)
+            except ImportError as e:
+                print(f"Error in thread {thread_number}: {e}")
+                break
+            except Exception as e:
+                d[id] = []
+
 def parallel_process(process_func, data, num_threads, post_func=None, post_label=None,
                      msg="Processing result:"):
     """
@@ -431,6 +456,33 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
 
     if num_threads <= 1:
         return [apply_funcs(dt) for dt in tqdm(data, desc=msg, smoothing=1)]
+    
+    # Set spawn method for CUDA compatibility
+    import multiprocessing as mp
+    original_start_method = mp.get_start_method()
+    
+    try:
+        # Set spawn start method if not already set
+        if original_start_method != 'spawn':
+            try:
+                mp.set_start_method('spawn', force=True)
+            except RuntimeError:
+                # If we can't change the start method, create a new context
+                ctx = mp.get_context('spawn')
+                Queue = ctx.Queue
+                Manager = ctx.Manager
+                Process = ctx.Process
+            else:
+                from multiprocessing import Queue, Manager, Process
+        else:
+            from multiprocessing import Queue, Manager, Process
+    except Exception:
+        # Fallback to creating a spawn context
+        ctx = mp.get_context('spawn')
+        Queue = ctx.Queue
+        Manager = ctx.Manager
+        Process = ctx.Process
+    
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     num_items = len(data)
@@ -439,29 +491,6 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     manager = Manager()
     d = manager.dict()
     print(f"Created dictionary: {d}")
-    def processor(inqueue, d, thread_number, size, curr_size, lock):
-        pid = mp.current_process().pid
-        with tqdm(desc=f"{msg}/thread {thread_number}", leave=False,
-                  position=thread_number+1, total=2*size) as tk1:
-            while True:
-                try:
-                    id, text = inqueue.get(block=True, timeout=1)
-                    with lock:
-                        curr_size.value -= 1
-                except queue.Empty:
-                    break
-                except Exception as e:
-                    break
-                try:
-                    res = apply_funcs(text)
-                    d[id] = res
-                    tk1.update(1)
-                except ImportError as e:
-                    print(f"Error in thread {thread_number}: {e}")
-                    break
-                except Exception as e:
-                    d[id] = []
-            # tk1.write(f"Thread {thread_number} finished")
 
     num_docs = len(data)
     for i, doc in tqdm(enumerate(data), desc="Adding docs:"):
@@ -473,7 +502,7 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     curr_size = Value('i', num_docs)
     lock = Lock()
     for i in range(num_threads):
-        p = Process(target=processor, args=(doc_queue, d, i, num_docs/num_threads, curr_size, lock))
+        p = Process(target=_parallel_process_worker, args=(doc_queue, d, i, num_docs/num_threads, curr_size, lock, process_func, post_func, post_label, msg))
         processes.append(p)
         p.start()
     # tk.write("Running")
@@ -491,6 +520,15 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
         # tk.write(f"Process {i} joined")
     tk.clear()
     tk.close()
+    
+    try:
+        # Attempt to restore original start method (may not work in all cases)
+        if original_start_method != 'spawn':
+            mp.set_start_method(original_start_method, force=True)
+    except RuntimeError:
+        # It's okay if we can't restore it
+        pass
+    
     return list(d[i] for i in range(num_items))
 
 def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes') -> str:

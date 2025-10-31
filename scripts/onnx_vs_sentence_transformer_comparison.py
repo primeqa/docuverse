@@ -1,5 +1,6 @@
 import argparse
 import json
+import statistics
 
 import numpy as np
 # import onnxruntime as ort
@@ -12,7 +13,8 @@ import os
 
 from docuverse.utils import open_stream
 from optimum.onnxruntime import ORTModelForFeatureExtraction
-
+import onnxruntime as ort
+from transformers import AutoTokenizer
 
 
 def load_onnx_model(onnx_model_path: str, device: str = 'cuda'):
@@ -21,9 +23,18 @@ def load_onnx_model(onnx_model_path: str, device: str = 'cuda'):
         raise FileNotFoundError(f"ONNX model file not found: {onnx_model_path}")
     
     try:
-        ort_model = ORTModelForFeatureExtraction.from_pretrained(onnx_model_path)
-        ort_model.to(device)
-        return ort_model
+        print("Loading tokenizer...")
+        tokenizer = AutoTokenizer.from_pretrained(onnx_model_path)
+
+        # Load ONNX model
+        print("Loading ONNX model...")
+        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if device == 'cuda' else ['CPUExecutionProvider']
+        session = ort.InferenceSession(os.path.join(onnx_model_path, "model.onnx"), providers=providers)
+
+        # ort_model = ORTModelForFeatureExtraction.from_pretrained(onnx_model_path)
+        # ort_model.to(device)
+        # return ort_model
+        return session, tokenizer
     except Exception as e:
         raise RuntimeError(f"Error loading ONNX model: {e}")
 
@@ -31,57 +42,72 @@ def load_onnx_model(onnx_model_path: str, device: str = 'cuda'):
 def load_sentence_transformer(model_name: str, device='cuda'):
     """Load a SentenceTransformer model."""
     try:
-        model = SentenceTransformer(model_name, device=device)
+        # Force eager attention on CPU to avoid Flash Attention issues
+        model_kwargs = {}
+        if device == 'cpu':
+            model_kwargs['model_kwargs'] = {'attn_implementation': 'eager'}
+
+        model = SentenceTransformer(model_name, device=device, **model_kwargs)
         return model
     except Exception as e:
         raise RuntimeError(f"Error loading SentenceTransformer model: {e}")
 
 
-def read_sentences(file_path: str) -> List[str]:
-    """Read sentences from a file, one per line."""
+def read_sentences(file_path: str, max_text_length: int = None) -> List[str]:
+    """Read sentences from a file, one per line.
+
+    Args:
+        file_path: Path to input file
+        max_text_length: Maximum allowed text length (optional)
+    """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Input file not found: {file_path}")
-    
-    # with open(file_path, "r", encoding="utf-8") as f:
-    #     sentences = [line.strip() for line in f if line.strip()]
+
     with open_stream(file_path) as f:
-        sentences = [json.loads(s)['text'] for s in f.readlines()]
+        lines = f.readlines()
+
+    # Try to parse as JSONL first
+    try:
+        sentences = [json.loads(s)['text'] for s in lines if s.strip()]
+    except (json.JSONDecodeError, KeyError):
+        # Fall back to plain text (one line per sentence)
+        sentences = [line.strip() for line in lines if line.strip()]
+
+    if max_text_length:
+        sentences = [s[:max_text_length] if len(s)>max_text_length else s for s in sentences]
 
     return sentences
 
 
 def get_onnx_embeddings(onnx_model, tokenizer,
-                        sentences: List[str], batch_size: int = 128) -> Tuple[np.ndarray, float]:
-    """Generate embeddings using the ONNX model."""
-    start_time = time.time()
-    
-    # Process and get embeddings
-    all_embeddings = []
-    batches = [sentences[i:i + batch_size] for i in range(0, len(sentences), batch_size)]
+                        batch: List[str]) -> np.ndarray:
+    """Generate embeddings using the ONNX model for a single batch."""
+    inputs = tokenizer(batch, padding=True, truncation=True, return_tensors="np")
 
-    for batch in tqdm(batches, desc="ONNX embeddings"):
-        inputs = tokenizer(batch, padding=True, truncation=True, return_tensors="np")
-        outputs = onnx_model(**inputs)
-        for cls in outputs[0][:, 0]:
-            # Normalize cls vector to have norm2 = 1  
-            cls = cls / np.linalg.norm(cls)
-            all_embeddings.append(cls)
-    
-    duration = time.time() - start_time
-    return np.array(all_embeddings), duration
+    # Prepare inputs for ONNX Runtime
+    onnx_inputs = {
+        "input_ids": inputs["input_ids"],
+        "attention_mask": inputs["attention_mask"]
+    }
+
+    # Run inference
+    outputs = onnx_model.run(None, onnx_inputs)
+
+    # Extract and normalize CLS embeddings (first token)
+    embeddings = []
+    for cls in outputs[0][:, 0]:
+        cls = cls / np.linalg.norm(cls)
+        embeddings.append(cls)
+
+    return np.array(embeddings)
 
 
-def get_sentence_transformer_embeddings(model, sentences: List[str],
-                                        batch_size: int=128) -> Tuple[np.ndarray, float]:
-    """Generate embeddings using the SentenceTransformer model."""
-    start_time = time.time()
-    
+def get_sentence_transformer_embeddings(model, batch: List[str]) -> np.ndarray:
+    """Generate embeddings using the SentenceTransformer model for a single batch."""
     with torch.no_grad():
-        embeddings = model.encode(sentences, show_progress_bar=True, convert_to_numpy=True,
-                                  batch_size=batch_size)
-    
-    duration = time.time() - start_time
-    return embeddings, duration
+        embeddings = model.encode(batch, show_progress_bar=False, convert_to_numpy=True,
+                                  normalize_embeddings=True)
+    return embeddings
 
 
 def compute_similarity(embeddings1: np.ndarray, embeddings2: np.ndarray) -> Tuple[float, float, float]:
@@ -112,62 +138,94 @@ def main():
     parser.add_argument("--input", required=True, help="Path to the input text file with sentences")
     parser.add_argument("--num_samples", type=int, default=None, help="Number of samples to use (default: all)")
     parser.add_argument("--batch_size", type=int, default=128, help="Batch size for processing (default: 128)")
+    parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"],
+                        help="Device to run models on (default: cuda)")
+    parser.add_argument("--max_text_length", type=int, default=None, help="Maximum text length (default: no limit)")
 
     args = parser.parse_args()
     
     # Load models
     print(f"Loading ONNX model from {args.onnx}")
-    onnx_model = load_onnx_model(args.onnx)
-    
+    onnx_model, tokenizer = load_onnx_model(args.onnx, device=args.device)
+
     print(f"Loading SentenceTransformer model: {args.transformer}")
-    sentence_transformer = load_sentence_transformer(args.transformer)
-    
+    sentence_transformer = load_sentence_transformer(args.transformer, device=args.device)
+
     # Read sentences
-    sentences = read_sentences(args.input)
+    sentences = read_sentences(args.input, args.max_text_length)
     if args.num_samples and args.num_samples < len(sentences):
         print(f"Using {args.num_samples} out of {len(sentences)} sentences")
         sentences = sentences[:args.num_samples]
     else:
         print(f"Using all {len(sentences)} sentences")
-    
-    # Generate embeddings
-    print("\nGenerating embeddings...")
-    onnx_embeddings, onnx_time = get_onnx_embeddings(onnx_model, sentence_transformer.tokenizer, sentences, args.batch_size)
-    transformer_embeddings, transformer_time = get_sentence_transformer_embeddings(sentence_transformer, sentences, args.batch_size)
-    
-    # Check embedding shapes
-    print(f"\nONNX embedding shape: {onnx_embeddings.shape}")
-    print(f"SentenceTransformer embedding shape: {transformer_embeddings.shape}")
-    
-    if onnx_embeddings.shape != transformer_embeddings.shape:
-        print("WARNING: Embedding shapes don't match!")
-        min_dim = min(onnx_embeddings.shape[1], transformer_embeddings.shape[1])
-        onnx_embeddings = onnx_embeddings[:, :min_dim]
-        transformer_embeddings = transformer_embeddings[:, :min_dim]
-        print(f"Truncated to shape: ({onnx_embeddings.shape[0]}, {min_dim})")
-    
-    # Compare performance
+
+    # Calculate and display sentence length statistics
+    lengths = [len(s) for s in sentences]
+    print("\nSentence length statistics:")
+    print(f"Mean length: {statistics.mean(lengths):.1f} chars")
+    print(f"Median length: {statistics.median(lengths):.1f} chars")
+    print(f"Min length: {min(lengths)} chars")
+    print(f"Max length: {max(lengths)} chars")
+    print(f"Std dev: {statistics.stdev(lengths):.1f} chars")
+
+    # Process in batches
+    batches = [sentences[i:i + args.batch_size] for i in range(0, len(sentences), args.batch_size)]
+
+    total_cosine_sim = 0
+    total_mse = 0
+    total_manhattan = 0
+    onnx_time = 0
+    transformer_time = 0
+
+    print("\nProcessing batches...")
+    for i, batch in enumerate(tqdm(batches)):
+        # Generate embeddings for current batch
+        start_time = time.time()
+        onnx_batch_embeddings = get_onnx_embeddings(onnx_model, tokenizer, batch)
+        onnx_time += time.time() - start_time
+
+        start_time = time.time()
+        transformer_batch_embeddings = get_sentence_transformer_embeddings(sentence_transformer, batch)
+        transformer_time += time.time() - start_time
+
+        # Check and adjust embedding shapes if needed
+        if onnx_batch_embeddings.shape != transformer_batch_embeddings.shape:
+            min_dim = min(onnx_batch_embeddings.shape[1], transformer_batch_embeddings.shape[1])
+            onnx_batch_embeddings = onnx_batch_embeddings[:, :min_dim]
+            transformer_batch_embeddings = transformer_batch_embeddings[:, :min_dim]
+
+        # Compute similarities for current batch
+        batch_cosine, batch_mse, batch_manhattan = compute_similarity(
+            onnx_batch_embeddings, transformer_batch_embeddings)
+
+        # Update running averages
+        weight = len(batch) / ((i + 1) * args.batch_size)
+        total_cosine_sim = (total_cosine_sim * (1 - weight)) + (batch_cosine * weight)
+        total_mse = (total_mse * (1 - weight)) + (batch_mse * weight)
+        total_manhattan = (total_manhattan * (1 - weight)) + (batch_manhattan * weight)
+        del onnx_batch_embeddings
+        del transformer_batch_embeddings
+
+    # Report results
     print(f"\nONNX processing time: {onnx_time:.2f} seconds")
     print(f"SentenceTransformer processing time: {transformer_time:.2f} seconds")
-    print(f"Speed improvement: {transformer_time/onnx_time:.2f}x")
-    
-    # Compare embeddings
-    cosine_sim, mse, manhattan = compute_similarity(onnx_embeddings, transformer_embeddings)
+    print(f"Speed improvement: {transformer_time / onnx_time:.2f}x")
+
     print("\nEmbedding Comparison:")
-    print(f"Mean Cosine Similarity: {cosine_sim:.6f} (1.0 is identical)")
-    print(f"Mean Squared Error: {mse:.6f} (0.0 is identical)")
-    print(f"Mean Manhattan Distance: {manhattan:.6f} (0.0 is identical)")
-    
+    print(f"Mean Cosine Similarity: {total_cosine_sim:.6f} (1.0 is identical)")
+    print(f"Mean Squared Error: {total_mse:.6f} (0.0 is identical)")
+    print(f"Mean Manhattan Distance: {total_manhattan:.6f} (0.0 is identical)")
+
     # Analyze results
-    if cosine_sim > 0.99:
+    if total_cosine_sim > 0.99:
         print("\nResult: The models produce very similar embeddings!")
-    elif cosine_sim > 0.95:
+    elif total_cosine_sim > 0.95:
         print("\nResult: The models produce similar embeddings with minor differences.")
     else:
         print("\nResult: There are significant differences between the model outputs.")
-    
+
     # Report potential issues
-    if cosine_sim < 0.9:
+    if total_cosine_sim < 0.9:
         print("\nPotential issues:")
         print("- ONNX conversion might not be exact")
         print("- Models might be using different preprocessing steps")

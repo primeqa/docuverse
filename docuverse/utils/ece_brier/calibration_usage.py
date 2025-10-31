@@ -32,7 +32,7 @@ print(f"Average prediction: {raw_probs.mean():.3f}\n")
 
 # Create calibrator and auto-select best method
 calibrator = ProbabilityCalibrator(n_bins=15)
-calibrated_probs = calibrator.calibrate(raw_probs, true_labels, method='auto')
+calibrated_probs = calibrator.calibrate(raw_probs, true_labels, method='auto')['test']['probs']
 
 # View results
 calibrator.print_results()

@@ -155,3 +155,4 @@ examples/tmp.ipynb
 /experiments/ibm-swsupport/gte-small-setup-256.yaml
 /notebooks/benchmark/
 /notebooks/models/
+/docuverse/utils/yaml_config_reader.py
