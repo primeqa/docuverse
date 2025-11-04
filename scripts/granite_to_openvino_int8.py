@@ -1,20 +1,34 @@
 #!/usr/bin/env python3
 """
-Convert IBM Granite Embedding Model to OpenVINO INT8 Format
+Convert IBM Granite Embedding Model to OpenVINO INT8/INT4 Format
 
 This script converts the ibm-granite/granite-embedding-english-r2 model
-to OpenVINO IR format with INT8 quantization for optimized inference on Intel hardware.
+to OpenVINO IR format with INT8 or INT4 quantization for optimized inference on Intel hardware.
+
+The script uses SentenceTransformers library to load and handle the embedding model,
+which provides a high-level interface with built-in pooling and normalization.
+
+Quantization Options:
+- INT8: Full model quantization with calibration for optimal accuracy/speed balance
+- INT4: Weight-only quantization for maximum compression (4x smaller than FP32)
+- FP32: No quantization (baseline)
 
 COMPATIBILITY NOTE:
 INT8 quantization requires compatible versions of OpenVINO and NNCF:
 - NNCF 2.17.0 is NOT compatible with OpenVINO 2024.6.0+
-- Recommended: OpenVINO 2024.3.0 with NNCF 2.17.0, or OpenVINO 2024.0-2024.3
-- The script will automatically fall back to FP32 if INT8 quantization fails
+- Recommended: OpenVINO 2024.1.0 with NNCF 2.11.0
+- The script will automatically fall back to FP32 if quantization fails
 - FP32 models still provide significant speedup over PyTorch on CPU
 
 To fix INT8 quantization issues:
-1. Downgrade OpenVINO: pip install 'openvino==2024.3.0' 'openvino-dev==2024.3.0'
+1. Use compatible versions: pip install 'openvino==2024.1.0' 'openvino-dev==2024.1.0' 'nncf==2.11.0'
 2. Or use --no_quantize flag to only generate FP32 model
+
+Requirements:
+- sentence-transformers
+- openvino
+- openvino-dev
+- nncf (optional, for INT8/INT4 quantization)
 """
 
 import argparse
@@ -26,7 +40,14 @@ import shutil
 
 import torch
 import numpy as np
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer
+
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    print("Error: sentence-transformers is not installed. Install it with:")
+    print("  pip install sentence-transformers")
+    sys.exit(1)
 
 try:
     import openvino as ov
@@ -59,18 +80,20 @@ def convert_to_openvino(
     model_name: str = "ibm-granite/granite-embedding-english-r2",
     output_dir: str = "./granite-embedding-openvino-int8",
     max_length: int = 512,
-    quantize_int8: bool = True,
+    quantize_int8: bool = False,
+    quantize_int4: bool = False,
     calibration_samples: int = 300
 ) -> str:
     """
-    Convert the Granite embedding model to OpenVINO IR format with INT8 quantization.
+    Convert the Granite embedding model to OpenVINO IR format with optional quantization.
 
     Args:
         model_name: HuggingFace model identifier
         output_dir: Directory to save the OpenVINO model
         max_length: Maximum sequence length for the model
-        quantize_int8: Whether to apply INT8 quantization
-        calibration_samples: Number of samples for calibration dataset
+        quantize_int8: Whether to apply INT8 quantization (full model)
+        quantize_int4: Whether to apply INT4 quantization (weights only)
+        calibration_samples: Number of samples for calibration dataset (INT8 only)
 
     Returns:
         Path to the converted model
@@ -82,21 +105,40 @@ def convert_to_openvino(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Load tokenizer and model
-    print("\n1. Loading tokenizer and model...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(
-        model_name,
-        torch_dtype=torch.float32,
-        attn_implementation="eager"  # Use eager attention for better compatibility
-    )
+    # Load model using SentenceTransformers
+    print("\n1. Loading model with SentenceTransformers...")
+
+    # Try newer 'dtype' parameter first, fall back to 'torch_dtype' for older versions
+    try:
+        st_model = SentenceTransformer(
+            model_name,
+            device='cpu',
+            model_kwargs={
+                'dtype': torch.float32,
+                'attn_implementation': 'eager'  # Use eager attention for ONNX/OpenVINO compatibility
+            }
+        )
+    except TypeError:
+        # Older versions of sentence-transformers use 'torch_dtype' instead of 'dtype'
+        st_model = SentenceTransformer(
+            model_name,
+            device='cpu',
+            model_kwargs={
+                'torch_dtype': torch.float32,
+                'attn_implementation': 'eager'
+            }
+        )
 
     # Set model to evaluation mode
-    model.eval()
+    st_model.eval()
 
-    # Save tokenizer
-    tokenizer.save_pretrained(output_dir)
-    print(f"✓ Tokenizer saved to {output_dir}")
+    # Get the underlying transformer model and tokenizer
+    # SentenceTransformer stores these as _modules
+    tokenizer = st_model.tokenizer
+
+    # Save the entire SentenceTransformer model (includes tokenizer)
+    st_model.save_pretrained(output_dir)
+    print(f"✓ SentenceTransformer model and tokenizer saved to {output_dir}")
 
     # Create example input for conversion
     print("\n2. Creating example input for model conversion...")
@@ -118,9 +160,20 @@ def convert_to_openvino(
             "attention_mask": example_inputs["attention_mask"]
         }
 
+        # Extract the underlying transformer model from SentenceTransformer
+        # For most models, the transformer is the first module
+        if hasattr(st_model, '_modules') and '0' in st_model._modules:
+            transformer_module = st_model._modules['0']
+            if hasattr(transformer_module, 'auto_model'):
+                base_model = transformer_module.auto_model
+            else:
+                base_model = st_model
+        else:
+            base_model = st_model
+
         # Convert using OpenVINO's convert_model
         ov_model = ov.convert_model(
-            model,
+            base_model,
             example_input=input_dict,
             input=[
                 ("input_ids", [1, max_length], np.int64),
@@ -142,7 +195,7 @@ def convert_to_openvino(
 
         with torch.no_grad():
             torch.onnx.export(
-                model,
+                base_model,
                 (example_inputs["input_ids"], example_inputs["attention_mask"]),
                 str(onnx_path),
                 input_names=["input_ids", "attention_mask"],
@@ -168,7 +221,11 @@ def convert_to_openvino(
         if onnx_path.exists():
             onnx_path.unlink()
 
-    # Apply INT8 quantization if requested
+    # Apply quantization if requested
+    if quantize_int8 and quantize_int4:
+        print("\nWarning: Both INT8 and INT4 quantization requested. Using INT8 (higher accuracy).")
+        quantize_int4 = False
+
     if quantize_int8:
         if nncf is None:
             print("\nWarning: NNCF not available. Skipping INT8 quantization.")
@@ -177,7 +234,7 @@ def convert_to_openvino(
 
         print("\n4. Applying INT8 quantization...")
         int8_model_path = quantize_model_int8(
-            model=model,
+            model=base_model,
             tokenizer=tokenizer,
             ov_model=ov_model,
             output_path=output_path,
@@ -185,6 +242,19 @@ def convert_to_openvino(
             calibration_samples=calibration_samples
         )
         return int8_model_path
+
+    if quantize_int4:
+        if nncf is None:
+            print("\nWarning: NNCF not available. Skipping INT4 quantization.")
+            print("Install with: pip install nncf")
+            return str(fp32_model_path)
+
+        print("\n4. Applying INT4 weight quantization...")
+        int4_model_path = quantize_model_int4(
+            ov_model=ov_model,
+            output_path=output_path
+        )
+        return int4_model_path
 
     return str(fp32_model_path)
 
@@ -315,16 +385,69 @@ def quantize_model_int8(
         return str(output_path / "granite_embedding_fp32.xml")
 
 
-def test_openvino_model(model_path: str, tokenizer_path: str, is_int8: bool = False) -> None:
+def quantize_model_int4(
+    ov_model,
+    output_path: Path
+) -> str:
+    """
+    Quantize the OpenVINO model to INT4 using weight compression.
+
+    INT4 quantization uses weight-only compression which provides:
+    - Maximum compression (up to 4x smaller than FP32)
+    - No calibration data required
+    - Faster inference with minimal accuracy loss
+    - Lower memory bandwidth requirements
+
+    Args:
+        ov_model: OpenVINO model
+        output_path: Directory to save the quantized model
+
+    Returns:
+        Path to the quantized model
+    """
+    print("  Applying INT4 weight compression...")
+
+    try:
+        # Apply INT4 weight compression
+        compressed_model = nncf.compress_weights(
+            ov_model,
+            mode=nncf.CompressWeightsMode.INT4_SYM,  # Symmetric INT4 quantization
+        )
+
+        # Save compressed model
+        int4_model_path = output_path / "granite_embedding_int4.xml"
+        ov.save_model(compressed_model, str(int4_model_path))
+        print(f"✓ INT4 compressed model saved to {int4_model_path}")
+
+        # Get file sizes for comparison
+        fp32_path = output_path / "granite_embedding_fp32.xml"
+        if fp32_path.exists():
+            fp32_size = fp32_path.stat().st_size + (output_path / "granite_embedding_fp32.bin").stat().st_size
+            int4_size = int4_model_path.stat().st_size + (output_path / "granite_embedding_int4.bin").stat().st_size
+
+            print(f"\n  Model size comparison:")
+            print(f"    FP32: {fp32_size / (1024*1024):.2f} MB")
+            print(f"    INT4: {int4_size / (1024*1024):.2f} MB")
+            print(f"    Compression ratio: {fp32_size / int4_size:.2f}x")
+
+        return str(int4_model_path)
+
+    except Exception as e:
+        print(f"\n  ⚠ Error during INT4 compression: {e}")
+        print("\n  Falling back to FP32 model...")
+        return str(output_path / "granite_embedding_fp32.xml")
+
+
+def test_openvino_model(model_path: str, tokenizer_path: str, model_type: str = "FP32") -> None:
     """
     Test the converted OpenVINO model to ensure it works correctly.
 
     Args:
         model_path: Path to the OpenVINO model (.xml file)
         tokenizer_path: Path to the tokenizer directory
-        is_int8: Whether the model is INT8 quantized
+        model_type: Type of model (FP32, INT8, or INT4)
     """
-    print(f"\n5. Testing converted OpenVINO {'INT8' if is_int8 else 'FP32'} model...")
+    print(f"\n5. Testing converted OpenVINO {model_type} model...")
 
     try:
         # Initialize OpenVINO runtime
@@ -451,7 +574,7 @@ def get_model_info(model_path: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert IBM Granite embedding model to OpenVINO INT8 format"
+        description="Convert IBM Granite embedding model to OpenVINO INT8/INT4 format"
     )
     parser.add_argument(
         "--model_name",
@@ -469,16 +592,30 @@ def main():
         default=512,
         help="Maximum sequence length (default: 512)"
     )
-    parser.add_argument(
+
+    # Quantization options
+    quantize_group = parser.add_mutually_exclusive_group()
+    quantize_group.add_argument(
+        "--int8",
+        action="store_true",
+        help="Apply INT8 quantization (default if no option specified)"
+    )
+    quantize_group.add_argument(
+        "--int4",
+        action="store_true",
+        help="Apply INT4 weight compression for maximum size reduction"
+    )
+    quantize_group.add_argument(
         "--no_quantize",
         action="store_true",
-        help="Disable INT8 quantization (keep FP32)"
+        help="Disable quantization (keep FP32)"
     )
+
     parser.add_argument(
         "--calibration_samples",
         type=int,
         default=300,
-        help="Number of samples for calibration dataset (default: 300)"
+        help="Number of samples for calibration dataset (INT8 only, default: 300)"
     )
     parser.add_argument(
         "--test",
@@ -493,12 +630,24 @@ def main():
 
     args = parser.parse_args()
 
+    # Default to INT8 if no quantization option specified
+    if not args.int8 and not args.int4 and not args.no_quantize:
+        args.int8 = True
+
     print("=" * 70)
-    print("IBM GRANITE EMBEDDING MODEL TO OPENVINO INT8 CONVERTER")
+    print("IBM GRANITE EMBEDDING MODEL TO OPENVINO CONVERTER")
     print("=" * 70)
 
     # Check dependencies
     print("\nChecking dependencies...")
+    try:
+        from sentence_transformers import SentenceTransformer
+        import sentence_transformers
+        print(f"  ✓ SentenceTransformers version: {sentence_transformers.__version__}")
+    except ImportError:
+        print("  ✗ SentenceTransformers not found. Install with: pip install sentence-transformers")
+        return 1
+
     try:
         import openvino as ov
         print(f"  ✓ OpenVINO version: {ov.__version__}")
@@ -506,7 +655,7 @@ def main():
         print("  ✗ OpenVINO not found. Install with: pip install openvino openvino-dev")
         return 1
 
-    if not args.no_quantize:
+    if args.int8 or args.int4:
         try:
             import nncf
             print(f"  ✓ NNCF version: {nncf.__version__}")
@@ -520,16 +669,25 @@ def main():
             model_name=args.model_name,
             output_dir=args.output_dir,
             max_length=args.max_length,
-            quantize_int8=not args.no_quantize,
+            quantize_int8=args.int8,
+            quantize_int4=args.int4,
             calibration_samples=args.calibration_samples
         )
+
+        # Determine model type for testing
+        if args.int8:
+            model_type = "INT8"
+        elif args.int4:
+            model_type = "INT4"
+        else:
+            model_type = "FP32"
 
         # Test the model if requested
         if args.test or args.benchmark:
             test_openvino_model(
                 model_path,
                 args.output_dir,
-                is_int8=not args.no_quantize
+                model_type=model_type
             )
 
         # Display model information

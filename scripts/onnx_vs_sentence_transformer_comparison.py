@@ -1,9 +1,10 @@
 import argparse
 import json
 import statistics
+import gc
+import psutil
 
 import numpy as np
-from openvino.runtime import Core
 from sentence_transformers import SentenceTransformer
 from typing import List, Tuple
 import time
@@ -12,9 +13,14 @@ from tqdm import tqdm
 import os
 
 from docuverse.utils import open_stream
-from optimum.onnxruntime import ORTModelForFeatureExtraction
-import onnxruntime as ort
-from transformers import AutoTokenizer
+
+
+def get_memory_usage():
+    """Get current memory usage in MB."""
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024
+
+# Add this at the beginning and end of batches to monitor growth
 
 
 def load_onnx_model(onnx_model_path: str, device: str = 'cuda', num_threads: int = None):
@@ -83,18 +89,24 @@ def read_sentences(file_path: str, max_text_length: int = None) -> List[str]:
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Input file not found: {file_path}")
 
+    sentences = []
     with open_stream(file_path) as f:
-        lines = f.readlines()
-
-    # Try to parse as JSONL first
-    try:
-        sentences = [json.loads(s)['text'] for s in lines if s.strip()]
-    except (json.JSONDecodeError, KeyError):
-        # Fall back to plain text (one line per sentence)
-        sentences = [line.strip() for line in lines if line.strip()]
-
-    if max_text_length:
-        sentences = [s[:max_text_length] if len(s)>max_text_length else s for s in sentences]
+        for line in f:  # Read line by line instead of readlines()
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Try to parse as JSONL first
+            try:
+                text = json.loads(line)['text']
+            except (json.JSONDecodeError, KeyError):
+                # Fall back to plain text
+                text = line
+            
+            if max_text_length and len(text) > max_text_length:
+                text = text[:max_text_length]
+            
+            sentences.append(text)
 
     return sentences
 
@@ -433,6 +445,8 @@ Examples:
     transformer_time = 0
 
     print("\nProcessing batches...")
+    initial_memory = get_memory_usage()
+    
     for i, batch in enumerate(tqdm(batches)):
         # Generate HuggingFace embeddings (baseline)
         start_time = time.time()
@@ -441,6 +455,9 @@ Examples:
 
         onnx_batch_embeddings = None
         openvino_batch_embeddings = None
+        transformer_batch_trimmed = None
+        onnx_trimmed = None
+        openvino_trimmed = None
 
         # Generate ONNX embeddings if available
         if onnx_model is not None:
@@ -454,7 +471,7 @@ Examples:
                 onnx_batch_embeddings = onnx_batch_embeddings[:, :min_dim]
                 transformer_batch_trimmed = transformer_batch_embeddings[:, :min_dim]
             else:
-                transformer_batch_trimmed = transformer_batch_embeddings
+                transformer_batch_trimmed = transformer_batch_embeddings.copy()
 
             # Compute similarities with HuggingFace
             batch_cosine, batch_mse, batch_manhattan = compute_similarity(
@@ -479,9 +496,11 @@ Examples:
             if openvino_batch_embeddings.shape != transformer_batch_embeddings.shape:
                 min_dim = min(openvino_batch_embeddings.shape[1], transformer_batch_embeddings.shape[1])
                 openvino_batch_embeddings = openvino_batch_embeddings[:, :min_dim]
-                transformer_batch_trimmed = transformer_batch_embeddings[:, :min_dim]
+                if transformer_batch_trimmed is None:
+                    transformer_batch_trimmed = transformer_batch_embeddings[:, :min_dim]
             else:
-                transformer_batch_trimmed = transformer_batch_embeddings
+                if transformer_batch_trimmed is None:
+                    transformer_batch_trimmed = transformer_batch_embeddings.copy()
 
             # Compute similarities with HuggingFace
             batch_cosine, batch_mse, batch_manhattan = compute_similarity(
@@ -508,12 +527,25 @@ Examples:
             onnx_openvino_mse = (onnx_openvino_mse * (1 - weight)) + (batch_mse * weight)
             onnx_openvino_manhattan = (onnx_openvino_manhattan * (1 - weight)) + (batch_manhattan * weight)
 
-        # Clean up
-        del transformer_batch_embeddings
-        if onnx_batch_embeddings is not None:
-            del onnx_batch_embeddings
-        if openvino_batch_embeddings is not None:
-            del openvino_batch_embeddings
+            # Comprehensive cleanup (remove gc.collect())
+            del transformer_batch_embeddings
+            if transformer_batch_trimmed is not None:
+                del transformer_batch_trimmed
+            if onnx_batch_embeddings is not None:
+                del onnx_batch_embeddings
+            if onnx_trimmed is not None:
+                del onnx_trimmed
+            if openvino_batch_embeddings is not None:
+                del openvino_batch_embeddings
+            if openvino_trimmed is not None:
+                del openvino_trimmed
+            
+            # Only call GC if memory has grown significantly
+            if i % 50 == 0:  # Check every 50 batches instead of 10
+                current_memory = get_memory_usage()
+                if current_memory > initial_memory * 1.5:  # 50% growth
+                    gc.collect()
+                    print(f"GC triggered at batch {i}, memory: {current_memory:.1f}MB")
 
     # Report results
     print("\n" + "=" * 70)
