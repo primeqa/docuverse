@@ -60,8 +60,10 @@ class SearchQueries(SearchData):
         self.queries.append(q)
 
     @staticmethod
-    def read(query_file, template=default_query_template, **kwargs):
-        return SearchQueries.read_question_data(in_files=query_file, query_template=template, **kwargs)
+    def read(query_file, query_template=default_query_template, **kwargs):
+        if 'query_template' in kwargs:
+            del kwargs['query_template']
+        return SearchQueries.read_question_data(in_files=query_file, query_template=query_template, **kwargs)
 
     @classmethod
     def read_question_data(cls, in_files, fields=None, lang="en",
