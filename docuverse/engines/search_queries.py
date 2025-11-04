@@ -61,7 +61,7 @@ class SearchQueries(SearchData):
 
     @staticmethod
     def read(query_file, template=default_query_template, **kwargs):
-        return SearchQueries.read_question_data(in_files=query_file, template=template, **kwargs)
+        return SearchQueries.read_question_data(in_files=query_file, query_template=template, **kwargs)
 
     @classmethod
     def read_question_data(cls, in_files, fields=None, lang="en",
@@ -92,10 +92,10 @@ class SearchQueries(SearchData):
             if isinstance(in_file, dict|list):
                 question_data = in_file
             elif isinstance(in_file, str):
-                question_data = cls._read_data(in_file)
+                question_data = SearchData._read_data(in_file)
             if 'question_file' in question_data and 'goldstandard_file' in question_data:
                 tfile = get_filename(in_file, question_data['goldstandard_file'])
-                goldstandard = cls._read_data(tfile)
+                goldstandard = SearchData._read_data(tfile)
                 gs_map = {}
                 for gs in goldstandard:
                     qid = get_param(gs, query_template.truth_id)
