@@ -589,8 +589,8 @@ class SearchData:
 
         return passages
 
-    @classmethod
-    def _read_data(self, filename, max_num_docs=-1) -> List[Dict[str, str]]:
+    @staticmethod
+    def _read_data(filename, max_num_docs=-1) -> List[Dict[str, str]]:
         data = None
 
         try:
@@ -613,10 +613,16 @@ class SearchData:
                     import ast
                     indata = pd.read_csv(filename, sep="\t")
                     for key in indata.keys():
-                        if isinstance(indata[key], str) and indata[key].find("[") >= 0:
-                            indata[key] = indata[key].map(convert_to_list)
-                        # if '[' in " ".join(indata[key][:10]):
-                        #     indata[key] = indata[key].map(lambda x: ast.literal_eval(x))
+                            # Check if column has any string values containing '[' and convert it to a list.
+                            # For some reason, that's how arrays are represented in the csv column.
+                            has_bracket_strings = False
+                            for val in indata[key].dropna():
+                                if isinstance(val, str) and '[' in val:
+                                    has_bracket_strings = True
+                                    break
+                            
+                            if has_bracket_strings:
+                                indata[key] = indata[key].map(convert_to_list)
                     data = indata.to_dict(orient="records")
                 elif file_is_of_type(filename, extensions=".csv"):
                     csv_reader = csv.DictReader(in_file, delimiter=",")
