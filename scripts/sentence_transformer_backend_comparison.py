@@ -69,6 +69,11 @@ def load_sentence_transformer_with_backend(model_name: str, backend: str = 'pyto
                 **backend_kwargs
             }
 
+            # Check if model_path points to an XML file
+            if model_path and model_path.endswith('.xml'):
+                openvino_kwargs['file'] = model_path
+                model_path = os.path.dirname(model_path)
+
             model = SentenceTransformer(
                 model_name if os.path.exists(model_name) else model_path,
                 backend='openvino',

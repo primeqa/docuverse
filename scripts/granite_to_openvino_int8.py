@@ -442,9 +442,11 @@ def test_openvino_model(model_path: str, tokenizer_path: str, model_type: str = 
     """
     Test the converted OpenVINO model to ensure it works correctly.
 
+    Uses SentenceTransformers for reference embeddings and comparison.
+
     Args:
         model_path: Path to the OpenVINO model (.xml file)
-        tokenizer_path: Path to the tokenizer directory
+        tokenizer_path: Path to the tokenizer directory (contains saved SentenceTransformer)
         model_type: Type of model (FP32, INT8, or INT4)
     """
     print(f"\n5. Testing converted OpenVINO {model_type} model...")
@@ -453,12 +455,36 @@ def test_openvino_model(model_path: str, tokenizer_path: str, model_type: str = 
         # Initialize OpenVINO runtime
         core = Core()
 
-        # Load model
-        model = core.read_model(model_path)
-        compiled_model = core.compile_model(model, "CPU")
+        # Load OpenVINO model
+        ov_model = core.read_model(model_path)
+        compiled_model = core.compile_model(ov_model, "CPU")
 
-        # Load tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        # Load SentenceTransformer for reference and tokenization
+        print("  Loading SentenceTransformer for reference...")
+        # Use the same model loading parameters as during conversion
+        try:
+            st_model = SentenceTransformer(
+                tokenizer_path,
+                device='cpu',
+                model_kwargs={
+                    'dtype': torch.float32,
+                    'attn_implementation': 'eager'
+                }
+            )
+        except TypeError:
+            # Fallback for older sentence-transformers versions
+            st_model = SentenceTransformer(
+                tokenizer_path,
+                device='cpu',
+                model_kwargs={
+                    'torch_dtype': torch.float32,
+                    'attn_implementation': 'eager'
+                }
+            )
+        st_model.eval()
+
+        # Get the tokenizer from SentenceTransformer
+        tokenizer = st_model.tokenizer
 
         # Test with sample texts
         test_texts = [
@@ -467,9 +493,14 @@ def test_openvino_model(model_path: str, tokenizer_path: str, model_type: str = 
             "Machine learning models can be optimized with OpenVINO."
         ]
 
-        print("Testing with sample texts...")
+        print("Testing with sample texts and comparing with SentenceTransformer...")
+        similarities = []
+
         for i, text in enumerate(test_texts):
-            # Tokenize
+            # Get reference embedding from SentenceTransformer
+            st_embedding = st_model.encode([text], convert_to_numpy=True, normalize_embeddings=False)[0]
+
+            # Tokenize for OpenVINO
             inputs = tokenizer(
                 text,
                 return_tensors="np",
@@ -478,7 +509,7 @@ def test_openvino_model(model_path: str, tokenizer_path: str, model_type: str = 
                 max_length=512
             )
 
-            # Run inference
+            # Run OpenVINO inference
             input_data = {
                 "input_ids": inputs["input_ids"].astype(np.int64),
                 "attention_mask": inputs["attention_mask"].astype(np.int64)
@@ -490,16 +521,29 @@ def test_openvino_model(model_path: str, tokenizer_path: str, model_type: str = 
             output_key = list(result.keys())[0]
             embeddings = result[output_key]
 
-            # Pool embeddings (mean pooling, ignoring padding)
-            attention_mask = inputs["attention_mask"]
-            masked_embeddings = embeddings * attention_mask[:, :, np.newaxis]
-            sum_embeddings = masked_embeddings.sum(axis=1)
-            sum_mask = attention_mask.sum(axis=1, keepdims=True)
-            pooled_embeddings = sum_embeddings / np.maximum(sum_mask, 1e-9)
+            # Use CLS token pooling (first token) to match SentenceTransformer's pooling
+            # The pooling config shows pooling_mode_cls_token: true
+            ov_embedding = embeddings[0, 0, :]  # [batch, sequence, hidden] -> take first token
+
+            # Calculate cosine similarity between OpenVINO and SentenceTransformer
+            ov_norm = np.linalg.norm(ov_embedding)
+            st_norm = np.linalg.norm(st_embedding)
+            cosine_sim = np.dot(ov_embedding, st_embedding) / (ov_norm * st_norm)
+            similarities.append(cosine_sim)
 
             print(f"  Text {i+1}: {text[:50]}...")
-            print(f"    Embedding shape: {pooled_embeddings.shape}")
-            print(f"    Embedding norm: {np.linalg.norm(pooled_embeddings):.4f}")
+            print(f"    OpenVINO embedding norm: {ov_norm:.4f}")
+            print(f"    SentenceTransformer norm: {st_norm:.4f}")
+            print(f"    Cosine similarity: {cosine_sim:.6f}")
+
+        avg_similarity = np.mean(similarities)
+        print(f"\n  Average cosine similarity: {avg_similarity:.6f}")
+        if avg_similarity > 0.99:
+            print("  ✓ Excellent match with SentenceTransformer!")
+        elif avg_similarity > 0.95:
+            print("  ✓ Good match with SentenceTransformer")
+        else:
+            print(f"  ⚠ Warning: Lower similarity ({avg_similarity:.4f}) - may indicate quantization effects")
 
         print("✓ OpenVINO model test completed successfully!")
 
