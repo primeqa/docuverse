@@ -108,11 +108,24 @@ def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_nump
     """Generate embeddings using SentenceTransformer (works with all backends)."""
     with torch.no_grad():
         embeddings = model.encode(
-            batch, 
-            show_progress_bar=False, 
+            batch,
+            show_progress_bar=False,
             convert_to_numpy=convert_to_numpy,
             normalize_embeddings=True
         )
+
+    # Ensure embeddings are on CPU and in numpy format for comparison
+    if isinstance(embeddings, torch.Tensor):
+        if embeddings.is_cuda:
+            embeddings = embeddings.cpu()
+        embeddings = embeddings.numpy()
+    elif not isinstance(embeddings, np.ndarray):
+        # Convert other types to numpy, handling nested tensors
+        if hasattr(embeddings, '__iter__') and len(embeddings) > 0 and isinstance(embeddings[0], torch.Tensor):
+            embeddings = torch.stack([e.cpu() if e.is_cuda else e for e in embeddings]).numpy()
+        else:
+            embeddings = np.array(embeddings)
+
     return embeddings
 
 
@@ -281,10 +294,19 @@ Examples:
     # Process in batches
     batches = [sentences[i:i + args.batch_size] for i in range(0, len(sentences), args.batch_size)]
 
+    # Warmup phase - run a few batches to initialize models
+    print("\nWarming up models...")
+    warmup_batches = min(3, len(batches))  # Use up to 3 batches for warmup
+    for backend in args.backends:
+        print(f"  Warming up {backend.upper()}...")
+        for i in range(warmup_batches):
+            _ = get_embeddings(models[backend], batches[i], convert_to_numpy=False)
+    print("✓ Warmup completed")
+
     # Initialize tracking variables
     backend_times = {backend: 0 for backend in args.backends}
     backend_embeddings = {backend: [] for backend in args.backends}
-    
+
     initial_memory = get_memory_usage()
     print(f"\nInitial memory usage: {initial_memory:.1f} MB")
 
@@ -326,17 +348,24 @@ Examples:
     print("\n" + "=" * 70)
     print("PERFORMANCE COMPARISON")
     print("=" * 70)
-    
+
+    num_docs = len(sentences)
     baseline_backend = args.backends[0]  # Use first backend as baseline
     baseline_time = backend_times[baseline_backend]
-    
+
+    # Print header
+    print(f"\n{'Backend':<15} {'Time (s)':<12} {'Throughput':<18} {'Speedup':<10}")
+    print("-" * 70)
+
     for backend in args.backends:
         time_val = backend_times[backend]
+        throughput = num_docs / time_val if time_val > 0 else float('inf')
+
         if backend == baseline_backend:
-            print(f"{backend.upper():20}: {time_val:.2f}s (baseline)")
+            print(f"{backend.upper():<15} {time_val:>8.2f}s    {throughput:>8.1f} docs/s    {'(baseline)':<10}")
         else:
             speedup = baseline_time / time_val if time_val > 0 else float('inf')
-            print(f"{backend.upper():20}: {time_val:.2f}s (speedup: {speedup:.2f}x)")
+            print(f"{backend.upper():<15} {time_val:>8.2f}s    {throughput:>8.1f} docs/s    {speedup:>6.2f}x")
 
     # Report embedding similarity comparisons
     if len(args.backends) > 1:

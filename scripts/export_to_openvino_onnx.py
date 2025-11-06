@@ -316,9 +316,13 @@ def main():
     parser.add_argument('--format', choices=['openvino', 'onnx'], default='openvino',
                         help='Export format (openvino or onnx)')
     parser.add_argument('--quantization', choices=['none', 'int8', 'int4'], default='none',
-                        help='Quantization mode (none, int8, or int4) - only for OpenVINO')
+                        help='Quantization mode (none, int8, or int4). For OpenVINO: int8/int4. For ONNX: int8 only (dynamic quantization)')
     parser.add_argument('--compare-with-original', action='store_true',
                         help='Compare exported model with original PyTorch model (slower)')
+    parser.add_argument("--onnx_config", type=str,
+                        choices=["arm64", "avx2", "avx512", "avx512_vnni"],
+                        default="avx2",
+                        help="ONNX quantization config",)
     args = parser.parse_args()
 
     print("=" * 70)
@@ -335,7 +339,7 @@ def main():
     print(f"Model: {model_name}")
     print(f"Output: {output_dir}")
     print(f"Format: {args.format}")
-    if args.format == 'openvino' and args.quantization != 'none':
+    if args.quantization != 'none':
         print(f"Quantization: {args.quantization}")
     print()
 
@@ -398,13 +402,70 @@ def main():
             print("✓ Model loaded and exported to ONNX successfully!")
             print()
 
-            print(f"Step 2: Saving to {output_dir}...")
-            model.save_pretrained(output_dir)
-            print("✓ Model saved!")
-            print()
+            if args.quantization == 'int8':
+                from sentence_transformers import export_dynamic_quantized_onnx_model
+                print(f"Step 2: Quantizing ({args.quantization}) to {output_dir}...")
+
+                export_dynamic_quantized_onnx_model(
+                    model=model,
+                    quantization_config=args.onnx_config,
+                    model_name_or_path=output_dir,
+                    push_to_hub=False,
+                    create_pr=False,
+                )
+            else:
+                print(f"Step 2: Saving to {output_dir}...")
+                model.save_pretrained(output_dir)
+                print("✓ Model saved!")
+                print()
+
+            # Apply quantization if requested
+            # if args.quantization == 'int8':
+            #     from onnxruntime.quantization import quantize_dynamic, QuantType
+            #     from pathlib import Path
+            #
+            #     print("Step 3: Applying INT8 dynamic quantization...")
+            #
+            #     # Find the ONNX model file
+            #     onnx_dir = Path(output_dir) / "onnx"
+            #     onnx_model_path = onnx_dir / "model.onnx"
+            #     quantized_model_path = onnx_dir / "model_quantized.onnx"
+            #
+            #     if not onnx_model_path.exists():
+            #         raise FileNotFoundError(f"ONNX model not found at {onnx_model_path}")
+            #
+            #     # Apply dynamic quantization
+            #     quantize_dynamic(
+            #         str(onnx_model_path),
+            #         str(quantized_model_path),
+            #         weight_type=QuantType.QInt8,
+            #         per_channel=True,
+            #         reduce_range=False,
+            #     )
+            #
+            #     # Replace original with quantized model
+            #     onnx_model_path.unlink()
+            #     quantized_model_path.rename(onnx_model_path)
+            #
+            #     print("✓ INT8 quantization applied!")
+            #
+            #     # Get model sizes
+            #     model_size = onnx_model_path.stat().st_size / (1024 * 1024)
+            #     print(f"  Quantized model size: {model_size:.1f} MB")
+            #     print()
+            #
+            #     # Reload the quantized model for testing
+            #     model = SentenceTransformer(output_dir, backend="onnx")
+            #     print("✓ Quantized model reloaded successfully!")
+            #     print()
+            # elif args.quantization == 'int4':
+            #     print("\n⚠ Warning: INT4 quantization is not supported for ONNX. Only INT8 is available.")
+            #     print("   Skipping quantization...")
+            #     print()
 
         # Test the model with comprehensive validation
-        print(f"Step 3: Validating the exported model...")
+        step_num = 3 if args.format == 'openvino' else (4 if args.quantization == 'int8' else 3)
+        print(f"Step {step_num}: Validating the exported model...")
         test_sentences = generate_test_sentences(50)
 
         # Load original model for comparison if requested
