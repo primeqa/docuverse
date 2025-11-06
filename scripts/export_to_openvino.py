@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Export Granite model to OpenVINO by patching ModernBERT to not use flash_attn.
-This script patches the transformers library at runtime to skip flash_attn imports.
+Export Granite embedding models to OpenVINO or ONNX format.
+This script patches the transformers library at runtime to skip flash_attn imports,
+enabling export of ModernBERT-based models.
 """
 
 import sys
 import os
 
-from sentence_transformers import export_static_quantized_openvino_model
-
 # Step 1: Set environment variables BEFORE any imports
 os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'  # Suppress tokenizer warnings
 
 # Step 2: Patch transformers import_utils BEFORE importing transformers
 def patch_flash_attn_check():
@@ -125,7 +125,6 @@ install_flash_attn_mocks()
 import argparse
 import torch
 import numpy as np
-from optimum.intel import OVWeightQuantizationConfig
 
 
 def generate_test_sentences(num_sentences=50):
@@ -309,21 +308,21 @@ def test_model_similarity(openvino_model, original_model, test_sentences, output
 
 
 def main():
-
-
-    parser = argparse.ArgumentParser(description='Export Granite model to OpenVINO')
+    parser = argparse.ArgumentParser(description='Export Granite model to OpenVINO or ONNX format')
     parser.add_argument('--model', type=str, default="ibm-granite/granite-embedding-small-english-r2",
                         help='Model name or path')
-    parser.add_argument('--output', type=str, default="granite-small-openvino-patched",
+    parser.add_argument('--output', type=str, default="granite-small-exported",
                         help='Output directory for the exported model')
+    parser.add_argument('--format', choices=['openvino', 'onnx'], default='openvino',
+                        help='Export format (openvino or onnx)')
     parser.add_argument('--quantization', choices=['none', 'int8', 'int4'], default='none',
-                        help='Quantization mode (none, int8, or int4)')
+                        help='Quantization mode (none, int8, or int4) - only for OpenVINO')
     parser.add_argument('--compare-with-original', action='store_true',
                         help='Compare exported model with original PyTorch model (slower)')
     args = parser.parse_args()
 
     print("=" * 70)
-    print("GRANITE MODEL TO OPENVINO EXPORT (PATCHED MODERNBERT)")
+    print(f"GRANITE MODEL EXPORT TO {args.format.upper()}")
     print("=" * 70)
     print()
 
@@ -335,53 +334,77 @@ def main():
 
     print(f"Model: {model_name}")
     print(f"Output: {output_dir}")
+    print(f"Format: {args.format}")
+    if args.format == 'openvino' and args.quantization != 'none':
+        print(f"Quantization: {args.quantization}")
     print()
 
     try:
-        print("Step 1: Loading model with OpenVINO backend (will trigger export)...")
-        print("This may take several minutes...")
-        print()
+        if args.format == 'openvino':
+            # Import OpenVINO-specific modules only when needed
+            from optimum.intel import OVWeightQuantizationConfig
+            from sentence_transformers import export_static_quantized_openvino_model
 
-        # Load with OpenVINO backend - this will export the model
-        quantization_config = None
-        if args.quantization != 'none':
-            if args.quantization == 'int8':
-                # INT8: per-channel quantization, ratio=1.0 and group_size=-1 are required
-                quantization_config = OVWeightQuantizationConfig(
-                    bits=8,
-                    sym=True,
+            print("Step 1: Loading model with OpenVINO backend (will trigger export)...")
+            print("This may take several minutes...")
+            print()
+
+            # Load with OpenVINO backend - this will export the model
+            quantization_config = None
+            if args.quantization != 'none':
+                if args.quantization == 'int8':
+                    # INT8: per-channel quantization, ratio=1.0 and group_size=-1 are required
+                    quantization_config = OVWeightQuantizationConfig(
+                        bits=8,
+                        sym=True,
+                    )
+                else:  # int4
+                    # INT4: can use group-wise quantization for better quality
+                    quantization_config = OVWeightQuantizationConfig(
+                        bits=4,
+                        sym=True,
+                        group_size=128,  # Smaller groups = better quality
+                        ratio=0.8,  # Quantize 80% of layers
+                    )
+
+            model = SentenceTransformer(
+                model_name,
+                backend="openvino",
+                model_kwargs={
+                    'attn_implementation': 'eager',
+                }
+            )
+
+            if quantization_config is not None:
+                export_static_quantized_openvino_model(
+                    model,
+                    quantization_config=quantization_config,
+                    model_name_or_path=output_dir,
                 )
-            else:  # int4
-                # INT4: can use group-wise quantization for better quality
-                quantization_config = OVWeightQuantizationConfig(
-                    bits=4,
-                    sym=True,
-                    group_size=128,  # Smaller groups = better quality
-                    ratio=0.8,  # Quantize 80% of layers
-                )
 
-        model = SentenceTransformer(
-            model_name,
-            backend="openvino",
-            model_kwargs={
-                'attn_implementation': 'eager',
-                # 'quantization_config': quantization_config,
-            }
-        )
-        export_static_quantized_openvino_model(
-            model,
-            quantization_config=quantization_config,
-            model_name_or_path=output_dir,
-        )
+            print(f"Step 2: Saving to {output_dir}...")
+            model.save_pretrained(output_dir)
+            print("✓ Model saved!")
+            print("✓ Model loaded and exported successfully!")
+            print()
 
-        print(f"Step 2: Saving to {output_dir}...")
-        model.save_pretrained(output_dir)
-        print("✓ Model saved!")
-        print("✓ Model loaded and exported successfully!")
-        print()
+        elif args.format == 'onnx':
+            print("Step 1: Loading model with ONNX backend (will trigger export)...")
+            print("This may take a few minutes...")
+            print()
+
+            # Load with ONNX backend - this will automatically export to ONNX
+            model = SentenceTransformer(model_name, backend="onnx")
+            print("✓ Model loaded and exported to ONNX successfully!")
+            print()
+
+            print(f"Step 2: Saving to {output_dir}...")
+            model.save_pretrained(output_dir)
+            print("✓ Model saved!")
+            print()
 
         # Test the model with comprehensive validation
-        print("Step 3: Validating the exported model...")
+        print(f"Step 3: Validating the exported model...")
         test_sentences = generate_test_sentences(50)
 
         # Load original model for comparison if requested
@@ -400,7 +423,10 @@ def main():
         print()
         print(f"Model saved to: {output_dir}")
         print(f"\nYou can now use the model with:")
-        print(f'  model = SentenceTransformer("{output_dir}", backend="openvino")')
+        if args.format == 'openvino':
+            print(f'  model = SentenceTransformer("{output_dir}", backend="openvino")')
+        else:
+            print(f'  model = SentenceTransformer("{output_dir}", backend="onnx")')
 
         return 0
 
