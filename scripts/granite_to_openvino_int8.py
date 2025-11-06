@@ -51,8 +51,8 @@ except ImportError:
 
 try:
     import openvino as ov
-    from openvino.tools import mo
-    from openvino.runtime import Core, serialize
+    # from openvino.tools import mo
+    from openvino import Core, serialize
 
     # Apply compatibility monkey patch BEFORE importing NNCF
     # This fixes compatibility issues between NNCF 2.17.0 and OpenVINO 2024.6.0

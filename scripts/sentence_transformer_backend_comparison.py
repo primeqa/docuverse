@@ -8,7 +8,7 @@ import psutil
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from typing import List, Tuple
+from typing import List, Tuple, LiteralString
 import time
 import torch
 from tqdm import tqdm
@@ -47,15 +47,17 @@ def load_sentence_transformer_with_backend(model_name: str, backend: str = 'pyto
         elif backend == 'onnx':
             if model_path is None:
                 raise ValueError("model_path is required for ONNX backend")
-
+            onnx_kwargs = {
+                    'provider': 'CUDAExecutionProvider' if device == 'cuda' else 'CPUExecutionProvider'
+                }
+            if model_path.endswith('.onnx'):
+                model_path = _get_model_and_file_names(model_path, onnx_kwargs)
             # Use ONNX backend with SentenceTransformers
             model = SentenceTransformer(
                 model_name if os.path.exists(model_name) else model_path,
                 device=device,
                 backend='onnx',
-                model_kwargs={
-                    'provider': 'CUDAExecutionProvider' if device == 'cuda' else 'CPUExecutionProvider'
-                },
+                model_kwargs=onnx_kwargs,
                 **backend_kwargs
             )
             
@@ -71,8 +73,7 @@ def load_sentence_transformer_with_backend(model_name: str, backend: str = 'pyto
 
             # Check if model_path points to an XML file
             if model_path and model_path.endswith('.xml'):
-                openvino_kwargs['file'] = model_path
-                model_path = os.path.dirname(model_path)
+                model_path = _get_model_and_file_names(model_path, openvino_kwargs)
 
             model = SentenceTransformer(
                 model_name if os.path.exists(model_name) else model_path,
@@ -88,13 +89,28 @@ def load_sentence_transformer_with_backend(model_name: str, backend: str = 'pyto
         raise RuntimeError(f"Error loading SentenceTransformer with {backend} backend: {e}")
 
 
-def get_embeddings(model: SentenceTransformer, batch: List[str]) -> np.ndarray:
+def _get_model_and_file_names(model_path: str, kwargs: dict[str, str]) -> LiteralString | str | bytes:
+    # Split path into all components
+    path_components = []
+    current_path = model_path
+    path_components = os.path.normpath(current_path).split(os.sep)
+    if path_components[0] == '':
+        path_components[0] = os.sep
+
+    # Use filename and immediate parent dir for OpenVINO model path
+    kwargs['file_name'] = os.path.join(path_components[-2], path_components[-1])
+    # Join all path components except last two
+    model_path = os.path.join(*path_components[:-2]) if len(path_components) > 2 else ''
+    return model_path
+
+
+def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_numpy: bool=True) -> np.ndarray:
     """Generate embeddings using SentenceTransformer (works with all backends)."""
     with torch.no_grad():
         embeddings = model.encode(
             batch, 
             show_progress_bar=False, 
-            convert_to_numpy=True,
+            convert_to_numpy=convert_to_numpy,
             normalize_embeddings=True
         )
     return embeddings
@@ -132,9 +148,14 @@ def read_sentences(file_path: str, max_text_length: int = None) -> List[str]:
     return sentences
 
 
-def compute_similarity(embeddings1: np.ndarray, embeddings2: np.ndarray) -> Tuple[float, float, float]:
+def compute_similarity(embeddings1: np.ndarray|list, embeddings2: np.ndarray|list, return_mean: bool=True) -> Tuple[float, float, float]:
     """Compute similarity metrics between two sets of embeddings."""
     # Normalize embeddings
+    if isinstance(embeddings1, list):
+        embeddings1 = np.array(embeddings1)
+    if isinstance(embeddings2, list):
+        embeddings2 = np.array(embeddings2)
+
     norm1 = np.linalg.norm(embeddings1, axis=1, keepdims=True)
     norm2 = np.linalg.norm(embeddings2, axis=1, keepdims=True)
 
@@ -144,13 +165,18 @@ def compute_similarity(embeddings1: np.ndarray, embeddings2: np.ndarray) -> Tupl
     # Compute cosine similarities between corresponding embeddings
     cosine_similarities = np.sum(embeddings1_normalized * embeddings2_normalized, axis=1)
 
-    # Compute MSE
-    mse = np.mean(np.square(embeddings1 - embeddings2))
+    if return_mean:
+        function = np.mean
+    else:
+        function = np.sum
+
+        # Compute MSE
+    mse = function(np.square(embeddings1 - embeddings2))
 
     # Compute Manhattan distance
-    manhattan = np.mean(np.abs(embeddings1 - embeddings2))
+    manhattan = function(np.abs(embeddings1 - embeddings2))
 
-    return np.mean(cosine_similarities), mse, manhattan
+    return np.array([function(cosine_similarities), mse, manhattan])
 
 
 def main():
@@ -204,10 +230,16 @@ Examples:
         print(f"Set PyTorch CPU threads to: {args.num_threads}")
 
     # Validate backend-specific paths
+    onnx_model = args.onnx_path
+    openvino_model = args.openvino_path
     if 'onnx' in args.backends and not args.onnx_path:
-        parser.error("--onnx-path (or --onnx_path) is required when using ONNX backend")
+        print("No path provided for onnx model, will use the model name")
+        onnx_model = args.model
+        # parser.error("--onnx-path (or --onnx_path) is required when using ONNX backend")
     if 'openvino' in args.backends and not args.openvino_path:
-        parser.error("--openvino-path (or --openvino_path) is required when using OpenVINO backend")
+        print("No path provided for openvino model, will use the model name")
+        openvino_model = args.model
+        # parser.error("--openvino-path (or --openvino_path) is required when using OpenVINO backend")
 
     # Load models for each backend
     models = {}
@@ -221,12 +253,12 @@ Examples:
         elif backend == 'onnx':
             models[backend] = load_sentence_transformer_with_backend(
                 args.model, backend='onnx', device=args.device,
-                model_path=args.onnx_path
+                model_path=onnx_model
             )
         elif backend == 'openvino':
             models[backend] = load_sentence_transformer_with_backend(
                 args.model, backend='openvino', device=args.openvino_device,
-                model_path=args.openvino_path
+                model_path=openvino_model
             )
 
     # Read sentences
@@ -257,19 +289,24 @@ Examples:
     print(f"\nInitial memory usage: {initial_memory:.1f} MB")
 
     print("\nProcessing batches...")
+    scores = {}
     for i, batch in enumerate(tqdm(batches)):
-        batch_embeddings = {}
+        batch_embeddings = [[] for _ in args.backends]
         
         # Generate embeddings for each backend
-        for backend in args.backends:
+        for i, backend in enumerate(args.backends):
             start_time = time.time()
-            embeddings = get_embeddings(models[backend], batch)
+            embeddings = get_embeddings(models[backend], batch, convert_to_numpy=False)
             backend_times[backend] += time.time() - start_time
-            batch_embeddings[backend] = embeddings
+            batch_embeddings[i] = embeddings
 
-        # Store embeddings for comparison
-        for backend in args.backends:
-            backend_embeddings[backend].append(batch_embeddings[backend])
+        for i in range(len(args.backends)):
+            for j in range(i+1, len(args.backends)):
+                key = f"{args.backends[j]} {args.backends[i]}"
+                if key not in scores:
+                    scores[key] = np.zeros(3)
+                scores[key] += compute_similarity(batch_embeddings[i], batch_embeddings[j], return_mean=False)
+
 
         # Clean up batch embeddings
         del batch_embeddings
@@ -281,10 +318,9 @@ Examples:
                 gc.collect()
                 print(f"GC triggered at batch {i}, memory: {current_memory:.1f}MB")
 
-    # Combine all embeddings
-    print("\nCombining embeddings...")
-    for backend in args.backends:
-        backend_embeddings[backend] = np.vstack(backend_embeddings[backend])
+    # Normalize the results:
+    for k in scores.keys():
+        scores[k] /= len(sentences)
 
     # Report performance results
     print("\n" + "=" * 70)
@@ -312,17 +348,7 @@ Examples:
         baseline_embeddings = backend_embeddings[baseline_backend]
         
         for backend in args.backends[1:]:
-            other_embeddings = backend_embeddings[backend]
-            
-            # Ensure same shape
-            min_samples = min(baseline_embeddings.shape[0], other_embeddings.shape[0])
-            min_dims = min(baseline_embeddings.shape[1], other_embeddings.shape[1])
-            
-            baseline_trimmed = baseline_embeddings[:min_samples, :min_dims]
-            other_trimmed = other_embeddings[:min_samples, :min_dims]
-            
-            cosine_sim, mse, manhattan = compute_similarity(baseline_trimmed, other_trimmed)
-            
+            cosine_sim, mse, manhattan = scores[f"{backend} {baseline_backend}"]
             print(f"\n{baseline_backend.upper()} vs {backend.upper()}:")
             print(f"  Mean Cosine Similarity:  {cosine_sim:.6f} (1.0 = identical)")
             print(f"  Mean Squared Error:      {mse:.6f} (0.0 = identical)")
@@ -334,16 +360,17 @@ Examples:
             print(f"\nAdditional pairwise comparisons:")
             for i, backend1 in enumerate(args.backends[1:], 1):
                 for backend2 in args.backends[i+1:]:
-                    emb1 = backend_embeddings[backend1]
-                    emb2 = backend_embeddings[backend2]
-                    
-                    min_samples = min(emb1.shape[0], emb2.shape[0])
-                    min_dims = min(emb1.shape[1], emb2.shape[1])
-                    
-                    emb1_trimmed = emb1[:min_samples, :min_dims]
-                    emb2_trimmed = emb2[:min_samples, :min_dims]
-                    
-                    cosine_sim, mse, manhattan = compute_similarity(emb1_trimmed, emb2_trimmed)
+                    # emb1 = backend_embeddings[backend1]
+                    # emb2 = backend_embeddings[backend2]
+                    #
+                    # min_samples = min(emb1.shape[0], emb2.shape[0])
+                    # min_dims = min(emb1.shape[1], emb2.shape[1])
+                    #
+                    # emb1_trimmed = emb1[:min_samples, :min_dims]
+                    # emb2_trimmed = emb2[:min_samples, :min_dims]
+                    #
+                    # cosine_sim, mse, manhattan = compute_similarity(emb1_trimmed, emb2_trimmed)
+                    cosine_sim, mse, manhattan = scores[f"{backend2} {backend1}"]
                     
                     print(f"\n{backend1.upper()} vs {backend2.upper()}:")
                     print(f"  Cosine Similarity: {cosine_sim:.6f}")
