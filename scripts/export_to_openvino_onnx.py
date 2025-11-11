@@ -323,6 +323,8 @@ def main():
                         choices=["arm64", "avx2", "avx512", "avx512_vnni"],
                         default="avx2",
                         help="ONNX quantization config",)
+    # parser.add_argument('--loss-type', "--loss_type", dest="loss_type", type=str,
+    #                     help='Loss type for the model (e.g., ForCausalLMLoss, CosineSimilarityLoss, etc.)')
     args = parser.parse_args()
 
     print("=" * 70)
@@ -358,17 +360,22 @@ def main():
             if args.quantization != 'none':
                 if args.quantization == 'int8':
                     # INT8: per-channel quantization, ratio=1.0 and group_size=-1 are required
-                    quantization_config = OVWeightQuantizationConfig(
-                        bits=8,
-                        sym=True,
-                    )
+                    # dataset=None is required to avoid calibration (weight-only quantization)
+                    # quantization_config = OVWeightQuantizationConfig(
+                    #     bits=8,
+                    #     sym=True,
+                    #     dataset=None,
+                    # )
+                    quantization_config = None
                 else:  # int4
                     # INT4: can use group-wise quantization for better quality
+                    # dataset=None is required to avoid calibration (weight-only quantization)
                     quantization_config = OVWeightQuantizationConfig(
                         bits=4,
                         sym=True,
                         group_size=128,  # Smaller groups = better quality
                         ratio=0.8,  # Quantize 80% of layers
+                        dataset=None,
                     )
 
             model = SentenceTransformer(
@@ -376,8 +383,8 @@ def main():
                 backend="openvino",
                 model_kwargs={
                     'attn_implementation': 'eager',
-                }
-            )
+                    }
+                )
 
             if quantization_config is not None:
                 export_static_quantized_openvino_model(
@@ -398,7 +405,11 @@ def main():
             print()
 
             # Load with ONNX backend - this will automatically export to ONNX
-            model = SentenceTransformer(model_name, backend="onnx")
+            model_kwargs = {}
+            # if args.loss_type:
+            #     model_kwargs['loss_type'] = args.loss_type
+            
+            model = SentenceTransformer(model_name, backend="onnx", model_kwargs=model_kwargs)
             print("✓ Model loaded and exported to ONNX successfully!")
             print()
 
@@ -413,6 +424,7 @@ def main():
                     push_to_hub=False,
                     create_pr=False,
                 )
+                model.save_pretrained(output_dir)
             else:
                 print(f"Step 2: Saving to {output_dir}...")
                 model.save_pretrained(output_dir)
@@ -472,7 +484,8 @@ def main():
         original_model = None
         if args.compare_with_original:
             print("\nLoading original PyTorch model for comparison...")
-            original_model = SentenceTransformer(model_name)
+            model_kwargs = {}
+            original_model = SentenceTransformer(model_name, model_kwargs=model_kwargs)
             print("✓ Original model loaded")
 
         # Run comprehensive testing
