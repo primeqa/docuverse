@@ -361,12 +361,12 @@ def main():
                 if args.quantization == 'int8':
                     # INT8: per-channel quantization, ratio=1.0 and group_size=-1 are required
                     # dataset=None is required to avoid calibration (weight-only quantization)
-                    # quantization_config = OVWeightQuantizationConfig(
-                    #     bits=8,
-                    #     sym=True,
-                    #     dataset=None,
-                    # )
-                    quantization_config = None
+                    quantization_config = OVWeightQuantizationConfig(
+                        bits=8,
+                        sym=True,
+                        dataset=None,
+                    )
+                    # quantization_config = None
                 else:  # int4
                     # INT4: can use group-wise quantization for better quality
                     # dataset=None is required to avoid calibration (weight-only quantization)

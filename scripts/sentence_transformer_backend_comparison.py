@@ -16,34 +16,36 @@ import os
 
 from docuverse.utils import open_stream
 
-
 def get_memory_usage():
     """Get current memory usage in MB."""
     process = psutil.Process(os.getpid())
     return process.memory_info().rss / 1024 / 1024
 
 
-def load_sentence_transformer_with_backend(model_name: str, backend: str = 'pytorch', 
-                                         device: str = 'cuda', model_path: str = None,
-                                         **backend_kwargs):
-    """Load a SentenceTransformer model with specified backend.
-    
+def load_sentence_transformer_with_backend(model_name: str,
+                                           backend: str = 'pytorch',
+                                           device: str = 'cuda',
+                                           model_path: str = None,
+                                           **backend_kwargs):
+    """Load a SentenceTransformer model with a specified backend.
+
     Args:
         model_name: SentenceTransformer model name or path
         backend: Backend to use ('pytorch', 'onnx', 'openvino')
         device: Device to run on ('cuda', 'cpu')
-        model_path: Path to converted model (for onnx/openvino)
+        model_path: Path to a converted model (for onnx/openvino)
         **backend_kwargs: Additional backend-specific arguments
     """
+    model = None
     try:
         if backend == 'pytorch':
             # Standard SentenceTransformer loading
             model_kwargs = {}
             if device == 'cpu':
                 model_kwargs['model_kwargs'] = {'attn_implementation': 'eager'}
-            
+
             model = SentenceTransformer(model_name, device=device, **model_kwargs)
-            
+
         elif backend == 'onnx':
             if model_path is None:
                 raise ValueError("model_path is required for ONNX backend")
@@ -60,7 +62,7 @@ def load_sentence_transformer_with_backend(model_name: str, backend: str = 'pyto
                 model_kwargs=onnx_kwargs,
                 **backend_kwargs
             )
-            
+
         elif backend == 'openvino':
             if model_path is None:
                 raise ValueError("model_path is required for OpenVINO backend")
@@ -80,13 +82,72 @@ def load_sentence_transformer_with_backend(model_name: str, backend: str = 'pyto
                 backend='openvino',
                 model_kwargs=openvino_kwargs
             )
-            
+        elif backend == "vllm":
+            print(f"Loading model with vLLM backend...")
+            import requests
+            try:
+                # from vllm import LLM, SamplingParams
+
+                # For vLLM, we need to handle embedding models differently
+                # vLLM primarily supports generative models, but can be used for embeddings
+                # with some models that support pooling
+
+                # Initialize vLLM model
+                # vllm_model = LLM(
+                #     model=model_name,
+                #     trust_remote_code=True,
+                #     enforce_eager=True,  # Disable CUDA graphs for compatibility
+                #     **backend_kwargs
+                # )
+
+                # Create a wrapper class to make it compatible with SentenceTransformer interface
+                class VLLMSentenceTransformer:
+                    _dim = None
+                    def __init__(self, vllm_model, original_model_name: str=None):
+                        self.vllm_model = vllm_model
+                        self.model_name = original_model_name if original_model_name else vllm_model
+
+                    def encode(self, sentences, batch:int=32, **kwargs):
+                        """Encode sentences using vLLM model."""
+                        if isinstance(sentences, str):
+                            sentences = [sentences]
+
+                        embeddings = []
+
+                        for ex in range(0, len(sentences), batch):
+                            response = requests.post(
+                                "http://localhost:8000/v1/embeddings",
+                                json={
+                                    "model": self.vllm_model,
+                                    "input": sentences[ex:ex+batch],
+                                    }
+                            )
+
+                            embeddings.extend([e['embedding'] for e in response.json()["data"]])
+
+                        return np.array(embeddings)
+
+                    def get_sentence_embedding_dimension(self):
+                        if self._dim is None:
+                            enc = self.encode(["Test"])
+                            _dim = enc[0].size()
+                        return self._dim
+                        # return self._tokenizer_model.get_sentence_embedding_dimension()
+
+                model = VLLMSentenceTransformer(model_name)
+                print(f"✓ Model loaded successfully with vLLM backend")
+            except ImportError as e:
+                print(f"❌ vLLM not available: {e}")
+                print("Install with: pip install vllm")
+                return None
+            except Exception as e:
+                print(f"❌ Error loading model with vLLM backend: {e}")
         else:
             raise ValueError(f"Unsupported backend: {backend}")
-            
-        return model
     except Exception as e:
         raise RuntimeError(f"Error loading SentenceTransformer with {backend} backend: {e}")
+
+    return model
 
 
 def _get_model_and_file_names(model_path: str, kwargs: dict[str, str]) -> LiteralString | str | bytes:
@@ -145,17 +206,17 @@ def read_sentences(file_path: str, max_text_length: int = None) -> List[str]:
             line = line.strip()
             if not line:
                 continue
-            
+
             # Try to parse as JSONL first
             try:
                 text = json.loads(line)['text']
             except (json.JSONDecodeError, KeyError):
                 # Fall back to plain text
                 text = line
-            
+
             if max_text_length and len(text) > max_text_length:
                 text = text[:max_text_length]
-            
+
             sentences.append(text)
 
     return sentences
@@ -195,7 +256,7 @@ def compute_similarity(embeddings1: np.ndarray|list, embeddings2: np.ndarray|lis
 def main():
     # Get the script name from sys.argv[0]
     script_name = os.path.basename(sys.argv[0])
-    
+
     parser = argparse.ArgumentParser(
         description="Compare different SentenceTransformer backends (PyTorch, ONNX, OpenVINO)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -213,26 +274,28 @@ Examples:
     )
     # ... rest of the argument definitions ...
     parser.add_argument("--model", required=True, help="SentenceTransformer model name or path")
-    parser.add_argument("--backends", nargs='+', choices=["pytorch", "onnx", "openvino"], 
-                       default=["pytorch"], help="Backends to compare")
+    parser.add_argument('--backends', nargs='+',
+                        choices=['pytorch', 'onnx', 'openvino', 'tensorrt', 'vllm'],
+                        default=['pytorch', 'onnx'],
+                        help='Backends to compare')
     parser.add_argument("--input", required=True, help="Path to the input text file with sentences")
-    
+
     # Accept both - and _ variants for multi-word arguments
-    parser.add_argument("--onnx-path", "--onnx_path", dest="onnx_path", 
+    parser.add_argument("--onnx-path", "--onnx_path", dest="onnx_path",
                        help="Path to ONNX model directory or file")
     parser.add_argument("--openvino-path", "--openvino_path", dest="openvino_path",
                        help="Path to OpenVINO model directory or .xml file")
-    parser.add_argument("--num-samples", "--num_samples", dest="num_samples", type=int, default=None, 
+    parser.add_argument("--num-samples", "--num_samples", dest="num_samples", type=int, default=None,
                        help="Number of samples to use (default: all)")
-    parser.add_argument("--batch-size", "--batch_size", dest="batch_size", type=int, default=128, 
+    parser.add_argument("--batch-size", "--batch_size", dest="batch_size", type=int, default=128,
                        help="Batch size for processing (default: 128)")
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"],
                        help="Device to run models on (default: cuda)")
-    parser.add_argument("--max-text-length", "--max_text_length", dest="max_text_length", 
+    parser.add_argument("--max-text-length", "--max_text_length", dest="max_text_length",
                        type=int, default=None, help="Maximum text length (default: no limit)")
     parser.add_argument("--num-threads", "--num_threads", dest="num_threads", type=int, default=None,
                        help="Number of CPU threads for PyTorch (default: all available)")
-    parser.add_argument("--openvino-device", "--openvino_device", dest="openvino_device", 
+    parser.add_argument("--openvino-device", "--openvino_device", dest="openvino_device",
                        type=str, default="CPU", help="OpenVINO device (CPU, GPU, etc.) (default: CPU)")
 
     args = parser.parse_args()
@@ -258,7 +321,7 @@ Examples:
     models = {}
     for backend in args.backends:
         print(f"Loading {backend.upper()} model...")
-        
+
         if backend == 'pytorch':
             models[backend] = load_sentence_transformer_with_backend(
                 args.model, backend='pytorch', device=args.device
@@ -273,6 +336,13 @@ Examples:
                 args.model, backend='openvino', device=args.openvino_device,
                 model_path=openvino_model
             )
+        elif backend == "vllm":
+            # Add any vLLM-specific parameters
+            model_kwargs = {
+                'max_model_len': 512,  # Adjust based on your needs
+                'gpu_memory_utilization': 0.8,
+            }
+            models[backend] = load_sentence_transformer_with_backend(args.model, backend, model_kwargs)
 
     # Read sentences
     sentences = read_sentences(args.input, args.max_text_length)
@@ -314,7 +384,7 @@ Examples:
     scores = {}
     for i, batch in enumerate(tqdm(batches)):
         batch_embeddings = [[] for _ in args.backends]
-        
+
         # Generate embeddings for each backend
         for i, backend in enumerate(args.backends):
             start_time = time.time()
@@ -332,7 +402,7 @@ Examples:
 
         # Clean up batch embeddings
         del batch_embeddings
-        
+
         # Memory management
         if i % 50 == 0 and i > 0:
             current_memory = get_memory_usage()
@@ -372,10 +442,10 @@ Examples:
         print("\n" + "=" * 70)
         print("EMBEDDING SIMILARITY COMPARISON")
         print("=" * 70)
-        
+
         # Compare each backend with the baseline (first backend)
         baseline_embeddings = backend_embeddings[baseline_backend]
-        
+
         for backend in args.backends[1:]:
             cosine_sim, mse, manhattan = scores[f"{backend} {baseline_backend}"]
             print(f"\n{baseline_backend.upper()} vs {backend.upper()}:")
@@ -400,7 +470,7 @@ Examples:
                     #
                     # cosine_sim, mse, manhattan = compute_similarity(emb1_trimmed, emb2_trimmed)
                     cosine_sim, mse, manhattan = scores[f"{backend2} {backend1}"]
-                    
+
                     print(f"\n{backend1.upper()} vs {backend2.upper()}:")
                     print(f"  Cosine Similarity: {cosine_sim:.6f}")
 
