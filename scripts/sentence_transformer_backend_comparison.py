@@ -167,6 +167,7 @@ def _get_model_and_file_names(model_path: str, kwargs: dict[str, str]) -> Litera
 
 def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_numpy: bool=True) -> np.ndarray:
     """Generate embeddings using SentenceTransformer (works with all backends)."""
+    embeddings = None
     with torch.no_grad():
         embeddings = model.encode(
             batch,
