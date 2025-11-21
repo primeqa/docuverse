@@ -798,6 +798,17 @@ def main():
         try:
             gpu_embedder = GPUEmbedder(args.local_model_name, args.device)
             embedders.append(("GPU", gpu_embedder))
+            # Will also prune the texts so they are short enough
+            new_t = []
+            eliminated = 0
+            for t in texts:
+                toks = gpu_embedder.tokenizer.tokenize(t)
+                if len(toks) <= args.max_text_size:
+                    new_t.append(t)
+                else:
+                    eliminated += 1
+            texts = new_t
+            print(f"We had to eliminate {eliminated} texts, {len(new_t)} remaining.")
         except Exception as e:
             print(f"✗ Failed to initialize GPU embedder: {e}")
             print("  Skipping GPU benchmarking")
@@ -805,6 +816,7 @@ def main():
     if not embedders:
         print("\n✗ No embedders available for benchmarking!")
         return
+
 
     # Run benchmarks
     results = []
