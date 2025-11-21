@@ -725,6 +725,8 @@ def main():
                         help="Directory to save plots (default: benchmark_plots)")
     parser.add_argument("--plot_format", type=str, default="png", choices=["png", "pdf", "svg"],
                         help="Plot file format (default: png)")
+    parser.add_argument("--max_text_size", type=int, default=1536,
+                        help="The maximum size for the text to encode",)
 
     args = parser.parse_args()
 
@@ -747,6 +749,7 @@ def main():
 
         try:
             texts = read_jsonl_file(args.input_file, args.field_path, args.max_samples)
+            texts = [t[:args.max_text_size] for t in texts]
             print(f"✓ Loaded {len(texts)} texts from file")
 
             if not texts:
