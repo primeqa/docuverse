@@ -36,11 +36,10 @@ Usage:
 import argparse
 import time
 import os
-import json
-import bz2
+import sys
 import random
 import numpy as np
-from typing import List, Any, Dict
+from typing import List
 from openai import OpenAI
 import torch
 from transformers import AutoTokenizer, AutoModel
@@ -48,6 +47,10 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 from tqdm import tqdm
+
+# Add parent directory to path to import jsonl_utils
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from jsonl_utils import read_jsonl_file
 
 
 class APIEmbedder:
@@ -114,187 +117,8 @@ class GPUEmbedder:
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
 
-def get_nested_field(obj: Dict[str, Any], path: str) -> Any:
-    """
-    Extract a nested field from a dictionary using dot notation with array support.
-
-    Args:
-        obj: Dictionary to extract from
-        path: Dot-separated path with optional array indexing
-              Examples:
-              - "document.text" - simple nested field
-              - "documents[*].text" - all items in array
-              - "documents[0].text" - first item in array
-              - "documents[].text" - same as [*], all items
-
-    Returns:
-        The value at the specified path. If array wildcard is used, returns list of values.
-
-    Raises:
-        KeyError: If path doesn't exist in the object
-        IndexError: If array index is out of bounds
-    """
-    import re
-
-    # Split path into segments, handling array notation
-    # e.g., "documents[*].text" -> ["documents[*]", "text"]
-    segments = path.split('.')
-    current = obj
-
-    for segment in segments:
-        # Check if segment contains array indexing
-        array_match = re.match(r'^([^\[]+)\[([^\]]*)\]$', segment)
-
-        if array_match:
-            # Handle array indexing: field[index] or field[*] or field[]
-            field_name = array_match.group(1)
-            index_str = array_match.group(2)
-
-            # Navigate to the field
-            if isinstance(current, dict):
-                if field_name not in current:
-                    raise KeyError(f"Key '{field_name}' not found in path '{path}'")
-                current = current[field_name]
-            else:
-                raise KeyError(f"Cannot navigate to '{field_name}' in path '{path}' - current value is not a dict")
-
-            # Handle the array indexing
-            if not isinstance(current, list):
-                raise KeyError(f"Field '{field_name}' in path '{path}' is not an array (got {type(current).__name__})")
-
-            if index_str == '*' or index_str == '':
-                # Wildcard: collect all items
-                # Continue processing remaining path for each item
-                remaining_path = '.'.join(segments[segments.index(segment) + 1:])
-                if remaining_path:
-                    # Recursively get nested field from each item
-                    results = []
-                    for item in current:
-                        try:
-                            results.append(get_nested_field({'_': item}, '_.' + remaining_path))
-                        except (KeyError, IndexError):
-                            continue  # Skip items that don't have the field
-                    return results
-                else:
-                    # No more path, return all items
-                    return current
-            else:
-                # Specific index
-                try:
-                    index = int(index_str)
-                    current = current[index]
-                except ValueError:
-                    raise KeyError(f"Invalid array index '{index_str}' in path '{path}'")
-                except IndexError:
-                    raise IndexError(f"Array index {index} out of bounds in path '{path}'")
-        else:
-            # Regular field access
-            if isinstance(current, dict):
-                if segment not in current:
-                    raise KeyError(f"Key '{segment}' not found in path '{path}'")
-                current = current[segment]
-            elif isinstance(current, list):
-                # Implicit array wildcard - apply to all items
-                remaining_path = '.'.join(segments[segments.index(segment):])
-                results = []
-                for item in current:
-                    try:
-                        results.append(get_nested_field({'_': item}, '_.' + remaining_path))
-                    except (KeyError, IndexError):
-                        continue
-                return results
-            else:
-                raise KeyError(f"Cannot navigate to '{segment}' in path '{path}' - current value is not a dict or list")
-
-    return current
-
-
-def read_jsonl_file(file_path: str, field_path: str = None, max_samples: int = None) -> List[str]:
-    """
-    Read texts from a JSONL or JSONL.bz2 file.
-
-    Args:
-        file_path: Path to JSONL or JSONL.bz2 file
-        field_path: Dot-separated path to text field (e.g., "document.text")
-                   If None, assumes each line is a string or has a "text" field
-        max_samples: Maximum number of samples to read (None = read all)
-
-    Returns:
-        List of text strings
-    """
-    texts = []
-
-    # Determine if file is compressed
-    is_compressed = file_path.endswith('.bz2')
-
-    # Open file with appropriate handler
-    if is_compressed:
-        file_handle = bz2.open(file_path, 'rt', encoding='utf-8')
-    else:
-        file_handle = open(file_path, 'r', encoding='utf-8')
-
-    try:
-        for i, line in enumerate(file_handle):
-            # Check max_samples limit
-            if max_samples is not None and i >= max_samples:
-                break
-
-            line = line.strip()
-            if not line:
-                continue
-
-            # Parse JSON
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError as e:
-                print(f"Warning: Skipping invalid JSON at line {i+1}: {e}")
-                continue
-
-            # Extract text based on field_path
-            try:
-                if field_path:
-                    result = get_nested_field(data, field_path)
-                elif isinstance(data, str):
-                    result = data
-                elif isinstance(data, dict):
-                    # Try common field names
-                    if 'text' in data:
-                        result = data['text']
-                    elif 'content' in data:
-                        result = data['content']
-                    elif 'question' in data:
-                        result = data['question']
-                    else:
-                        print(f"Warning: No obvious text field found at line {i+1}. Available fields: {list(data.keys())}")
-                        continue
-                else:
-                    print(f"Warning: Unexpected data type at line {i+1}: {type(data)}")
-                    continue
-
-                # Handle result - could be a string or list (from array wildcard)
-                if isinstance(result, list):
-                    # Array wildcard was used - add all items
-                    for item in result:
-                        if isinstance(item, str):
-                            texts.append(item)
-                        else:
-                            texts.append(str(item))
-                elif isinstance(result, str):
-                    texts.append(result)
-                else:
-                    texts.append(str(result))
-
-            except KeyError as e:
-                print(f"Warning: {e} at line {i+1}")
-                continue
-            except IndexError as e:
-                print(f"Warning: {e} at line {i+1}")
-                continue
-
-    finally:
-        file_handle.close()
-
-    return texts
+# The read_jsonl_file and get_nested_field functions have been moved to jsonl_utils.py
+# They are imported at the top of this file
 
 
 def generate_sample_texts(num_samples: int) -> List[str]:
@@ -748,8 +572,12 @@ def main():
             print(f"  Max samples to read: {args.max_samples}")
 
         try:
-            texts = read_jsonl_file(args.input_file, args.field_path, args.max_samples)
-            # texts = [t[:args.max_text_size] for t in texts]
+            texts = read_jsonl_file(
+                args.input_file,
+                field_path=args.field_path,
+                max_samples=args.max_samples,
+                verbose=True
+            )
             print(f"✓ Loaded {len(texts)} texts from file")
 
             if not texts:

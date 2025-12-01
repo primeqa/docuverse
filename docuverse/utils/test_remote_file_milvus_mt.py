@@ -35,7 +35,7 @@ def read_args():
     parser = argparse.ArgumentParser(description='Run Milvus server and process queries from TSV file.')
     parser.add_argument('--milvus-dir', '--milvus_dir', type=str, required=True,
                         help='Directory containing milvus.db file')
-    parser.add_argument('--query-file',  '--queries-file', '--query_file', type=str, required=True,
+    parser.add_argument('--query-file',  '--queries-file', '--query_file', type=str,
                         help='TSV file containing queries in "query" column')
     parser.add_argument('--model-name', '--model_name', type=str,
                         default='ibm-granite/granite-embedding-english-r2',
@@ -43,7 +43,7 @@ def read_args():
     parser.add_argument('--collection-name', '--collection_name', type=str,
                         default='default_collection',
                         help='Name of the Milvus collection to use')
-    parser.add_argument('--config', type=str, required=True,
+    parser.add_argument('--config', type=str, default=None,
                         help='Configuration file')
     parser.add_argument('--workers', type=int, default=1,
                         help='Number of workers to run in parallel the Milvus server')
@@ -109,21 +109,39 @@ def create_st_model(server_info: MilvusServerConfig) -> SentenceTransformer:
     return model
 
 
-def read_configuration(collection_name, config, milvus_dir, model_name) -> MilvusServerConfig:
+def read_configuration(collection_name,
+                       config,
+                       milvus_dir_or_file=None,
+                       model_name=None) -> MilvusServerConfig:
     from docuverse.utils import read_config_file
-    cfg = read_config_file(config)
-    if 'retriever' in cfg:
-        cfg = cfg.get('retriever')
-    # Milvus does not accept '-' in the name, and docuverse replaces them with '_'
-    collection_name = get_param(cfg, 'index_name', collection_name).replace("-", "_")
-    milvus_dir = get_param(cfg, 'project_dir', milvus_dir)
-    milvus_file_name = get_param(cfg, 'server', "")
-    model_name = get_param(cfg, 'model_name', model_name)
-    if milvus_file_name.find("file:") == -1:
-        milvus_file_name = os.path.join(milvus_dir, 'milvus.db')
+    attn = "eager"
+    milvus_file_name = None
+    if config is not None:
+        cfg = read_config_file(config)
+        if 'retriever' in cfg:
+            cfg = cfg.get('retriever')
+            milvus_file_name = get_param(cfg, 'server', "")
+            if milvus_dir_or_file is None:
+                milvus_dir_or_file = get_param(cfg, 'project_dir', milvus_dir_or_file)
+                if milvus_file_name.find("file:") == -1:
+                    milvus_file_name = os.path.join(milvus_dir_or_file, 'milvus.db')
+                else:
+                    milvus_file_name = milvus_file_name.replace("file:", "")
+            else:
+                milvus_file_name = os.path.join(milvus_dir_or_file, 'milvus.db')
+
+            collection_name = get_param(cfg, 'index_name', collection_name).replace("-", "_")
+            attn = get_param(cfg, 'attn_implementation', 'sdpa')
+            if model_name is None:
+                model_name = get_param(cfg, 'model_name', model_name)
     else:
-        milvus_file_name = milvus_file_name.replace("file:", "")
-    attn = get_param(cfg, 'attn_implementation', 'sdpa')
+        if milvus_dir_or_file is None or model_name is None:
+            raise RuntimeError("Must provide milvus_dir and model_name or a config file.")
+        if os.path.isfile(milvus_dir_or_file):
+            milvus_file_name = milvus_dir_or_file
+        else:
+            milvus_file_name = os.path.join(milvus_dir_or_file, 'milvus.db')
+    # Milvus does not accept '-' in the name, and docuverse replaces them with '_'
     # Initialize and start Milvus server
     return MilvusServerConfig(attn, collection_name, model_name, milvus_file_name)
 
@@ -146,6 +164,9 @@ if __name__ == '__main__':
             print("\nStopping server...")
             server.close()
     else:
+        if args.config_file:
+            config = read_config_file(args.config_file)
+
         model = create_st_model(server_info)
         queries_df = pd.read_csv(args.query_file, sep='\t')
         queries_text = queries_df['query'].tolist()
