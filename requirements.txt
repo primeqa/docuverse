@@ -13,3 +13,7 @@ transformers~=4.56.2
 orjson~=3.10.18
 pydantic_core~=2.27.2
 simple_colors~=0.1.5
+pandas~=2.2.0
+jinja2~=3.1.0
+grpcio~=1.60.0
+scipy~=1.11.0

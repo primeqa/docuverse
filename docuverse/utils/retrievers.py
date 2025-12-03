@@ -31,6 +31,13 @@ def create_retrieval_engine(retriever_config: dict):
        except ImportError as e:
            print("You need to install docuverse_chomadb package (run `pip install -r requirements-chromadb.txt`).")
            raise e
+   elif name == 'faiss':
+       try:
+           from docuverse.engines.retrieval.faiss.faiss_engine import FAISSEngine
+           engine = FAISSEngine(retriever_config)
+       except ImportError as e:
+           print("You need to install faiss package (run `pip install faiss-cpu` or `pip install faiss-gpu`).")
+           raise e
    elif name.startswith('milvus'):
        import docuverse.engines.retrieval.milvus as milvus
        try:
