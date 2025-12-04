@@ -62,7 +62,7 @@ class RetrievalEngine:
 
     def check_client(self):
         if self.client is None:
-            raise RuntimeError("MilvusEngine server is not defined/initialized.")
+            raise RuntimeError("Engine is not defined/initialized.")
 
     def has_index(self, index_name):
         return False
