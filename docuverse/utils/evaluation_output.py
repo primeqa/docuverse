@@ -107,10 +107,11 @@ class EvaluationOutput:
                 if not found and relevant[i]:
                     rank_first = i+1
                     _mrr = 1.0/rank_first
-                    _dcg = 1.0/math.log2(rank_first+1)
                     found = True
+                if relevant[i]:
+                    _dcg += 1.0/math.log2(i+2)
                 doc_match[i+1] = relevant[i]
-                doc_dcg[i+1] = _dcg # relevant[i]/math.log2(i+2)
+                doc_dcg[i+1] = _dcg
                 doc_mrr[i+1] = _mrr # 1.0/rank_first if rank_first>0 else 0
 
             for k in range(j, len(self.ranks)):

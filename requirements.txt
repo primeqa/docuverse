@@ -1,19 +1,19 @@
 rouge-score
 pyyaml~=6.0.2
 accelerate
-sentence-transformers
+sentence-transformers==5.1.2
 python-dotenv~=1.0.1
-numpy~=2.2.5
+numpy==2.2.6
 # urllib3~=1.26.18
 urllib3~=2.4.0
 torch~=2.8.0
 multiprocess~=0.70.18;platform_system=="Darwin"
 tqdm~=4.67.1
-transformers~=4.56.2
-orjson~=3.10.18
+transformers==4.57.1
+orjson==3.11.5
 pydantic_core~=2.27.2
 simple_colors~=0.1.5
 pandas~=2.2.0
 jinja2~=3.1.0
 grpcio~=1.60.0
-scipy~=1.11.0
+scipy==1.16.1
