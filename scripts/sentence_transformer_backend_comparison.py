@@ -15,6 +15,7 @@ from tqdm import tqdm
 import os
 
 from docuverse.utils import open_stream
+from docuverse.utils.jsonl_utils import read_jsonl_file
 
 def get_memory_usage():
     """Get current memory usage in MB."""
@@ -26,6 +27,7 @@ def load_sentence_transformer_with_backend(model_name: str,
                                            backend: str = 'pytorch',
                                            device: str = 'cuda',
                                            model_path: str = None,
+                                           precision: str = 'bf16',
                                            **backend_kwargs):
     """Load a SentenceTransformer model with a specified backend.
 
@@ -34,17 +36,28 @@ def load_sentence_transformer_with_backend(model_name: str,
         backend: Backend to use ('pytorch', 'onnx', 'openvino')
         device: Device to run on ('cuda', 'cpu')
         model_path: Path to a converted model (for onnx/openvino)
+        precision: Model precision for PyTorch ('fp32', 'fp16', 'bf16')
         **backend_kwargs: Additional backend-specific arguments
     """
     model = None
     try:
         if backend == 'pytorch':
-            # Standard SentenceTransformer loading
-            model_kwargs = {}
+            # Standard SentenceTransformer loading with specified precision
+            model_kwargs = {'model_kwargs': {}}
+
+            # Set precision
+            if precision == 'bf16':
+                model_kwargs['model_kwargs']['dtype'] = torch.bfloat16
+            elif precision == 'fp16':
+                model_kwargs['model_kwargs']['dtype'] = torch.float16
+            elif precision == 'fp32':
+                model_kwargs['model_kwargs']['dtype'] = torch.float32
+
             if device == 'cpu':
-                model_kwargs['model_kwargs'] = {'attn_implementation': 'eager'}
+                model_kwargs['model_kwargs']['attn_implementation'] = 'eager'
 
             model = SentenceTransformer(model_name, device=device, **model_kwargs)
+            print(f"  Loaded model in {precision.upper()} precision")
 
         elif backend == 'onnx':
             if model_path is None:
@@ -82,6 +95,94 @@ def load_sentence_transformer_with_backend(model_name: str,
                 backend='openvino',
                 model_kwargs=openvino_kwargs
             )
+        elif backend == "ollama":
+            print(f"Loading model with Ollama backend...")
+            import requests
+            try:
+                # Create a wrapper class to make it compatible with SentenceTransformer interface
+                class OllamaSentenceTransformer:
+                    _dim = None
+
+                    def __init__(self, model_name: str, base_url: str = "http://localhost:11434"):
+                        self.model_name = model_name
+                        self.base_url = base_url
+
+                        # Test connection to Ollama
+                        try:
+                            response = requests.get(f"{self.base_url}/api/tags")
+                            if response.status_code != 200:
+                                raise ConnectionError(f"Cannot connect to Ollama at {self.base_url}")
+
+                            # Check if model is available
+                            models = response.json().get('models', [])
+                            model_names = [m['name'] for m in models]
+                            if not any(model_name in name for name in model_names):
+                                print(f"⚠ Warning: Model '{model_name}' not found in Ollama")
+                                print(f"Available models: {', '.join(model_names)}")
+                                print(f"You may need to run: ollama pull {model_name}")
+                        except requests.exceptions.ConnectionError:
+                            raise ConnectionError(
+                                f"Cannot connect to Ollama at {self.base_url}. "
+                                "Make sure Ollama is running (ollama serve)"
+                            )
+
+                    def encode(self, sentences, batch_size: int = 32, **kwargs):
+                        """Encode sentences using Ollama model."""
+                        if isinstance(sentences, str):
+                            sentences = [sentences]
+
+                        embeddings = []
+
+                        # Process in batches
+                        for i in range(0, len(sentences), batch_size):
+                            batch = sentences[i:i + batch_size]
+
+                            for text in batch:
+                                try:
+                                    response = requests.post(
+                                        f"{self.base_url}/api/embeddings",
+                                        json={
+                                            "model": self.model_name,
+                                            "prompt": text,
+                                        },
+                                        timeout=30
+                                    )
+
+                                    if response.status_code == 200:
+                                        embedding = response.json()["embedding"]
+                                        embeddings.append(embedding)
+                                    else:
+                                        raise RuntimeError(
+                                            f"Ollama API error: {response.status_code} - {response.text}"
+                                        )
+                                except requests.exceptions.Timeout:
+                                    raise TimeoutError(f"Ollama request timeout for text: {text[:50]}...")
+
+                        return np.array(embeddings)
+
+                    def get_sentence_embedding_dimension(self):
+                        """Get embedding dimension by encoding a test sentence."""
+                        if self._dim is None:
+                            enc = self.encode(["Test"])
+                            self._dim = len(enc[0])
+                        return self._dim
+
+                # Get Ollama base URL from backend_kwargs if provided
+                base_url = backend_kwargs.get('base_url', 'http://localhost:11434')
+
+                model = OllamaSentenceTransformer(model_name, base_url=base_url)
+                print(f"✓ Model loaded successfully with Ollama backend")
+                print(f"  Model: {model_name}")
+                print(f"  Ollama URL: {base_url}")
+                print(f"  Embedding dimension: {model.get_sentence_embedding_dimension()}")
+
+            except ConnectionError as e:
+                print(f"❌ Ollama connection error: {e}")
+                return None
+            except Exception as e:
+                print(f"❌ Error loading model with Ollama backend: {e}")
+                return None
+
         elif backend == "vllm":
             print(f"Loading model with vLLM backend...")
             import requests
@@ -180,45 +281,80 @@ def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_nump
     if isinstance(embeddings, torch.Tensor):
         if embeddings.is_cuda:
             embeddings = embeddings.cpu()
+        # Convert BFloat16 to Float32 before numpy conversion (numpy doesn't support bfloat16)
+        if embeddings.dtype == torch.bfloat16:
+            embeddings = embeddings.float()
         embeddings = embeddings.numpy()
     elif not isinstance(embeddings, np.ndarray):
         # Convert other types to numpy, handling nested tensors
         if hasattr(embeddings, '__iter__') and len(embeddings) > 0 and isinstance(embeddings[0], torch.Tensor):
-            embeddings = torch.stack([e.cpu() if e.is_cuda else e for e in embeddings]).numpy()
+            stacked = torch.stack([e.cpu() if e.is_cuda else e for e in embeddings])
+            # Convert BFloat16 to Float32 before numpy conversion
+            if stacked.dtype == torch.bfloat16:
+                stacked = stacked.float()
+            embeddings = stacked.numpy()
         else:
             embeddings = np.array(embeddings)
 
     return embeddings
 
 
-def read_sentences(file_path: str, max_text_length: int = None) -> List[str]:
-    """Read sentences from a file, one per line.
+def read_sentences(file_path_or_string: str, max_text_length: int = None, field_path: str = None) -> List[str]:
+    """Read sentences from a file or direct string input.
+
+    Supports:
+    - Direct string input (if not a file path)
+    - Plain text files (one sentence per line)
+    - JSONL files with field path extraction
+    - JSONL.bz2 compressed files
 
     Args:
-        file_path: Path to input file
+        file_path_or_string: Path to input file (.txt, .jsonl, .jsonl.bz2) or direct string
         max_text_length: Maximum allowed text length (optional)
+        field_path: Dot-separated path to text field in JSONL (e.g., 'document.text', 'documents[*].text')
+                   If None and file is JSONL, will try common field names: 'text', 'content', 'question'
     """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Input file not found: {file_path}")
+    # Check if input is a file path or direct string
+    if os.path.exists(file_path_or_string):
+        # It's a file path
+        file_path = file_path_or_string
 
-    sentences = []
-    with open_stream(file_path) as f:
-        for line in f:  # Read line by line instead of readlines()
-            line = line.strip()
-            if not line:
-                continue
+        # Check if file is JSONL format
+        is_jsonl = file_path.endswith('.jsonl') or file_path.endswith('.jsonl.bz2')
 
-            # Try to parse as JSONL first
-            try:
-                text = json.loads(line)['text']
-            except (json.JSONDecodeError, KeyError):
-                # Fall back to plain text
-                text = line
+        if is_jsonl:
+            # Use jsonl_utils for JSONL files
+            print(f"Reading JSONL file: {file_path}")
+            if field_path:
+                print(f"  Using field path: {field_path}")
+            sentences = read_jsonl_file(file_path, field_path=field_path, verbose=True)
+            print(f"✓ Loaded {len(sentences)} texts from JSONL")
+        else:
+            # Original logic for plain text files
+            sentences = []
+            with open_stream(file_path) as f:
+                for line in f:  # Read line by line instead of readlines()
+                    line = line.strip()
+                    if not line:
+                        continue
 
-            if max_text_length and len(text) > max_text_length:
-                text = text[:max_text_length]
+                    # Try to parse as JSONL first (for backward compatibility)
+                    try:
+                        text = json.loads(line)['text']
+                    except (json.JSONDecodeError, KeyError):
+                        # Fall back to plain text
+                        text = line
 
-            sentences.append(text)
+                    sentences.append(text)
+    else:
+        # It's a direct string input
+        print(f"Using direct string input")
+        sentences = [file_path_or_string]
+
+    # Apply max_text_length truncation if specified
+    if max_text_length:
+        sentences = [text[:max_text_length] if len(text) > max_text_length else text
+                    for text in sentences]
 
     return sentences
 
@@ -269,17 +405,58 @@ Examples:
   # Compare PyTorch with OpenVINO
   python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch openvino --openvino-path ./model.xml --input data.txt
 
-  # Compare all three backends
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx openvino --onnx-path ./model.onnx --openvino-path ./model.xml --input data.txt
+  # Use FP32 precision instead of default BF16
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input data.txt --precision fp32
+
+  # Compare PyTorch with Ollama (same model name)
+  python {script_name} --model nomic-embed-text --backends pytorch ollama --input data.txt
+
+  # Compare with Ollama using different model name
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch ollama --ollama-model all-minilm --input data.txt
+
+  # Compare Ollama with custom URL and model name
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends ollama --ollama-url http://localhost:11434 --ollama-model nomic-embed-text --input data.txt
+
+  # Compare all backends
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx openvino ollama --onnx-path ./model.onnx --openvino-path ./model.xml --ollama-model all-minilm --input data.txt
+
+  # Direct string input (single sentence)
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input "What is machine learning?"
+
+  # JSONL file with auto-detected text field
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input data.jsonl
+
+  # JSONL file with custom field path
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input data.jsonl --field-path document.text
+
+  # JSONL with array wildcard (all items)
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input data.jsonl --field-path documents[*].text
+
+  # Compressed JSONL file
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch ollama --input data.jsonl.bz2 --field-path question
+
+  # Save results to JSON file
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --input data.txt --output-file results.json
+
+  # JSONL input with JSON output
+  python {script_name} --model nomic-embed-text --backends pytorch ollama --input data.jsonl --field-path text --output-file benchmark_results.json
+
+  # Save results including embeddings (warning: creates large files)
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --input data.txt --output-file results_with_embeddings.json --save-embeddings
         """
     )
     # ... rest of the argument definitions ...
     parser.add_argument("--model", required=True, help="SentenceTransformer model name or path")
     parser.add_argument('--backends', nargs='+',
-                        choices=['pytorch', 'onnx', 'openvino', 'tensorrt', 'vllm'],
+                        choices=['pytorch', 'onnx', 'openvino', 'tensorrt', 'vllm', 'ollama'],
                         default=['pytorch', 'onnx'],
                         help='Backends to compare')
-    parser.add_argument("--input", required=True, help="Path to the input text file with sentences")
+    parser.add_argument("--input", required=True, help="Path to input file (text, JSONL, JSONL.bz2) or direct string to encode")
+    parser.add_argument("--field-path", "--field_path", dest="field_path",
+                       type=str, default=None,
+                       help="Dot-separated path to text field in JSONL (e.g., 'document.text', 'documents[*].text'). "
+                            "Supports array indexing: 'documents[0].text' (first item), 'documents[*].text' (all items). "
+                            "If not specified for JSONL files, will try common fields: 'text', 'content', 'question'")
 
     # Accept both - and _ variants for multi-word arguments
     parser.add_argument("--onnx-path", "--onnx_path", dest="onnx_path",
@@ -292,12 +469,29 @@ Examples:
                        help="Batch size for processing (default: 128)")
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"],
                        help="Device to run models on (default: cuda)")
+    parser.add_argument("--precision", type=str, default="bf16", choices=["fp32", "fp16", "bf16"],
+                       help="Model precision for PyTorch backend (default: bf16)")
     parser.add_argument("--max-text-length", "--max_text_length", dest="max_text_length",
                        type=int, default=None, help="Maximum text length (default: no limit)")
     parser.add_argument("--num-threads", "--num_threads", dest="num_threads", type=int, default=None,
                        help="Number of CPU threads for PyTorch (default: all available)")
     parser.add_argument("--openvino-device", "--openvino_device", dest="openvino_device",
                        type=str, default="CPU", help="OpenVINO device (CPU, GPU, etc.) (default: CPU)")
+    parser.add_argument("--ollama-url", "--ollama_url", dest="ollama_url",
+                       type=str, default="http://localhost:11434",
+                       help="Ollama server URL (default: http://localhost:11434)")
+    parser.add_argument("--ollama-model", "--ollama_model", dest="ollama_model",
+                       type=str, default=None,
+                       help="Ollama model name (if different from --model). E.g., 'nomic-embed-text' for Ollama vs HF model name")
+    parser.add_argument("--output-file", "--output_file", dest="output_file",
+                       type=str, default=None,
+                       help="Path to save results (JSON format). If not specified, only prints to stdout")
+    parser.add_argument("--output-format", "--output_format", dest="output_format",
+                       type=str, default="json", choices=["json"],
+                       help="Output file format (default: json)")
+    parser.add_argument("--save-embeddings", "--save_embeddings", dest="save_embeddings",
+                       action="store_true",
+                       help="Include embeddings in the JSON output (warning: can create large files)")
 
     args = parser.parse_args()
 
@@ -325,7 +519,7 @@ Examples:
 
         if backend == 'pytorch':
             models[backend] = load_sentence_transformer_with_backend(
-                args.model, backend='pytorch', device=args.device
+                args.model, backend='pytorch', device=args.device, precision=args.precision
             )
         elif backend == 'onnx':
             models[backend] = load_sentence_transformer_with_backend(
@@ -337,6 +531,17 @@ Examples:
                 args.model, backend='openvino', device=args.openvino_device,
                 model_path=openvino_model
             )
+        elif backend == "ollama":
+            # Add Ollama-specific parameters
+            # Use ollama_model if specified, otherwise use the HF model name
+            ollama_model_name = args.ollama_model if args.ollama_model else args.model
+            model_kwargs = {
+                'base_url': args.ollama_url,
+            }
+            models[backend] = load_sentence_transformer_with_backend(
+                ollama_model_name, backend='ollama', device=args.device,
+                **model_kwargs
+            )
         elif backend == "vllm":
             # Add any vLLM-specific parameters
             model_kwargs = {
@@ -346,7 +551,7 @@ Examples:
             models[backend] = load_sentence_transformer_with_backend(args.model, backend, model_kwargs)
 
     # Read sentences
-    sentences = read_sentences(args.input, args.max_text_length)
+    sentences = read_sentences(args.input, args.max_text_length, args.field_path)
     if args.num_samples and args.num_samples < len(sentences):
         print(f"Using {args.num_samples} out of {len(sentences)} sentences")
         sentences = sentences[:args.num_samples]
@@ -360,7 +565,11 @@ Examples:
     print(f"Median length: {statistics.median(lengths):.1f} chars")
     print(f"Min length: {min(lengths)} chars")
     print(f"Max length: {max(lengths)} chars")
-    print(f"Std dev: {statistics.stdev(lengths):.1f} chars")
+    # Standard deviation requires at least 2 samples
+    if len(lengths) > 1:
+        print(f"Std dev: {statistics.stdev(lengths):.1f} chars")
+    else:
+        print(f"Std dev: N/A (only 1 sample)")
 
     # Process in batches
     batches = [sentences[i:i + args.batch_size] for i in range(0, len(sentences), args.batch_size)]
@@ -393,6 +602,17 @@ Examples:
             backend_times[backend] += time.time() - start_time
             batch_embeddings[i] = embeddings
 
+            # Store embeddings if requested
+            if args.save_embeddings:
+                # Convert to numpy if needed
+                if isinstance(embeddings, list):
+                    embeddings_np = np.array(embeddings)
+                elif hasattr(embeddings, 'cpu'):  # torch tensor
+                    embeddings_np = embeddings.cpu().numpy()
+                else:
+                    embeddings_np = np.array(embeddings)
+                backend_embeddings[backend].append(embeddings_np)
+
         for i in range(len(args.backends)):
             for j in range(i+1, len(args.backends)):
                 key = f"{args.backends[j]} {args.backends[i]}"
@@ -415,6 +635,40 @@ Examples:
     for k in scores.keys():
         scores[k] /= len(sentences)
 
+    # Concatenate embeddings from all batches if they were collected
+    if args.save_embeddings:
+        print("\nConcatenating embeddings from all batches...")
+        for backend in args.backends:
+            if backend_embeddings[backend]:
+                backend_embeddings[backend] = np.vstack(backend_embeddings[backend])
+                print(f"  {backend}: shape {backend_embeddings[backend].shape}")
+
+    # Initialize results dictionary for JSON output
+    results_dict = {
+        'config': {
+            'model': args.model,
+            'backends': args.backends,
+            'num_sentences': len(sentences),
+            'batch_size': args.batch_size,
+            'device': args.device,
+            'precision': args.precision,
+            'input_file': args.input,
+            'field_path': args.field_path if hasattr(args, 'field_path') else None,
+            'save_embeddings': args.save_embeddings,
+        },
+        'performance': {},
+        'similarity': {}
+    }
+
+    # Add embeddings to results if requested
+    if args.save_embeddings:
+        results_dict['embeddings'] = {}
+        for backend in args.backends:
+            if isinstance(backend_embeddings[backend], np.ndarray):
+                # Convert numpy array to list for JSON serialization
+                results_dict['embeddings'][backend] = backend_embeddings[backend].tolist()
+                print(f"  Added {backend} embeddings to results (shape: {backend_embeddings[backend].shape})")
+
     # Report performance results
     print("\n" + "=" * 70)
     print("PERFORMANCE COMPARISON")
@@ -431,11 +685,19 @@ Examples:
     for backend in args.backends:
         time_val = backend_times[backend]
         throughput = num_docs / time_val if time_val > 0 else float('inf')
+        speedup = baseline_time / time_val if time_val > 0 and backend != baseline_backend else 1.0
+
+        # Store in results dictionary
+        results_dict['performance'][backend] = {
+            'time_seconds': float(time_val),
+            'throughput_docs_per_sec': float(throughput),
+            'speedup': float(speedup) if backend != baseline_backend else None,
+            'is_baseline': backend == baseline_backend
+        }
 
         if backend == baseline_backend:
             print(f"{backend.upper():<15} {time_val:>8.2f}s    {throughput:>8.1f} docs/s    {'(baseline)':<10}")
         else:
-            speedup = baseline_time / time_val if time_val > 0 else float('inf')
             print(f"{backend.upper():<15} {time_val:>8.2f}s    {throughput:>8.1f} docs/s    {speedup:>6.2f}x")
 
     # Report embedding similarity comparisons
@@ -449,6 +711,17 @@ Examples:
 
         for backend in args.backends[1:]:
             cosine_sim, mse, manhattan = scores[f"{backend} {baseline_backend}"]
+
+            # Store in results dictionary
+            comparison_key = f"{baseline_backend}_vs_{backend}"
+            results_dict['similarity'][comparison_key] = {
+                'backend1': baseline_backend,
+                'backend2': backend,
+                'mean_cosine_similarity': float(cosine_sim),
+                'mean_squared_error': float(mse),
+                'mean_manhattan_distance': float(manhattan)
+            }
+
             print(f"\n{baseline_backend.upper()} vs {backend.upper()}:")
             print(f"  Mean Cosine Similarity:  {cosine_sim:.6f} (1.0 = identical)")
             print(f"  Mean Squared Error:      {mse:.6f} (0.0 = identical)")
@@ -472,8 +745,22 @@ Examples:
                     # cosine_sim, mse, manhattan = compute_similarity(emb1_trimmed, emb2_trimmed)
                     cosine_sim, mse, manhattan = scores[f"{backend2} {backend1}"]
 
+                    # Store in results dictionary
+                    comparison_key = f"{backend1}_vs_{backend2}"
+                    results_dict['similarity'][comparison_key] = {
+                        'backend1': backend1,
+                        'backend2': backend2,
+                        'mean_cosine_similarity': float(cosine_sim),
+                        'mean_squared_error': float(mse),
+                        'mean_manhattan_distance': float(manhattan)
+                    }
+
                     print(f"\n{backend1.upper()} vs {backend2.upper()}:")
                     print(f"  Cosine Similarity: {cosine_sim:.6f}")
+
+    # Save results to JSON if output file specified
+    if args.output_file:
+        save_results_json(args.output_file, results_dict)
 
 
 def _analyze_results(cosine_sim: float, model_name: str):
@@ -488,6 +775,29 @@ def _analyze_results(cosine_sim: float, model_name: str):
         print("    - Backend conversion might not be exact")
         print("    - Different preprocessing or tokenization")
         print("    - Check model compatibility")
+
+
+def save_results_json(output_file: str, results: dict):
+    """Save benchmark results to JSON file.
+
+    Args:
+        output_file: Path to output JSON file
+        results: Dictionary containing benchmark results
+    """
+    import json
+    from datetime import datetime
+
+    # Add metadata
+    results['metadata'] = {
+        'timestamp': datetime.now().isoformat(),
+        'script_version': '1.0'
+    }
+
+    # Save to file
+    with open(output_file, 'w') as f:
+        json.dump(results, f, indent=2)
+
+    print(f"\n✓ Results saved to: {output_file}")
 
 
 if __name__ == "__main__":

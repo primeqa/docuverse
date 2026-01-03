@@ -15,7 +15,7 @@ limitations under the License.
 -->
 
 <h3 align="center">
-    <img width="350" alt="primeqa" src="docs/_static/img/PrimeQA.png">
+    <img width="350" alt="DocUVerse D⌕" src="docs/_static/img/DocUVerse.png">
     <p>Repository for (almost) *all* your document search needs.</p>
     <p>Part of the Prime Repository for State-of-the-Art Multilingual QuestionAnswering Research and Development.</p>
 </h3>
