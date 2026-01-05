@@ -5,6 +5,7 @@ import gc
 import sys
 
 import psutil
+from docuverse.utils.embeddings.ollama_embedding_function import OllamaSentenceTransformer
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -21,6 +22,7 @@ def get_memory_usage():
     """Get current memory usage in MB."""
     process = psutil.Process(os.getpid())
     return process.memory_info().rss / 1024 / 1024
+
 
 
 def load_sentence_transformer_with_backend(model_name: str,
@@ -97,75 +99,7 @@ def load_sentence_transformer_with_backend(model_name: str,
             )
         elif backend == "ollama":
             print(f"Loading model with Ollama backend...")
-            import requests
             try:
-                # Create a wrapper class to make it compatible with SentenceTransformer interface
-                class OllamaSentenceTransformer:
-                    _dim = None
-
-                    def __init__(self, model_name: str, base_url: str = "http://localhost:11434"):
-                        self.model_name = model_name
-                        self.base_url = base_url
-
-                        # Test connection to Ollama
-                        try:
-                            response = requests.get(f"{self.base_url}/api/tags")
-                            if response.status_code != 200:
-                                raise ConnectionError(f"Cannot connect to Ollama at {self.base_url}")
-
-                            # Check if model is available
-                            models = response.json().get('models', [])
-                            model_names = [m['name'] for m in models]
-                            if not any(model_name in name for name in model_names):
-                                print(f"⚠ Warning: Model '{model_name}' not found in Ollama")
-                                print(f"Available models: {', '.join(model_names)}")
-                                print(f"You may need to run: ollama pull {model_name}")
-                        except requests.exceptions.ConnectionError:
-                            raise ConnectionError(
-                                f"Cannot connect to Ollama at {self.base_url}. "
-                                "Make sure Ollama is running (ollama serve)"
-                            )
-
-                    def encode(self, sentences, batch_size: int = 32, **kwargs):
-                        """Encode sentences using Ollama model."""
-                        if isinstance(sentences, str):
-                            sentences = [sentences]
-
-                        embeddings = []
-
-                        # Process in batches
-                        for i in range(0, len(sentences), batch_size):
-                            batch = sentences[i:i + batch_size]
-
-                            for text in batch:
-                                try:
-                                    response = requests.post(
-                                        f"{self.base_url}/api/embeddings",
-                                        json={
-                                            "model": self.model_name,
-                                            "prompt": text,
-                                        },
-                                        timeout=30
-                                    )
-
-                                    if response.status_code == 200:
-                                        embedding = response.json()["embedding"]
-                                        embeddings.append(embedding)
-                                    else:
-                                        raise RuntimeError(
-                                            f"Ollama API error: {response.status_code} - {response.text}"
-                                        )
-                                except requests.exceptions.Timeout:
-                                    raise TimeoutError(f"Ollama request timeout for text: {text[:50]}...")
-
-                        return np.array(embeddings)
-
-                    def get_sentence_embedding_dimension(self):
-                        """Get embedding dimension by encoding a test sentence."""
-                        if self._dim is None:
-                            enc = self.encode(["Test"])
-                            self._dim = len(enc[0])
-                        return self._dim
 
                 # Get Ollama base URL from backend_kwargs if provided
                 base_url = backend_kwargs.get('base_url', 'http://localhost:11434')
