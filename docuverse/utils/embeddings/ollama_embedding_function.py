@@ -1,3 +1,5 @@
+import json
+
 import requests
 import numpy as np
 
@@ -8,10 +10,10 @@ from docuverse.utils.embeddings.embedding_function import EmbeddingFunction
 class OllamaSentenceTransformer:
     _dim = None
 
-    def __init__(self, model_name: str, base_url: str = "http://localhost:11434"):
+    def __init__(self, model_name: str, base_url: str = "http://localhost:11434", truncate=True):
         self.model_name = model_name
         self.base_url = base_url
-
+        self.truncate = truncate
         # Test connection to Ollama
         try:
             response = requests.get(f"{self.base_url}/api/tags")
@@ -31,7 +33,7 @@ class OllamaSentenceTransformer:
                 "Make sure Ollama is running (ollama serve)"
             )
 
-    def encode(self, sentences, batch_size: int = 32, **kwargs):
+    def encode(self, sentences, batch_size: int = 32, normalize=True, **kwargs):
         """Encode sentences using Ollama model."""
         single_vector=False
         if isinstance(sentences, str):
@@ -39,31 +41,49 @@ class OllamaSentenceTransformer:
             single_vector = True
 
         embeddings = []
+        if not normalize:
+            _api="embeddings"
+            _input="prompt"
+            _answer="embedding"
+        else:
+            _api="embed"
+            _input="input"
+            _answer = "embeddings"
+        batch_no = kwargs.get("batch_no", "unknown")
 
         # Process in batches
         for i in range(0, len(sentences), batch_size):
             batch = sentences[i:i + batch_size]
 
-            for text in batch:
-                try:
-                    response = requests.post(
-                        f"{self.base_url}/api/embeddings",
-                        json={
-                            "model": self.model_name,
-                            "prompt": text,
-                        },
-                        timeout=30
-                    )
+            # for text in batch:
+            try:
+                json_args = {
+                    "model": self.model_name,
+                    f"{_input}": batch,
+                    "truncate": self.truncate
+                }
+                url=f"{self.base_url}/api/{_api}"
+                response = requests.post(
+                    url=url,
+                    json=json_args,
+                    timeout=30
+                )
 
-                    if response.status_code == 200:
-                        embedding = response.json()["embedding"]
-                        embeddings.append(embedding)
+                if response.status_code == 200:
+                    embedding = response.json()[_answer]
+                    if len(embedding)==1:
+                        embeddings.append(embedding[0])
                     else:
-                        raise RuntimeError(
-                            f"Ollama API error: {response.status_code} - {response.text}"
-                        )
-                except requests.exceptions.Timeout:
-                    raise TimeoutError(f"Ollama request timeout for text: {text[:50]}...")
+                        embeddings.extend(embedding)
+                else:
+                    raise RuntimeError(
+                        f"Ollama API error: {response.status_code} - {response.text}"
+                    )
+            except requests.exceptions.Timeout:
+                raise TimeoutError(f"Ollama request timeout for text: {text[:50]}...")
+            except Exception as e:
+                print(f"Ollama API error at sentence {i} in batch {batch_no}: {e}")
+                raise e
 
         if single_vector:
             embeddings = embeddings[0]

@@ -5,11 +5,12 @@ import gc
 import sys
 
 import psutil
+
 from docuverse.utils.embeddings.ollama_embedding_function import OllamaSentenceTransformer
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from typing import List, Tuple, LiteralString
+from typing import List, Tuple, LiteralString, Any
 import time
 import torch
 from tqdm import tqdm
@@ -185,6 +186,30 @@ def load_sentence_transformer_with_backend(model_name: str,
     return model
 
 
+def compute_stats(vector: np.ndarray | list) -> Tuple[float, float, float, float, int]:
+    """Compute statistics from a vector.
+
+    Args:
+        vector: Input vector (numpy array or list)
+
+    Returns:
+        Tuple containing (mean, median, std, min, arg_min)
+    """
+    if isinstance(vector, list):
+        vector = np.array(vector)
+
+    if len(vector) == 0:
+        return 0.0, 0.0, 0.0, 0.0, 0
+
+    mean = float(np.mean(vector))
+    median = float(np.median(vector))
+    std = float(np.std(vector))
+    min_val = float(np.min(vector))
+    arg_min = int(np.argmin(vector))
+
+    return mean, median, std, min_val, arg_min
+
+
 def _get_model_and_file_names(model_path: str, kwargs: dict[str, str]) -> LiteralString | str | bytes:
     # Split path into all components
     path_components = []
@@ -200,16 +225,20 @@ def _get_model_and_file_names(model_path: str, kwargs: dict[str, str]) -> Litera
     return model_path
 
 
-def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_numpy: bool=True) -> np.ndarray:
+def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_numpy: bool=True, batch_no=-1) -> np.ndarray:
     """Generate embeddings using SentenceTransformer (works with all backends)."""
     embeddings = None
     with torch.no_grad():
-        embeddings = model.encode(
-            batch,
-            show_progress_bar=False,
-            convert_to_numpy=convert_to_numpy,
-            normalize_embeddings=True
-        )
+        try:
+            embeddings = model.encode(
+                batch,
+                show_progress_bar=False,
+                convert_to_numpy=convert_to_numpy,
+                normalize_embeddings=True
+            )
+        except Exception as e:
+            print(f"Embedding computation failed on batch {batch_no}: {e}. The text: {[t[:100]+" ..." for t in batch]}")
+            raise e
 
     # Ensure embeddings are on CPU and in numpy format for comparison
     if isinstance(embeddings, torch.Tensor):
@@ -293,8 +322,13 @@ def read_sentences(file_path_or_string: str, max_text_length: int = None, field_
     return sentences
 
 
-def compute_similarity(embeddings1: np.ndarray|list, embeddings2: np.ndarray|list, return_mean: bool=True) -> Tuple[float, float, float]:
-    """Compute similarity metrics between two sets of embeddings."""
+def compute_similarity(embeddings1: np.ndarray | list, embeddings2: np.ndarray | list, return_mean: bool = True) -> \
+List[float]:
+    """Compute similarity metrics between two sets of embeddings.
+
+    Returns:
+        List containing [cosine_similarity, mse, manhattan_distance]
+    """
     # Normalize embeddings
     if isinstance(embeddings1, list):
         embeddings1 = np.array(embeddings1)
@@ -315,13 +349,13 @@ def compute_similarity(embeddings1: np.ndarray|list, embeddings2: np.ndarray|lis
     else:
         function = np.sum
 
-        # Compute MSE
-    mse = function(np.square(embeddings1 - embeddings2))
+    # Compute MSE
+    mse = function(np.square(embeddings1 - embeddings2), axis=1)
 
     # Compute Manhattan distance
-    manhattan = function(np.abs(embeddings1 - embeddings2))
+    manhattan = function(np.abs(embeddings1 - embeddings2), axis=1)
 
-    return np.array([function(cosine_similarities), mse, manhattan])
+    return [cosine_similarities, mse, manhattan]
 
 
 def main():
@@ -506,15 +540,16 @@ Examples:
         print(f"Std dev: N/A (only 1 sample)")
 
     # Process in batches
-    batches = [sentences[i:i + args.batch_size] for i in range(0, len(sentences), args.batch_size)]
+    num_sentences = len(sentences)
+    batches = [sentences[i:i + args.batch_size] for i in range(0, num_sentences, args.batch_size)]
 
     # Warmup phase - run a few batches to initialize models
     print("\nWarming up models...")
-    warmup_batches = min(3, len(batches))  # Use up to 3 batches for warmup
+    warmup_examples = min(5, num_sentences)  # Use up to 5 examples for warmup
+    warmup_sentences = sentences[:warmup_examples]
     for backend in args.backends:
         print(f"  Warming up {backend.upper()}...")
-        for i in range(warmup_batches):
-            _ = get_embeddings(models[backend], batches[i], convert_to_numpy=False)
+        _ = get_embeddings(models[backend], warmup_sentences, convert_to_numpy=False)
     print("✓ Warmup completed")
 
     # Initialize tracking variables
@@ -526,15 +561,17 @@ Examples:
 
     print("\nProcessing batches...")
     scores = {}
+    min_vals = {}
+    arg_min_vals = {}
     for i, batch in enumerate(tqdm(batches)):
         batch_embeddings = [[] for _ in args.backends]
 
         # Generate embeddings for each backend
-        for i, backend in enumerate(args.backends):
+        for i1, backend in enumerate(args.backends):
             start_time = time.time()
-            embeddings = get_embeddings(models[backend], batch, convert_to_numpy=False)
+            embeddings = get_embeddings(models[backend], batch, convert_to_numpy=False, batch_no=i)
             backend_times[backend] += time.time() - start_time
-            batch_embeddings[i] = embeddings
+            batch_embeddings[i1] = embeddings
 
             # Store embeddings if requested
             if args.save_embeddings:
@@ -547,13 +584,15 @@ Examples:
                     embeddings_np = np.array(embeddings)
                 backend_embeddings[backend].append(embeddings_np)
 
-        for i in range(len(args.backends)):
-            for j in range(i+1, len(args.backends)):
-                key = f"{args.backends[j]} {args.backends[i]}"
+        for i1 in range(len(args.backends)):
+            for j in range(i1+1, len(args.backends)):
+                key = f"{args.backends[j]} {args.backends[i1]}"
                 if key not in scores:
-                    scores[key] = np.zeros(3)
-                scores[key] += compute_similarity(batch_embeddings[i], batch_embeddings[j], return_mean=False)
+                    scores[key] = [[],[],[]]
 
+                res = compute_similarity(batch_embeddings[i1], batch_embeddings[j], return_mean=False)
+                for v in range(len(scores[key])):
+                    scores[key][v].extend(res[v])
 
         # Clean up batch embeddings
         del batch_embeddings
@@ -566,8 +605,8 @@ Examples:
                 print(f"GC triggered at batch {i}, memory: {current_memory:.1f}MB")
 
     # Normalize the results:
-    for k in scores.keys():
-        scores[k] /= len(sentences)
+    # for k in scores.keys():
+    #     scores[k] /= num_sentences
 
     # Concatenate embeddings from all batches if they were collected
     if args.save_embeddings:
@@ -582,7 +621,7 @@ Examples:
         'config': {
             'model': args.model,
             'backends': args.backends,
-            'num_sentences': len(sentences),
+            'num_sentences': num_sentences,
             'batch_size': args.batch_size,
             'device': args.device,
             'precision': args.precision,
@@ -608,7 +647,7 @@ Examples:
     print("PERFORMANCE COMPARISON")
     print("=" * 70)
 
-    num_docs = len(sentences)
+    num_docs = num_sentences
     baseline_backend = args.backends[0]  # Use first backend as baseline
     baseline_time = backend_times[baseline_backend]
 
@@ -642,55 +681,23 @@ Examples:
 
         # Compare each backend with the baseline (first backend)
         baseline_embeddings = backend_embeddings[baseline_backend]
+        arg_min = 0
 
         for backend in args.backends[1:]:
-            cosine_sim, mse, manhattan = scores[f"{backend} {baseline_backend}"]
-
-            # Store in results dictionary
-            comparison_key = f"{baseline_backend}_vs_{backend}"
-            results_dict['similarity'][comparison_key] = {
-                'backend1': baseline_backend,
-                'backend2': backend,
-                'mean_cosine_similarity': float(cosine_sim),
-                'mean_squared_error': float(mse),
-                'mean_manhattan_distance': float(manhattan)
-            }
-
-            print(f"\n{baseline_backend.upper()} vs {backend.upper()}:")
-            print(f"  Mean Cosine Similarity:  {cosine_sim:.6f} (1.0 = identical)")
-            print(f"  Mean Squared Error:      {mse:.6f} (0.0 = identical)")
-            print(f"  Mean Manhattan Distance: {manhattan:.6f} (0.0 = identical)")
-            _analyze_results(cosine_sim, f"{baseline_backend.upper()}/{backend.upper()}")
+            _, _, _, arg_min = _compute_and_print_similarity(baseline_backend, backend,
+                                                            scores, results_dict, verbose=True)
 
         # Compare all pairs if more than 2 backends
         if len(args.backends) > 2:
             print(f"\nAdditional pairwise comparisons:")
             for i, backend1 in enumerate(args.backends[1:], 1):
-                for backend2 in args.backends[i+1:]:
-                    # emb1 = backend_embeddings[backend1]
-                    # emb2 = backend_embeddings[backend2]
-                    #
-                    # min_samples = min(emb1.shape[0], emb2.shape[0])
-                    # min_dims = min(emb1.shape[1], emb2.shape[1])
-                    #
-                    # emb1_trimmed = emb1[:min_samples, :min_dims]
-                    # emb2_trimmed = emb2[:min_samples, :min_dims]
-                    #
-                    # cosine_sim, mse, manhattan = compute_similarity(emb1_trimmed, emb2_trimmed)
-                    cosine_sim, mse, manhattan = scores[f"{backend2} {backend1}"]
-
-                    # Store in results dictionary
-                    comparison_key = f"{backend1}_vs_{backend2}"
-                    results_dict['similarity'][comparison_key] = {
-                        'backend1': backend1,
-                        'backend2': backend2,
-                        'mean_cosine_similarity': float(cosine_sim),
-                        'mean_squared_error': float(mse),
-                        'mean_manhattan_distance': float(manhattan)
-                    }
-
+                for backend2 in args.backends[i + 1:]:
+                    cosine_sim, _, _ = _compute_and_print_similarity(backend1, backend2, scores, results_dict,
+                                                                     verbose=False)
                     print(f"\n{backend1.upper()} vs {backend2.upper()}:")
                     print(f"  Cosine Similarity: {cosine_sim:.6f}")
+        print("\n"+ "=" * 70)
+        print(f"The min cosine is realized for \n {sentences[arg_min][:300]} ...")
 
     # Save results to JSON if output file specified
     if args.output_file:
@@ -709,6 +716,51 @@ def _analyze_results(cosine_sim: float, model_name: str):
         print("    - Backend conversion might not be exact")
         print("    - Different preprocessing or tokenization")
         print("    - Check model compatibility")
+
+
+def _compute_and_print_similarity(backend1: str, backend2: str, scores: dict, results_dict: dict, verbose: bool = True):
+    """Compute and optionally print similarity statistics between two backends.
+
+    Args:
+        backend1: First backend name
+        backend2: Second backend name
+        scores: Dictionary containing similarity scores
+        results_dict: Dictionary to store results
+        verbose: Whether to print detailed statistics
+
+    Returns:
+        Tuple of (cosine_sim, mse_mean, manhattan)
+    """
+    key = f"{backend2} {backend1}"
+    cosine_sim, cosine_median, cosine_std, cosine_min, cosine_arg_min = compute_stats(scores[key][0])
+    mse_mean, mse_std, _, _, _ = compute_stats(scores[key][1])
+    manhattan, manhattan_std, _, _, _ = compute_stats(scores[key][2])
+
+    # Store in results dictionary
+    comparison_key = f"{backend1}_vs_{backend2}"
+    results_dict['similarity'][comparison_key] = {
+        'backend1': backend1,
+        'backend2': backend2,
+        'mean_cosine_similarity': float(cosine_sim),
+        'mean_squared_error': float(mse_mean),
+        'mean_manhattan_distance': float(manhattan),
+        'std_cosine_similarity': float(cosine_std),
+        'min_cosine_similarity': float(cosine_min),
+        'arg_min_cosine_similarity': int(cosine_arg_min),
+    }
+
+    if verbose:
+        print(f"\n{backend1.upper()} vs {backend2.upper()}:")
+        print(f"  Mean Cosine Similarity:    {cosine_sim:.6f} (1.0 = identical)")
+        print(f"  Median Cosine Similarity:  {cosine_median:.6f}")
+        print(f"  Std Dev Cosine Similarity: {cosine_std:.6f}")
+        print(f"  Min Cosine Similarity:     {cosine_min:.6f}")
+        print(f"  Arg Min Cosine Similarity: {int(cosine_arg_min)}")
+        print(f"  Mean Squared Error:        {mse_mean:.6f} ± {mse_std:.2f} (0.0 = identical)")
+        print(f"  Mean Manhattan Distance:   {manhattan:.6f} ± {manhattan_std:.2f} (0.0 = identical)")
+        _analyze_results(cosine_sim, f"{backend1.upper()}/{backend2.upper()}")
+
+    return cosine_sim, mse_mean, manhattan, cosine_arg_min
 
 
 def save_results_json(output_file: str, results: dict):
