@@ -544,13 +544,14 @@ Examples:
     batches = [sentences[i:i + args.batch_size] for i in range(0, num_sentences, args.batch_size)]
 
     # Warmup phase - run a few batches to initialize models
-    print("\nWarming up models...")
-    warmup_examples = min(5, num_sentences)  # Use up to 5 examples for warmup
-    warmup_sentences = sentences[:warmup_examples]
-    for backend in args.backends:
-        print(f"  Warming up {backend.upper()}...")
-        _ = get_embeddings(models[backend], warmup_sentences, convert_to_numpy=False)
-    print("✓ Warmup completed")
+    if num_sentences > 100:
+        print("\nWarming up models...")
+        warmup_examples = min(5, num_sentences)  # Use up to 5 examples for warmup
+        warmup_sentences = sentences[:warmup_examples]
+        for backend in args.backends:
+            print(f"  Warming up {backend.upper()}...")
+            _ = get_embeddings(models[backend], warmup_sentences, convert_to_numpy=False)
+        print("✓ Warmup completed")
 
     # Initialize tracking variables
     backend_times = {backend: 0 for backend in args.backends}
@@ -736,6 +737,23 @@ def _compute_and_print_similarity(backend1: str, backend2: str, scores: dict, re
     mse_mean, mse_std, _, _, _ = compute_stats(scores[key][1])
     manhattan, manhattan_std, _, _, _ = compute_stats(scores[key][2])
 
+
+    # Compute histogram of cosine similarity scores
+    cosine_scores = np.array(scores[key][0])
+    total_count = len(cosine_scores)
+
+    # Define ranges and compute counts
+    range_099_1 = np.sum((cosine_scores >= 0.99) & (cosine_scores <= 1.0))
+    range_098_099 = np.sum((cosine_scores >= 0.98) & (cosine_scores < 0.99))
+    range_095_098 = np.sum((cosine_scores >= 0.95) & (cosine_scores < 0.98))
+    range_0_095 = np.sum((cosine_scores >= 0.0) & (cosine_scores < 0.95))
+
+    # Calculate percentages
+    pct_099_1 = (range_099_1 / total_count * 100) if total_count > 0 else 0
+    pct_098_099 = (range_098_099 / total_count * 100) if total_count > 0 else 0
+    pct_095_098 = (range_095_098 / total_count * 100) if total_count > 0 else 0
+    pct_0_095 = (range_0_095 / total_count * 100) if total_count > 0 else 0
+
     # Store in results dictionary
     comparison_key = f"{backend1}_vs_{backend2}"
     results_dict['similarity'][comparison_key] = {
@@ -747,6 +765,12 @@ def _compute_and_print_similarity(backend1: str, backend2: str, scores: dict, re
         'std_cosine_similarity': float(cosine_std),
         'min_cosine_similarity': float(cosine_min),
         'arg_min_cosine_similarity': int(cosine_arg_min),
+        'histogram': {
+            'range_0.99_1.0': {'count': int(range_099_1), 'percentage': float(pct_099_1)},
+            'range_0.98_0.99': {'count': int(range_098_099), 'percentage': float(pct_098_099)},
+            'range_0.95_0.98': {'count': int(range_095_098), 'percentage': float(pct_095_098)},
+            'range_0.0_0.95': {'count': int(range_0_095), 'percentage': float(pct_0_095)},
+        }
     }
 
     if verbose:
@@ -758,6 +782,14 @@ def _compute_and_print_similarity(backend1: str, backend2: str, scores: dict, re
         print(f"  Arg Min Cosine Similarity: {int(cosine_arg_min)}")
         print(f"  Mean Squared Error:        {mse_mean:.6f} ± {mse_std:.2f} (0.0 = identical)")
         print(f"  Mean Manhattan Distance:   {manhattan:.6f} ± {manhattan_std:.2f} (0.0 = identical)")
+
+        # Display histogram
+        print(f"\n  Cosine Similarity Distribution:")
+        print(f"    [0.99, 1.00]: {range_099_1:6d} ({pct_099_1:5.1f}%)")
+        print(f"    [0.98, 0.99): {range_098_099:6d} ({pct_098_099:5.1f}%)")
+        print(f"    [0.95, 0.98): {range_095_098:6d} ({pct_095_098:5.1f}%)")
+        print(f"    [0.00, 0.95): {range_0_095:6d} ({pct_0_095:5.1f}%)")
+
         _analyze_results(cosine_sim, f"{backend1.upper()}/{backend2.upper()}")
 
     return cosine_sim, mse_mean, manhattan, cosine_arg_min
