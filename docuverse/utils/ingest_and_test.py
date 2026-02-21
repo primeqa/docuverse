@@ -71,7 +71,8 @@ def main_cli():
         print(timing)
 
     else:
-        timer.display_timing(tm.milliseconds_since_beginning(), keys={'queries': len(queries)}, sorted_by="%",
+        timer.display_timing(tm.milliseconds_since_beginning(),
+                             keys={'queries': 1 if queries is None else len(queries)}, sorted_by="%",
                              reverse=True)
 
 
