@@ -56,6 +56,13 @@ def create_retrieval_engine(retriever_config: dict):
        except ImportError as e:
            print("You need to install pymilvus package.")
            raise e
+   elif name in ['lancedb', 'lance']:
+       try:
+           from docuverse.engines.retrieval.lancedb import LanceDBEngine
+           engine = LanceDBEngine(retriever_config)
+       except ImportError as e:
+           print("You need to install lancedb package (run `pip install lancedb`).")
+           raise e
    elif name.startswith("file:"):
        from docuverse.engines.retrieval.file.file_engine import FileEngine
        engine = FileEngine(retriever_config)

@@ -26,21 +26,37 @@ import sys
 from pathlib import Path
 
 
-def discover_collection(db_file):
-    """Open the db briefly to list collections and auto-select if only one."""
-    from pymilvus import MilvusClient
-    client = MilvusClient(uri=db_file)
+def discover_collection(client, collection_name=None):
+    """Discover or validate the collection name using an existing client."""
     collections = client.list_collections()
-    client.close()
-    return collections
+    if not collections:
+        print("Error: no collections found in database.", file=sys.stderr)
+        sys.exit(1)
+
+    if collection_name:
+        if collection_name not in collections:
+            print(f"Error: collection '{collection_name}' not found. "
+                  f"Available: {collections}", file=sys.stderr)
+            sys.exit(1)
+        return collection_name
+    elif len(collections) == 1:
+        return collections[0]
+    else:
+        print(f"Multiple collections found: {collections}")
+        print("Please specify one with --collection / -c", file=sys.stderr)
+        sys.exit(1)
 
 
-def build_config(db_file, model_name, collection_name, top_k):
-    """Build the minimal config dict for SearchEngine."""
+def build_config(db_file, model_name, top_k):
+    """Build the minimal config dict for SearchEngine.
+
+    Uses a placeholder index_name; the real collection is discovered
+    after the engine's Milvus client is connected.
+    """
     return {
         "db_engine": "milvus-dense",
         "model_name": model_name,
-        "index_name": collection_name,
+        "index_name": "_placeholder_",
         "server": f"file:{db_file}",
         "top_k": top_k,
         "store_text_in_index": True,
@@ -122,17 +138,35 @@ Examples:
     import time
 
     if args.config:
-        # Config file mode: let SearchEngine parse the YAML directly
+        # Config file mode: read the YAML config
         config_path = Path(args.config)
         if not config_path.exists():
             print(f"Error: config file not found: {args.config}", file=sys.stderr)
             return 1
 
         print(f"Loading config: {config_path}")
+
+        # Read and fix the config before passing to SearchEngine.
+        # Some configs have a bare path for 'server' without the required
+        # 'file:' prefix -- detect and fix this automatically.
+        from docuverse.utils import read_config_file
+        config_dict = read_config_file(str(config_path))
+        retriever = config_dict.get("retriever", config_dict)
+        server_val = retriever.get("server", "")
+        if server_val and "file:" not in server_val and server_val.endswith(".db"):
+            retriever["server"] = f"file:{server_val}"
+            print(f"  (added 'file:' prefix to server path: {retriever['server']})")
+
         print("Initializing search engine (loading model)...")
         t0 = time.time()
-        engine = SearchEngine(str(config_path))
+        engine = SearchEngine(config_dict)
         print(f"Initialized in {time.time() - t0:.2f}s")
+
+        # Verify the client connected successfully
+        if engine.retriever.client is None:
+            print("Error: failed to connect to Milvus database. "
+                  "Check the 'server' field in your config.", file=sys.stderr)
+            return 1
 
         # Apply CLI overrides
         if args.top_k is not None:
@@ -154,37 +188,20 @@ Examples:
 
         db_file = str(db_path.resolve())
         top_k = args.top_k if args.top_k is not None else 5
-
-        # Discover or validate collection name
-        print(f"Opening database: {db_file}")
-        t0 = time.time()
-        collections = discover_collection(db_file)
-        print(f"Database opened in {time.time() - t0:.2f}s")
-        if not collections:
-            print("Error: no collections found in database.", file=sys.stderr)
-            return 1
-
-        if args.collection:
-            if args.collection not in collections:
-                print(f"Error: collection '{args.collection}' not found. "
-                      f"Available: {collections}", file=sys.stderr)
-                return 1
-            collection_name = args.collection
-        elif len(collections) == 1:
-            collection_name = collections[0]
-        else:
-            print(f"Multiple collections found: {collections}")
-            print("Please specify one with --collection / -c", file=sys.stderr)
-            return 1
-
         model_name = args.model
 
-        # Build config and initialize SearchEngine
-        print("\nInitializing search engine (loading model)...")
-        config = build_config(db_file, model_name, collection_name, top_k)
+        # Initialize SearchEngine (loads model + connects to db)
+        print(f"Opening database: {db_file}")
+        print("Initializing search engine (loading model)...")
+        config = build_config(db_file, model_name, top_k)
         t0 = time.time()
         engine = SearchEngine(config)
         print(f"Initialized in {time.time() - t0:.2f}s")
+
+        # Discover/validate collection through the engine's already-open client
+        collection_name = discover_collection(engine.retriever.client, args.collection)
+        engine.config.retriever_config.index_name = collection_name
+        engine.retriever.config.index_name = collection_name
 
     print(f"\nCollection: {collection_name}")
     print(f"Model: {model_name}")

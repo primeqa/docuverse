@@ -65,6 +65,9 @@ extra = [
 faiss = [
     "faiss-cpu",
 ]
+lancedb = [
+    "lancedb>=0.15",
+]
 all = [
     "pymilvus[model]~=2.5.9",
     "chromadb~=1.0.15",
