@@ -229,12 +229,12 @@ class LanceDBEngine(RetrievalEngine):
         )[0]
         tm.add_timing("encode")
 
-        output_cols = ["id", "text", "title"] + self.extra_fields
+        output_cols = ["id", "text", "title", "_distance"] + self.extra_fields
         results = (
             self.table.search(np.array(query_embedding, dtype=np.float32).tolist(),
                               vector_column_name=self.VECTOR_COLUMN)
             .select(output_cols)
-            .limit(self.config.top_k)
+            .limit(int(self.config.top_k))
             .to_list()
         )
         tm.add_timing("lancedb_search")
@@ -242,14 +242,12 @@ class LanceDBEngine(RetrievalEngine):
         retrieved_passages = []
         for r in results:
             # Convert distance to score.
-            # For "dot" metric: LanceDB returns negative dot product as _distance,
-            # so score = -_distance gives the actual dot product (higher = better).
+            # For "dot" metric: LanceDB returns _distance = 1 - dot(q,d),
+            # so score = 1 - _distance = dot(q,d).
             # For "cosine": _distance = 1 - cosine_sim, so score = 1 - _distance.
             # For "L2": score = 1 / (1 + _distance).
             dist = r.get("_distance", 0.0)
-            if self.metric == "dot":
-                score = -dist
-            elif self.metric == "cosine":
+            if self.metric in ("dot", "cosine"):
                 score = 1.0 - dist
             else:  # L2
                 score = 1.0 / (1.0 + dist)

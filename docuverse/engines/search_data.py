@@ -447,11 +447,11 @@ class SearchData:
         data_type = kwargs.get('data_type', 'auto')
         data = None
         if isinstance(input_files, list):
-            if isinstance(input_files, str):
-                files = input_files
-            elif isinstance(input_files[0], dict): # getting a read dictionary already
+            if isinstance(input_files[0], dict): # getting a read dictionary already
                 files = [input_files]
                 use_cache = False
+            else:
+                files = input_files
         elif isinstance(input_files, str):
             files = [input_files]
         else:
