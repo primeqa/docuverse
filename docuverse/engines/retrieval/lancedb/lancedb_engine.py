@@ -64,7 +64,10 @@ class LanceDBEngine(RetrievalEngine):
         self.hidden_dim = len(self.model.encode(["text"], show_progress_bar=False)[0])
 
     def init_client(self):
-        db_path = os.path.join(self.persist_directory, "lancedb_data")
+        # Allow direct path override via 'server' config param
+        db_path = get_param(self.config, "server", None)
+        if not db_path:
+            db_path = os.path.join(self.persist_directory, "lancedb_data")
         os.makedirs(db_path, exist_ok=True)
         self.db = lancedb.connect(db_path)
 
@@ -108,9 +111,22 @@ class LanceDBEngine(RetrievalEngine):
         self.table = None
 
     def _open_table(self):
-        """Open the table if not already open."""
+        """Open the table if not already open.
+
+        Also auto-detects the vector column name from the table schema,
+        so tables created by milvus_copy_to_lancedb.py (which preserves
+        original Milvus field names like 'embeddings') work correctly.
+        """
         if self.table is None:
             self.table = self.db.open_table(self.config.index_name)
+            # Auto-detect vector column if the default doesn't exist
+            schema = self.table.schema
+            field_names = [f.name for f in schema]
+            if self.VECTOR_COLUMN not in field_names:
+                for f in schema:
+                    if pa.types.is_fixed_size_list(f.type) or pa.types.is_list(f.type):
+                        self.VECTOR_COLUMN = f.name
+                        break
 
     # ===== Ingestion =====
 

@@ -273,6 +273,9 @@ Examples:
                         help="Distance metric (default: IP)")
     parser.add_argument("--drop-existing", action="store_true",
                         help="Drop target collection if it already exists")
+    parser.add_argument("--no-index", action="store_true",
+                        help="Copy data without indexing, then build the index once at the end. "
+                             "Much faster for large datasets.")
     parser.add_argument("--resume", action="store_true",
                         help="Resume a previous interrupted copy (skips rows already in target)")
     parser.add_argument("--dry-run", action="store_true",
@@ -361,17 +364,26 @@ Examples:
 
     if not target_exists:
         print(f"\nCreating target collection '{tgt_collection}'...")
-        index_params = build_index_params(
-            target, fields_info, args.index_type, args.metric,
-            args.M, args.ef_construction,
-        )
-        target.create_collection(
-            collection_name=tgt_collection,
-            schema=schema,
-            index_params=index_params,
-            consistency_level="Eventually",
-        )
-        print(f"Collection created with {args.index_type} index.")
+        if args.no_index:
+            # Create without index — data inserts will be much faster
+            target.create_collection(
+                collection_name=tgt_collection,
+                schema=schema,
+                consistency_level="Eventually",
+            )
+            print("Collection created without vector index (will build after copy).")
+        else:
+            index_params = build_index_params(
+                target, fields_info, args.index_type, args.metric,
+                args.M, args.ef_construction,
+            )
+            target.create_collection(
+                collection_name=tgt_collection,
+                schema=schema,
+                index_params=index_params,
+                consistency_level="Eventually",
+            )
+            print(f"Collection created with {args.index_type} index.")
 
     # Copy data
     remaining = total_rows - already_copied
@@ -392,6 +404,21 @@ Examples:
     elapsed = time.time() - t0
     rate = copied / elapsed if elapsed > 0 else 0
     print(f"Copied {copied:,} rows in {elapsed:.1f}s ({rate:,.0f} rows/s)")
+
+    # Build index after copy if --no-index was used
+    if args.no_index:
+        print(f"\nBuilding {args.index_type} index (this may take a while)...")
+        t_idx = time.time()
+        index_params = build_index_params(
+            target, fields_info, args.index_type, args.metric,
+            args.M, args.ef_construction,
+        )
+        target.create_index(
+            collection_name=tgt_collection,
+            index_params=index_params,
+        )
+        idx_elapsed = time.time() - t_idx
+        print(f"Index built in {idx_elapsed:.1f}s")
 
     # Load collection
     print("Loading collection...")
