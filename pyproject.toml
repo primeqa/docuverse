@@ -83,12 +83,16 @@ all = [
 Homepage = "https://github.com/primeqa/docuverse"
 Repository = "https://github.com/primeqa/docuverse"
 
+[project.scripts]
+ingest-and-test = "docuverse.utils.ingest_and_test:main_cli"
+db2db-copy = "scripts.milvus_utils.db2db_copy:main"
+
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["docuverse", "docuverse.*"]
+include = ["docuverse", "docuverse.*", "scripts", "scripts.*"]
 
 [tool.setuptools.dynamic]
 version = {file = "VERSION"}
