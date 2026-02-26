@@ -100,7 +100,7 @@ class SearchQueries(SearchData):
                 goldstandard = SearchData._read_data(tfile)
                 gs_map = {}
                 for gs in goldstandard:
-                    qid = get_param(gs, query_template.truth_id)
+                    qid = str(get_param(gs, query_template.truth_id))
                     doc_id = get_param(gs, query_template.truth_label)
                     # Make sure all relevant items are strings - otherwise, there might be an issue computing scores.
                     if qid in gs_map:
@@ -129,7 +129,8 @@ class SearchQueries(SearchData):
                         question = (re.sub(url, lang, 'URL', question), remv_stopwords)
                     rels = None
                     if relevant_map is not None:
-                        rels = get_param(relevant_map, get_param(row, query_template.id_header, None), None)
+                        val = get_param(row, query_template.id_header, None)
+                        rels = get_param(relevant_map, val, None)
                     if rels is None:
                         rels = get_param(row, query_template.relevant_header, "")
                     if ignore_empty_questions and (rels is None or not rels):

@@ -51,8 +51,9 @@ def main_cli():
         if output is None:
             output = engine.read_output(config.output_file)
         results = scorer.compute_score(queries, output, model_name=engine.get_output_name())
-        metrics_file = config.output_file[:config.output_file.find(
-            '.json')] + '.metrics' if '.json' in config.output_file else config.output_file + '.metrics'
+        json_off = config.output_file.find('.json')
+        metrics_file = config.output_file[:json_off] + '.metrics' if json_off>=0 \
+            else config.output_file + '.metrics'
         # tm.add_timing("evaluate")
         ostring = io.StringIO()
         # print(timer.display_timing)
@@ -70,7 +71,8 @@ def main_cli():
         print(timing)
 
     else:
-        timer.display_timing(tm.milliseconds_since_beginning(), keys={'queries': len(queries)}, sorted_by="%",
+        timer.display_timing(tm.milliseconds_since_beginning(),
+                             keys={'queries': 1 if queries is None else len(queries)}, sorted_by="%",
                              reverse=True)
 
 

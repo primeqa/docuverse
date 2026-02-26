@@ -123,10 +123,18 @@ class EvaluationEngine:
             tmp_pscores = {r: 0 for r in ranks}
             self.relevant.append([])
             self.score_pairs.append([])
+            seen_docids = set()  # Track seen original docids to avoid duplicates
+            eval_count = 0  # Count of unique documents evaluated
             for aid, answer in enumerate(record.retrieved_passages):
-                if aid >= ranks[-1]:
+                if eval_count >= ranks[-1]:
                     break
                 docid = get_orig_docid(get_param(answer, f"id|{data_id_header}"))
+
+                # Skip if we've already seen this original document
+                if str(docid) in seen_docids:
+                    continue
+                seen_docids.add(str(docid))
+                eval_count += 1
 
                 self.relevant[rid].append(str(docid) in gt[qid])
                 self.score_pairs[rid].append([answer.score, 1.0*(str(docid) in gt[qid])])

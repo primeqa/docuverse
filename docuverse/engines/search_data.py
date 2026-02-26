@@ -23,6 +23,12 @@ from docuverse.utils.text_tiler import TextTiler
 from docuverse.utils import get_param
 
 
+# Module-level function for computing tokenized length (needed for pickling in multiprocessing)
+def _compute_tokenized_length(itm, tiler):
+    """Compute tokenized length for an item. This function is defined at module level to be picklable."""
+    return tiler.get_tokenized_length(itm['text'], forced_tok=True)
+
+
 class DefaultProcessor:
     product_counts = {}
     stopwords = None
@@ -441,11 +447,11 @@ class SearchData:
         data_type = kwargs.get('data_type', 'auto')
         data = None
         if isinstance(input_files, list):
-            if isinstance(input_files, str):
-                files = input_files
-            elif isinstance(input_files[0], dict): # getting a read dictionary already
+            if isinstance(input_files[0], dict): # getting a read dictionary already
                 files = [input_files]
                 use_cache = False
+            else:
+                files = input_files
         elif isinstance(input_files, str):
             files = [input_files]
         else:
@@ -530,10 +536,16 @@ class SearchData:
                         else:
                             tpassages.extend(items)
             else:
-                post_func = lambda itm: tiler.get_tokenized_length(itm['text'], forced_tok=True)
+                # Use module-level function with partial to make it picklable for multiprocessing
+                if verbose:
+                    post_func = partial(_compute_tokenized_length, tiler=tiler)
+                    post_label = "tlen"
+                else:
+                    post_func = None
+                    post_label = None
                 tpassages = parallel_process(process_func=process_text_func,
                                              post_func=post_func,
-                                             post_label="tlen",
+                                             post_label=post_label,
                                              data=data, num_threads=num_threads,
                                              msg="Tokenizing")
                 tpassages = list(chain.from_iterable(tpassages))

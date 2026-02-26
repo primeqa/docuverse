@@ -128,7 +128,11 @@ class RetrievalArguments(GenericArguments):
     db_engine: Optional[str] = field(
         default="es-bm25",
         metadata={
-            "choices": ['es-dense', 'es-elser', 'es-bm25', 'es-dense'],
+            "choices": ['es-dense', 'es-elser', 'es-bm25',
+                       'chromadb', 'faiss',
+                       'milvus', 'milvus-dense', 'milvus-sparse', 'milvus-bm25',
+                       'milvus-hybrid', 'milvus-splade',
+                       'lancedb', 'lance'],
             "help": "Path to pretrained model or model identifier from huggingface.co/models"
         }
     )

@@ -9,10 +9,8 @@ import json
 
 if sys.platform == "darwin":
     print("We're on a Mac !!")
-    from multiprocess import Queue, Manager, Process, Lock, Value
     import multiprocess as mp
 else:
-    from multiprocessing import Queue, Manager, Process, Lock, Value
     import multiprocessing as mp
 
 from typing import List, Union, Any
@@ -381,40 +379,37 @@ def file_is_of_type(input_file, extensions: Union[str, List[str]]):
     return any(input_file.endswith(f"{ext[0]}{ext[1]}")
                for ext in itertools.product(extensions, ['', ".bz2", ".gz", ".xz"]))
 
-def _parallel_process_worker(inqueue, d, thread_number, size, curr_size, lock, process_func, post_func, post_label, msg):
-    """Module-level worker function for parallel_process to enable pickling."""
-    import multiprocessing as mp
-    from tqdm import tqdm
-    import queue
+_parallel_process_func = None
+_parallel_post_func = None
+_parallel_post_label = None
 
-    pid = mp.current_process().pid
+def _parallel_queue_worker(inqueue, result_queue, thread_number, expected_items, msg):
+    """Worker with its own tqdm progress bar. Uses fork-inherited globals."""
+    import queue as queue_module
+
     with tqdm(desc=f"{msg}/thread {thread_number}", leave=False,
-              position=thread_number+1, total=2*size) as tk1:
+              position=thread_number + 1, total=expected_items) as tk:
         while True:
             try:
-                id, text = inqueue.get(block=True, timeout=1)
-                with lock:
-                    curr_size.value -= 1
-            except queue.Empty:
+                idx, text = inqueue.get(block=True, timeout=1)
+            except queue_module.Empty:
                 break
-            except Exception as e:
+            except Exception:
                 break
             try:
-                result = process_func(text)
-                if post_func is not None:
+                result = _parallel_process_func(text)
+                if _parallel_post_func is not None:
                     if isinstance(result[0], dict):
                         result = [{**item,
-                                  post_label: post_func(item)}
+                                  _parallel_post_label: _parallel_post_func(item)}
                                  for item in result]
                     else:
-                        setattr(result, post_label, post_func(result))
-                d[id] = result
-                tk1.update(1)
-            except ImportError as e:
-                print(f"Error in thread {thread_number}: {e}")
-                break
+                        setattr(result, _parallel_post_label, _parallel_post_func(result))
+                result_queue.put((idx, result))
             except Exception as e:
-                d[id] = []
+                print(f"Error in thread {thread_number}: {e}")
+                result_queue.put((idx, []))
+            tk.update(1)
 
 def parallel_process(process_func, data, num_threads, post_func=None, post_label=None,
                      msg="Processing result:"):
@@ -456,80 +451,58 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
 
     if num_threads <= 1:
         return [apply_funcs(dt) for dt in tqdm(data, desc=msg, smoothing=1)]
-    
-    # Set spawn method for CUDA compatibility
+
     import multiprocessing as mp
-    original_start_method = mp.get_start_method()
-    
+
+    # Use 'fork' context for fast startup (avoids re-importing modules).
+    # Fall back to 'spawn' if fork is unavailable (e.g., macOS with CUDA).
     try:
-        # Set spawn start method if not already set
-        if original_start_method != 'spawn':
-            try:
-                mp.set_start_method('spawn', force=True)
-            except RuntimeError:
-                # If we can't change the start method, create a new context
-                ctx = mp.get_context('spawn')
-                Queue = ctx.Queue
-                Manager = ctx.Manager
-                Process = ctx.Process
-            else:
-                from multiprocessing import Queue, Manager, Process
-        else:
-            from multiprocessing import Queue, Manager, Process
-    except Exception:
-        # Fallback to creating a spawn context
+        ctx = mp.get_context('fork')
+    except ValueError:
         ctx = mp.get_context('spawn')
-        Queue = ctx.Queue
-        Manager = ctx.Manager
-        Process = ctx.Process
-    
+
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-    num_items = len(data)
-
-    doc_queue = Queue()
-    manager = Manager()
-    d = manager.dict()
-    print(f"Created dictionary: {d}")
+    # Set module-level globals so forked workers inherit them
+    global _parallel_process_func, _parallel_post_func, _parallel_post_label
+    _parallel_process_func = process_func
+    _parallel_post_func = post_func
+    _parallel_post_label = post_label
 
     num_docs = len(data)
-    for i, doc in tqdm(enumerate(data), desc="Adding docs:"):
-        doc_queue.put([i, doc])
+    inqueue = ctx.Queue()
+    result_queue = ctx.Queue()
+
+    for i, doc in enumerate(data):
+        inqueue.put((i, doc))
+
+    items_per_worker = (num_docs + num_threads - 1) // num_threads
     processes = []
-    tk = tqdm(desc=f"{msg}:", total=num_docs, leave=True, position=0)
-    c = num_docs
-    tk.write("starting processes")
-    curr_size = Value('i', num_docs)
-    lock = Lock()
     for i in range(num_threads):
-        p = Process(target=_parallel_process_worker, args=(doc_queue, d, i, num_docs/num_threads, curr_size, lock, process_func, post_func, post_label, msg))
+        p = ctx.Process(target=_parallel_queue_worker,
+                        args=(inqueue, result_queue, i, items_per_worker, msg))
         processes.append(p)
         p.start()
-    # tk.write("Running")
-    c1 = num_docs
-    while c > 0:
-        c1 = curr_size.value
-        # tk.write(f"Current size: {c1}")
-        if c != c1:
-            tk.update(c - c1)
-            c = c1
-        time.sleep(0.1)
 
-    for i, p in enumerate(processes):
-        p.join()
-        # tk.write(f"Process {i} joined")
-    tk.clear()
+    # Collect results with main progress bar at position 0
+    results = [None] * num_docs
+    tk = tqdm(desc=msg, total=num_docs, position=0)
+    collected = 0
+    while collected < num_docs:
+        try:
+            idx, result = result_queue.get(timeout=30)
+            results[idx] = result
+            collected += 1
+            tk.update(1)
+        except Exception:
+            if not any(p.is_alive() for p in processes):
+                break
     tk.close()
-    
-    try:
-        # Attempt to restore original start method (may not work in all cases)
-        if original_start_method != 'spawn':
-            mp.set_start_method(original_start_method, force=True)
-    except RuntimeError:
-        # It's okay if we can't restore it
-        pass
-    
-    return list(d[i] for i in range(num_items))
+
+    for p in processes:
+        p.join()
+
+    return results
 
 def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes') -> str:
     """

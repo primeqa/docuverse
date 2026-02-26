@@ -31,6 +31,13 @@ def create_retrieval_engine(retriever_config: dict):
        except ImportError as e:
            print("You need to install docuverse_chomadb package (run `pip install -r requirements-chromadb.txt`).")
            raise e
+   elif name == 'faiss':
+       try:
+           from docuverse.engines.retrieval.faiss.faiss_engine import FAISSEngine
+           engine = FAISSEngine(retriever_config)
+       except ImportError as e:
+           print("You need to install faiss package (run `pip install faiss-cpu` or `pip install faiss-gpu`).")
+           raise e
    elif name.startswith('milvus'):
        import docuverse.engines.retrieval.milvus as milvus
        try:
@@ -48,6 +55,13 @@ def create_retrieval_engine(retriever_config: dict):
                raise NotImplementedError(f"Unknown engine type: {name}")
        except ImportError as e:
            print("You need to install pymilvus package.")
+           raise e
+   elif name in ['lancedb', 'lance']:
+       try:
+           from docuverse.engines.retrieval.lancedb import LanceDBEngine
+           engine = LanceDBEngine(retriever_config)
+       except ImportError as e:
+           print("You need to install lancedb package (run `pip install lancedb`).")
            raise e
    elif name.startswith("file:"):
        from docuverse.engines.retrieval.file.file_engine import FileEngine
