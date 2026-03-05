@@ -74,8 +74,8 @@ class ChromaDBEngine(RetrievalEngine):
     def init_model(self, **kwargs) -> None:
         """Initialize the ChromaDB embedding model."""
         self.model = DenseEmbeddingFunction(
-            self.config.model_name, 
-            attn_implementation=self.config.attn_implementation
+            self.config.model_name,
+            **self.config.__dict__,
         )
         self.hidden_dim = len(self.model.encode(['text'], show_progress_bar=False)[0])
 

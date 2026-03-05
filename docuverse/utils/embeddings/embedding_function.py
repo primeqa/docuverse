@@ -7,6 +7,7 @@ class EmbeddingFunction:
     def __init__(self, model_or_directory_name: str, batch_size: int, **kwargs):
         self.model = None
         self.batch_size = batch_size
+        self.matryoshka_dim = int(kwargs.get("matryoshka_dim", 0) or 0)
         import torch
         torch.set_float32_matmul_precision('high')
         self.torch_dtype = convert_to_type(kwargs.get("model_torch_dtype", None))

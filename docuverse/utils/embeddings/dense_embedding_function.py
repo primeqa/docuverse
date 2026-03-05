@@ -157,20 +157,23 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             embs = result_embs
         else:
             raise NotImplemented
-            # if batch_size < 0:
-            #     batch_size = self.batch_size
-            # if len(texts) > batch_size:
-            #     embs = []
-            #     for i in tqdm(range(0, len(texts), batch_size)):
-            #         i_end = min(i + batch_size, len(texts))
-            #         tems = self.queries_to_vectors(self.tokenizer,
-            #                                        self.model,
-            #                                        texts[i:i_end],
-            #                                        max_query_length=500).tolist()
-            #         embs.extend(tems)
-            # else:
-            #     embs = self.queries_to_vectors(self.tokenizer, self.model, texts, max_query_length=500).tolist()
+
+        if self.matryoshka_dim > 0:
+            embs = self._truncate_and_renormalize(embs)
+
         return embs
+
+    def _truncate_and_renormalize(self, embs):
+        """Truncate embeddings to matryoshka_dim and re-normalize."""
+        d = self.matryoshka_dim
+        truncated = []
+        for e in embs:
+            t = e[:d]
+            norm = np.linalg.norm(t)
+            if norm > 0:
+                t = (np.array(t) / norm).tolist()
+            truncated.append(t)
+        return truncated
 
     def _encode_data(self, texts, _batch_size,
                      show_progress_bar,

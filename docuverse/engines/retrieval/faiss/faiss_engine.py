@@ -78,7 +78,7 @@ class FAISSEngine(RetrievalEngine):
         """Initialize the embedding model."""
         self.model = DenseEmbeddingFunction(
             self.config.model_name,
-            attn_implementation=self.config.attn_implementation
+            **self.config.__dict__,
         )
         self.hidden_dim = len(self.model.encode(['text'], show_progress_bar=False)[0])
 

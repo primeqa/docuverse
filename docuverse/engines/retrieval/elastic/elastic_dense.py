@@ -10,7 +10,8 @@ class ElasticDenseEngine(ElasticEngine):
         self.model_on_server = get_param(kwargs, 'model_on_server', False)
         self.hidden_dim = 384
         if not self.model_on_server:
-            self.model = DenseEmbeddingFunction(config_params.model_name)
+            self.model = DenseEmbeddingFunction(config_params.model_name,
+                                                **config_params.__dict__)
         self.normalize_embs = get_param(kwargs, 'normalize_embs', False)
         self._init_connection()
 

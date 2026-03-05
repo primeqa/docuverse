@@ -362,6 +362,15 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    matryoshka_dim: Optional[int] = field(
+        default=0,
+        metadata={
+            "help": "If > 0, truncate embeddings to the first N dimensions (Matryoshka-style). "
+                    "The model must support Matryoshka representations for this to be effective. "
+                    "Set to 0 (default) to use the model's full embedding dimension."
+        }
+    )
+
     duplicate_removal: Optional[bool]|None = field(
         default=None,
         metadata={
