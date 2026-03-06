@@ -77,6 +77,8 @@ scripts/matryoshka/
     adaptor_trainer.py          # MatryoshkaAdaptorTrainer
     permutation_trainer.py      # PermutationTrainer
     train.py                    # CLI entry point
+    st_module.py                # SentenceTransformers-compatible adapter module
+                                #   + export_to_sentence_transformer() helper
 ```
 
 ## Class Hierarchy
@@ -385,6 +387,163 @@ Evaluation at matryoshka dimensions:
   ablation. Higher risk of overfitting.
 - **Variance-sort**: Free baseline. Start here to establish a lower bound before
   investing in learned methods.
+
+## Exporting as a SentenceTransformer Model
+
+After training a Matryoshka-Adaptor, the adapter can be exported as a standard
+SentenceTransformer model that combines the base embedding model with the trained
+adapter in a single loadable artifact.
+
+### Why export?
+
+The training checkpoint (`best_model.pt`) stores only the adapter weights.  To use
+the adapted embeddings you would need to:
+1. Load the base embedding model
+2. Encode text
+3. Apply the adapter manually
+
+Exporting bundles the base model + adapter into a single SentenceTransformer model
+directory.  After export, encoding adapted embeddings is a one-liner:
+
+```python
+model = SentenceTransformer("path/to/exported_model", trust_remote_code=True)
+embeddings = model.encode(["hello world"])  # adapter applied automatically
+```
+
+### Architecture of the exported model
+
+The exported model appends a `MatryoshkaAdaptorModule` to the base model's
+SentenceTransformer pipeline:
+
+```
+Transformer  →  Pooling  →  MatryoshkaAdaptorModule
+                             (residual MLP + optional L2 normalize)
+```
+
+The adapter reads `"sentence_embedding"` from the pipeline features dict, applies
+`adapted = embedding + MLP(embedding)`, optionally L2-normalizes, and writes it back.
+
+The residual (skip) connection cannot be expressed using built-in SentenceTransformer
+modules (`Dense` only supports a single `Linear + activation`), so the exported model
+includes a self-contained Python file (`st_module.py`) that defines the custom module.
+This is loaded via SentenceTransformers' `trust_remote_code=True` mechanism — the
+same pattern used by custom HuggingFace Hub models.
+
+The `st_module.py` file has **no external dependencies** beyond `torch` and
+`sentence_transformers`, so the exported model is fully portable to any environment.
+
+### Export command
+
+```bash
+python scripts/matryoshka/st_module.py \
+    --base-model ibm-granite/granite-embedding-30m-english \
+    --checkpoint output/adaptor/best_model.pt \
+    --output-dir output/st_model \
+    [--no-normalize] \
+    [--device cpu]
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `--base-model` | Yes | HuggingFace model name or local path for the base embedding model |
+| `--checkpoint` | Yes | Path to the `best_model.pt` saved by the trainer |
+| `--output-dir` | Yes | Directory where the combined model will be saved |
+| `--no-normalize` | No | Skip L2 normalization after adaptation (default: normalize) |
+| `--device` | No | Torch device for loading weights (default: `cpu`) |
+
+### Export from Python
+
+```python
+from scripts.matryoshka.st_module import export_to_sentence_transformer
+
+export_to_sentence_transformer(
+    base_model_name="ibm-granite/granite-embedding-30m-english",
+    checkpoint_path="output/adaptor/best_model.pt",
+    output_dir="output/st_model",
+    normalize=True,
+    device="cpu",
+)
+```
+
+Or build the pipeline manually:
+
+```python
+from sentence_transformers import SentenceTransformer
+from scripts.matryoshka.st_module import MatryoshkaAdaptorModule
+
+model = SentenceTransformer("ibm-granite/granite-embedding-30m-english")
+adapter = MatryoshkaAdaptorModule.from_checkpoint("output/adaptor/best_model.pt")
+model.append(adapter)
+model.save("output/st_model")
+```
+
+### What the export produces
+
+```
+output/st_model/
+    config.json                          # Base model config
+    tokenizer.json                       # Tokenizer files
+    model.safetensors                    # Base model weights
+    modules.json                         # ST pipeline definition
+    1_Pooling/
+        config.json
+    2_MatryoshkaAdaptorModule/
+        config.json                      # {"in_features": 384, "hidden_dims": [512], "normalize": true}
+        model.safetensors                # Adapter MLP weights
+        st_module.py                     # Self-contained module source (copied at export time)
+```
+
+The `modules.json` file references the custom module:
+
+```json
+[
+  {"idx": 0, "name": "0", "path": "",          "type": "sentence_transformers.models.Transformer"},
+  {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+  {"idx": 2, "name": "2", "path": "2_MatryoshkaAdaptorModule", "type": "st_module.MatryoshkaAdaptorModule"}
+]
+```
+
+The `"type": "st_module.MatryoshkaAdaptorModule"` tells SentenceTransformers to load
+`st_module.py` from the module's subdirectory (enabled by `trust_remote_code=True`).
+
+### Loading the exported model
+
+```python
+from sentence_transformers import SentenceTransformer
+
+# trust_remote_code=True is required for the custom adapter module
+model = SentenceTransformer("output/st_model", trust_remote_code=True)
+
+# Encode — adapter is applied automatically in the pipeline
+embeddings = model.encode(["query text", "document text"])
+print(embeddings.shape)  # (2, 384)  — full-dim adapted embeddings
+
+# For matryoshka-style truncation, slice the output
+embeddings_128d = model.encode(sentences)[:, :128]
+```
+
+**Note:** `trust_remote_code=True` is needed because the skip connection
+(`x + MLP(x)`) is not representable with built-in SentenceTransformer modules.
+The `st_module.py` file embedded in the model directory is ~100 lines with zero
+dependencies beyond `torch` and `sentence_transformers`.
+
+### Loading the adapter standalone (without base model)
+
+```python
+from scripts.matryoshka.st_module import MatryoshkaAdaptorModule
+
+adapter = MatryoshkaAdaptorModule.from_checkpoint(
+    "output/adaptor/best_model.pt",
+    normalize=True,
+    device="cpu",
+)
+
+# Apply to pre-computed embeddings
+import torch
+embs = torch.randn(100, 384)
+features = {"sentence_embedding": embs}
+adapted = adapter(features)["sentence_embedding"]
+```
 
 ## References
 

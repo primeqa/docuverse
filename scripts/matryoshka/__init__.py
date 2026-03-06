@@ -14,3 +14,4 @@ Two approaches for improving Matryoshka properties of frozen embeddings:
 from .config import MatryoshkaTrainingConfig
 from .adaptor_trainer import MatryoshkaAdaptorTrainer
 from .permutation_trainer import PermutationTrainer
+from .st_module import MatryoshkaAdaptorModule, export_to_sentence_transformer  # noqa: F401
