@@ -207,13 +207,18 @@ def export_to_sentence_transformer(
     print(f"Saving combined model to: {output_dir}")
     combined.save(output_dir)
 
-    # Copy this source file into the adapter subfolder
+    # Copy this source file into the adapter subfolder AND the model root.
+    # SentenceTransformer's get_class_from_dynamic_module looks for the file
+    # in the model root directory, so both locations are needed.
     adapter_subfolder = f"{adapter_idx}_MatryoshkaAdaptorModule"
     adapter_dir = os.path.join(output_dir, adapter_subfolder)
     src_file = os.path.abspath(__file__)
     dst_file = os.path.join(adapter_dir, "st_module.py")
     shutil.copy2(src_file, dst_file)
     print(f"  Copied module source to {dst_file}")
+    root_dst_file = os.path.join(output_dir, "st_module.py")
+    shutil.copy2(src_file, root_dst_file)
+    print(f"  Copied module source to {root_dst_file}")
 
     # Patch modules.json: type → "st_module.MatryoshkaAdaptorModule"
     modules_json_path = os.path.join(output_dir, "modules.json")
