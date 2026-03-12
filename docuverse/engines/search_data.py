@@ -1,3 +1,4 @@
+import glob as glob_module
 import itertools
 import os
 import orjson
@@ -443,24 +444,7 @@ class SearchData:
             max_num_documents = 100000000
         else:
             max_num_documents = int(max_num_documents)
-        url = r'https?://(?:www\.)?(?:[-a-zA-Z0-9@:%._\+~#=]{1,256})\.(:?[a-zA-Z0-9()]{1,6})(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)*\b'
         data_type = kwargs.get('data_type', 'auto')
-        data = None
-        if isinstance(input_files, list):
-            if isinstance(input_files[0], dict): # getting a read dictionary already
-                files = [input_files]
-                use_cache = False
-            else:
-                files = input_files
-        elif isinstance(input_files, str):
-            files = [input_files]
-        else:
-            raise RuntimeError(f"Unsupported type for {input_files}")
-        docname2url = kwargs.get('docname2url', None)
-        docs_read = 0
-        remv_stopwords = bool(kwargs.get('remove_stopwords', False))
-        unmapped_ids = []
-        return_unmapped_ids = kwargs.get('return_unmapped', None)
         if data_type in ['sap']:
             data_template = sap_data_template
         elif data_type == "beir":
@@ -469,99 +453,168 @@ class SearchData:
         docid_filter   = cls.read_filter(kwargs.get('docid_filter', {}))
         exclude_docids = cls.read_filter(kwargs.get('exclude_docids', {}))
         uniform_product_name = kwargs.get('uniform_product_name')
+        unmapped_ids = []
+        return_unmapped_ids = kwargs.get('return_unmapped', None)
+
         from docuverse.utils.timer import timer
         tm = timer("Data Loading")
-        passages = []
 
-        for input_file in files:
-            docs_read = 0
-            productId = uniform_product_name
-            if isinstance(input_file, str):
-                if input_file.find(":") >= 0:
-                    productId, input_file = input_file.split(":")
+        # ── Normalise input_files into a flat list ──────────────────────────
+        pre_loaded_data = None              # set if caller passes dicts directly
+        if isinstance(input_files, list):
+            if isinstance(input_files[0], dict):
+                pre_loaded_data = input_files
+                use_cache = False
+                files = []
+            else:
+                files = input_files
+        elif isinstance(input_files, str):
+            files = [input_files]
+        else:
+            raise RuntimeError(f"Unsupported type for {input_files}")
 
-                if use_cache:
-                    cache_filename = cls.get_cached_filename(input_file,
-                                                             max_doc_size=max_doc_length, stride=stride,
-                                                             aligned=aligned_on_sentences,
-                                                             title_handling=title_handling, tiler=tiler)
-                    cached_passages = cls.read_cache_file_if_needed(
-                        cache_filename,
-                        input_file)
-                    if cached_passages:
-                        to_copy = (cached_passages[:max_num_documents]
-                                        if 'max_num_documents' in kwargs
-                                        else cached_passages)
-                        skipped = 0
-                        num_docs = len(to_copy)
-                        if docid_filter:
-                            to_copy = [d for d in to_copy if get_orig_docid(d['id']) in docid_filter]
-                        elif exclude_docids:
-                            to_copy = [d for d in to_copy if get_orig_docid(d['id']) not in exclude_docids]
-                        print(f"Skipped {num_docs-len(to_copy)} passages.")
-                        passages.extend(to_copy)
-                        continue
+        # Remember the raw spec before expansion (for cache key)
+        raw_spec = files[0] if len(files) == 1 and isinstance(files[0], str) else None
+
+        # Expand globs / braces  (e.g. "data*.jsonl", "data{1,2,3}.jsonl.bz2")
+        files = cls._expand_file_globs(files)
+
+        # Strip optional "product:" prefix from each entry
+        productId = uniform_product_name
+        resolved_files = []
+        for f in files:
+            if isinstance(f, str) and ":" in f and not f.startswith("/") and not os.path.exists(f):
+                productId, f = f.split(":", 1)
+            resolved_files.append(f)
+        files = resolved_files
+
+        if len(files) > 1:
+            print(f"Input files ({len(files)}): {files[:5]}"
+                  f"{'...' if len(files) > 5 else ''}")
+
+        # ── Step 1: Build a single cache filename ───────────────────────────
+        # For globs / multi-file inputs the cache key is derived from the
+        # sanitised pattern so one file encompasses all documents.
+        cache_filename = None
+        cache_key = None
+        if use_cache and files:
+            if raw_spec and cls._is_glob_pattern(raw_spec):
+                cache_key = cls._sanitize_glob_for_cache(raw_spec)
+            elif len(files) == 1:
+                cache_key = files[0]
+            else:
+                # Explicit list – join sorted basenames into a single key
+                cache_key = "+".join(sorted(os.path.basename(f) for f in files))
+            cache_filename = cls.get_cached_filename(
+                cache_key, max_doc_size=max_doc_length, stride=stride,
+                aligned=aligned_on_sentences, title_handling=title_handling,
+                tiler=tiler)
+
+        # ── Step 2: Check cache → return early if hit ───────────────────────
+        if cache_filename:
+            check_file = raw_spec or cache_key
+            cached_passages = cls.read_cache_file_if_needed(cache_filename, check_file)
+            if cached_passages:
+                passages = (cached_passages[:max_num_documents]
+                            if 'max_num_documents' in kwargs else cached_passages)
+                num_docs = len(passages)
+                if docid_filter:
+                    passages = [d for d in passages if get_orig_docid(d['id']) in docid_filter]
+                elif exclude_docids:
+                    passages = [d for d in passages if get_orig_docid(d['id']) not in exclude_docids]
+                print(f"Loaded {len(passages)} passages from cache "
+                      f"(filtered {num_docs - len(passages)}).")
                 if verbose:
-                    print(f"Reading {input_file}", end='')
-                data = cls._read_data(input_file, max_num_documents)
-            elif isinstance(input_file, list) and isinstance(input_file[0], dict):
-                data = input_file
+                    cls.compute_statistics(passages, tiler=tiler)
+                if return_unmapped_ids:
+                    return passages, unmapped_ids
+                return passages
+
+        tm.add_timing("cache_check")
+
+        # ── Step 3: Read all raw documents (in parallel when multiple files) ─
+        if pre_loaded_data is not None:
+            all_data = pre_loaded_data
+        elif len(files) == 1:
+            if verbose:
+                print(f"Reading {files[0]}", end='')
+            all_data = cls._read_data(files[0], max_num_documents)
             if verbose:
                 read_time = tm.mark_and_return_time()
                 print(f" done: {read_time}")
-
-            process_text_func = partial(cls.process_text,
-                                        tiler=tiler,
-                                        max_doc_size=max_doc_length,
-                                        stride=stride,
-                                        remove_url=remove_url,
-                                        uniform_product_name=productId,
-                                        data_type=data_type,
-                                        data_template=data_template,
-                                        doc_based=doc_based,
-                                        docid_filter=docid_filter)
-
-            tpassages = []
-            if num_threads <= 0:
-                for doc in tqdm(data, desc="Processing docs"):
-                    try:
-                        items = process_text_func(unit=doc)
-                    except Exception as e:
-                        items = []
-                    if items:
-                        if verbose:
-                            for item in items:
-                                tpassages.append({**item, 'tlen': tiler.get_tokenized_length(item['text'],
-                                                                                             forced_tok=True)})
-                        else:
-                            tpassages.extend(items)
-            else:
-                # Use module-level function with partial to make it picklable for multiprocessing
-                if verbose:
-                    post_func = partial(_compute_tokenized_length, tiler=tiler)
-                    post_label = "tlen"
-                else:
-                    post_func = None
-                    post_label = None
-                tpassages = parallel_process(process_func=process_text_func,
-                                             post_func=post_func,
-                                             post_label=post_label,
-                                             data=data, num_threads=num_threads,
-                                             msg="Tokenizing")
-                tpassages = list(chain.from_iterable(tpassages))
-
+        else:
+            # Multiple files – read in parallel with forked processes
+            file_data = cls._read_files_parallel(
+                files, max_num_docs=max_num_documents,
+                num_threads=num_threads)
+            # Concatenate in original order
+            all_data = []
+            for f in files:
+                all_data.extend(file_data.get(f, []))
+            del file_data
             if verbose:
                 read_time = tm.mark_and_return_time()
-                print(f"Processed in {read_time}")
-            if use_cache:
-                cls.write_cache_file(cache_filename, tpassages, use_cache)
-            passages.extend(tpassages)
-            max_num_documents -= docs_read
+                print(f"Read {len(all_data)} documents from {len(files)} files: {read_time}")
+
+        if max_num_documents and len(all_data) > max_num_documents:
+            all_data = all_data[:max_num_documents]
+        print(f"Total raw documents: {len(all_data):,}")
+        tm.add_timing("read_files")
+
+        # ── Step 4: Process / tokenize all documents ────────────────────────
+        process_text_func = partial(cls.process_text,
+                                    tiler=tiler,
+                                    max_doc_size=max_doc_length,
+                                    stride=stride,
+                                    remove_url=remove_url,
+                                    uniform_product_name=productId,
+                                    data_type=data_type,
+                                    data_template=data_template,
+                                    doc_based=doc_based,
+                                    docid_filter=docid_filter)
+
+        if num_threads <= 0:
+            passages = []
+            for doc in tqdm(all_data, desc="Processing docs"):
+                try:
+                    items = process_text_func(unit=doc)
+                except Exception as e:
+                    items = []
+                if items:
+                    if verbose:
+                        for item in items:
+                            passages.append({**item, 'tlen': tiler.get_tokenized_length(item['text'],
+                                                                                         forced_tok=True)})
+                    else:
+                        passages.extend(items)
+        else:
+            if verbose:
+                post_func = partial(_compute_tokenized_length, tiler=tiler)
+                post_label = "tlen"
+            else:
+                post_func = None
+                post_label = None
+            results = parallel_process(process_func=process_text_func,
+                                       post_func=post_func,
+                                       post_label=post_label,
+                                       data=all_data, num_threads=num_threads,
+                                       msg="Tokenizing")
+            # Guard against None entries from crashed worker processes
+            passages = list(chain.from_iterable(r for r in results if r is not None))
+            del results
+
+        del all_data
+        tm.add_timing("tokenize")
+
+        if verbose:
+            print(f"Processed {len(passages):,} passages")
+
+        # ── Save cache ──────────────────────────────────────────────────────
+        if cache_filename:
+            cls.write_cache_file(cache_filename, passages, use_cache)
 
         if verbose:
             cls.compute_statistics(passages, tiler=tiler)
-            # read_time = tm.mark_and_return_time()
-            # print(f"Statistics computed in {read_time}")
         if return_unmapped_ids:
             return passages, unmapped_ids
         else:
@@ -600,6 +653,145 @@ class SearchData:
             itm['relevant'] = ids
 
         return passages
+
+    @staticmethod
+    def _is_glob_pattern(s: str) -> bool:
+        """Return True if the string contains glob or brace-expansion characters."""
+        return any(c in s for c in ('*', '?', '[', '{'))
+
+    @staticmethod
+    def _sanitize_glob_for_cache(pattern: str) -> str:
+        """Replace glob/brace characters with readable tokens for use as a cache key.
+
+        Examples::
+
+            "data/corpus_*.jsonl.bz2"    -> "data/corpus_STAR.jsonl.bz2"
+            "data/shard_{1,2,3}.jsonl"   -> "data/shard_BR1-2-3BR.jsonl"
+            "data/part_??.jsonl"         -> "data/part_QMQM.jsonl"
+        """
+        import re as _re
+
+        # Braces: {a,b,c} -> BRa-b-cBR
+        def _replace_braces(m):
+            inner = m.group(1).replace(',', '-')
+            return f"BR{inner}BR"
+        result = _re.sub(r'\{([^}]+)\}', _replace_braces, pattern)
+
+        result = result.replace('*', 'STAR')
+        result = result.replace('?', 'QM')
+        result = result.replace('[', 'SB').replace(']', 'SB')
+        return result
+
+    @classmethod
+    def _expand_file_globs(cls, files: list) -> list:
+        """Expand glob and brace patterns in a list of file paths.
+
+        Strings containing glob characters (``*``, ``?``, ``[``) or brace
+        patterns (``{a,b}``) are expanded.  Non-glob strings and non-string
+        entries (e.g. pre-loaded dicts) are passed through unchanged.
+
+        Returns:
+            Expanded list of file paths / objects, sorted per-glob.
+        """
+        expanded = []
+        for f in files:
+            if not isinstance(f, str):
+                expanded.append(f)
+                continue
+
+            # Strip the optional "product:" prefix before glob-testing
+            prefix = ""
+            raw = f
+            if ":" in f and not f.startswith("/"):
+                # Handle "productId:path/pattern" — only split on the first colon
+                # but avoid splitting absolute paths like /foo/bar
+                parts = f.split(":", 1)
+                if not os.path.exists(f):
+                    prefix = parts[0] + ":"
+                    raw = parts[1]
+
+            has_glob = any(c in raw for c in ('*', '?', '['))
+
+            # Expand brace patterns {a,b,c} — Python's glob doesn't handle them
+            if '{' in raw and ',' in raw:
+                brace_expanded = cls._expand_braces(raw)
+            else:
+                brace_expanded = [raw]
+
+            if has_glob or len(brace_expanded) > 1:
+                matched = []
+                for pattern in brace_expanded:
+                    hits = sorted(glob_module.glob(pattern))
+                    if hits:
+                        matched.extend(hits)
+                    else:
+                        # No match — keep the original (will fail later with a clear error)
+                        matched.append(pattern)
+                expanded.extend(prefix + m for m in matched)
+            else:
+                expanded.append(f)
+
+        return expanded
+
+    @staticmethod
+    def _expand_braces(pattern: str) -> List[str]:
+        """Expand a single brace pattern like ``data{1,2,3}.jsonl`` into a list.
+
+        Handles one level of braces. Nested braces are not supported.
+        """
+        import re as _re
+        m = _re.search(r'\{([^}]+)\}', pattern)
+        if not m:
+            return [pattern]
+        prefix = pattern[:m.start()]
+        suffix = pattern[m.end():]
+        alternatives = m.group(1).split(',')
+        return [prefix + alt.strip() + suffix for alt in alternatives]
+
+    @classmethod
+    def _read_files_parallel(cls, file_paths: List[str], max_num_docs: int = -1,
+                             num_threads: int = 4) -> Dict[str, list]:
+        """Read multiple data files in parallel using forked processes.
+
+        Uses ``ProcessPoolExecutor`` with fork context so that child
+        processes inherit the parent's already-imported modules (fast
+        startup) and bypass the GIL for CPU-bound decompression.
+
+        Args:
+            file_paths: list of file paths to read
+            max_num_docs: per-file document limit
+            num_threads: number of reader processes
+
+        Returns:
+            Dict mapping file_path -> list of records
+        """
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        n_workers = min(len(file_paths), max(1, num_threads))
+        print(f"Reading {len(file_paths)} files in parallel "
+              f"({n_workers} forked processes)...")
+
+        try:
+            ctx = mp.get_context('fork')
+        except ValueError:
+            ctx = mp.get_context('spawn')
+
+        results = {}
+        with ProcessPoolExecutor(max_workers=n_workers, mp_context=ctx) as pool:
+            futures = {pool.submit(cls._read_data, p, max_num_docs): p
+                       for p in file_paths}
+            for future in tqdm(as_completed(futures), total=len(futures),
+                               desc="Reading files"):
+                path = futures[future]
+                try:
+                    data = future.result()
+                    results[path] = data
+                except Exception as e:
+                    print(f"  ERROR reading {path}: {e}")
+                    results[path] = []
+
+        return results
 
     @staticmethod
     def _read_data(filename, max_num_docs=-1) -> List[Dict[str, str]]:

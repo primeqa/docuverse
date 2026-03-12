@@ -386,30 +386,41 @@ _parallel_post_label = None
 def _parallel_queue_worker(inqueue, result_queue, thread_number, expected_items, msg):
     """Worker with its own tqdm progress bar. Uses fork-inherited globals."""
     import queue as queue_module
+    import sys
+    import traceback
 
-    with tqdm(desc=f"{msg}/thread {thread_number}", leave=False,
-              position=thread_number + 1, total=expected_items) as tk:
-        while True:
-            try:
-                idx, text = inqueue.get(block=True, timeout=1)
-            except queue_module.Empty:
-                break
-            except Exception:
-                break
-            try:
-                result = _parallel_process_func(text)
-                if _parallel_post_func is not None:
-                    if isinstance(result[0], dict):
-                        result = [{**item,
-                                  _parallel_post_label: _parallel_post_func(item)}
-                                 for item in result]
-                    else:
-                        setattr(result, _parallel_post_label, _parallel_post_func(result))
-                result_queue.put((idx, result))
-            except Exception as e:
-                print(f"Error in thread {thread_number}: {e}")
-                result_queue.put((idx, []))
-            tk.update(1)
+    try:
+        with tqdm(desc=f"{msg}/thread {thread_number}", leave=False,
+                  position=thread_number + 1, total=expected_items) as tk:
+            while True:
+                try:
+                    idx, text = inqueue.get(block=True, timeout=1)
+                except queue_module.Empty:
+                    break
+                except Exception as e:
+                    print(f"[Worker {thread_number}] Queue error: {e}",
+                          file=sys.stderr, flush=True)
+                    break
+                try:
+                    result = _parallel_process_func(text)
+                    if _parallel_post_func is not None:
+                        if isinstance(result[0], dict):
+                            result = [{**item,
+                                      _parallel_post_label: _parallel_post_func(item)}
+                                     for item in result]
+                        else:
+                            setattr(result, _parallel_post_label, _parallel_post_func(result))
+                    result_queue.put((idx, result))
+                except Exception as e:
+                    print(f"[Worker {thread_number}] Error processing item {idx}: {e}",
+                          file=sys.stderr, flush=True)
+                    result_queue.put((idx, []))
+                tk.update(1)
+    except Exception as e:
+        # Catch-all for anything that kills the worker (tqdm init, missing globals, etc.)
+        print(f"[Worker {thread_number}] FATAL: {e}\n"
+              f"{traceback.format_exc()}",
+              file=sys.stderr, flush=True)
 
 def parallel_process(process_func, data, num_threads, post_func=None, post_label=None,
                      msg="Processing result:"):
@@ -490,19 +501,94 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     collected = 0
     while collected < num_docs:
         try:
-            idx, result = result_queue.get(timeout=30)
+            idx, result = result_queue.get(timeout=5)
             results[idx] = result
             collected += 1
             tk.update(1)
         except Exception:
-            if not any(p.is_alive() for p in processes):
+            # Check which workers are still alive
+            alive = [(i, p) for i, p in enumerate(processes) if p.is_alive()]
+            dead = [(i, p) for i, p in enumerate(processes) if not p.is_alive()]
+
+            # Report any workers that died with non-zero exit codes
+            for i, p in dead:
+                if p.exitcode is not None and p.exitcode != 0:
+                    if p.exitcode < 0:
+                        import signal
+                        try:
+                            sig_name = signal.Signals(-p.exitcode).name
+                        except (ValueError, AttributeError):
+                            sig_name = f"signal {-p.exitcode}"
+                        print(f"\n  [Worker {i}] Killed by {sig_name} "
+                              f"(exit code {p.exitcode})",
+                              flush=True)
+                    else:
+                        print(f"\n  [Worker {i}] Exited with code {p.exitcode}",
+                              flush=True)
+
+            if not alive:
+                tk.close()
+                _report_failed_items(results, data, num_docs, collected)
                 break
-    tk.close()
+    else:
+        tk.close()
 
     for p in processes:
-        p.join()
+        p.join(timeout=10)
+
+    # Final exit-code check for workers that died after collection finished
+    for i, p in enumerate(processes):
+        if p.exitcode is not None and p.exitcode != 0:
+            if p.exitcode < 0:
+                import signal
+                try:
+                    sig_name = signal.Signals(-p.exitcode).name
+                except (ValueError, AttributeError):
+                    sig_name = f"signal {-p.exitcode}"
+                print(f"  [Worker {i}] Killed by {sig_name} "
+                      f"(exit code {p.exitcode})", flush=True)
+            else:
+                print(f"  [Worker {i}] Exited with code {p.exitcode}",
+                      flush=True)
+
+    # Replace any remaining None entries with empty lists
+    results = [r if r is not None else [] for r in results]
 
     return results
+
+
+def _report_failed_items(results, data, num_docs, collected):
+    """Report items that were not processed due to worker crashes."""
+    failed_indices = [i for i, r in enumerate(results) if r is None]
+    if not failed_indices:
+        return
+
+    n_failed = len(failed_indices)
+    print(f"\nWARNING: {n_failed}/{num_docs} items were not processed "
+          f"({collected} succeeded, worker process(es) crashed).")
+
+    # Report failed items with as much identifying info as possible
+    MAX_DISPLAY = 20
+    for idx in failed_indices[:MAX_DISPLAY]:
+        item = data[idx]
+        if isinstance(item, dict):
+            # Try common id fields, then fall back to first 80 chars of first string value
+            item_id = (item.get('id') or item.get('_id') or item.get('docid')
+                       or item.get('doc_id') or item.get('pid'))
+            if item_id is not None:
+                print(f"  - index {idx}: id={item_id}")
+            else:
+                preview = next((str(v)[:80] for v in item.values()
+                                if isinstance(v, str) and v.strip()), None)
+                print(f"  - index {idx}: {preview or '(no preview)'}")
+        else:
+            print(f"  - index {idx}: {str(item)[:80]}")
+    if n_failed > MAX_DISPLAY:
+        print(f"  ... and {n_failed - MAX_DISPLAY} more")
+
+    # Log the full list of failed indices for programmatic use
+    print(f"  Failed indices: {failed_indices[:100]}"
+          f"{'...' if n_failed > 100 else ''}")
 
 def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes') -> str:
     """

@@ -96,7 +96,7 @@ usage() {
   echo "  --model \"m1 m2 ...\"           Model name(s) to sweep (space-separated)"
   echo "  --steps \"d1 d2 ...\"           Matryoshka dims to sweep (default: \"$STEPS\")"
   echo "  --configs \"c1 c2 ...\"         Config files (alternative to positional args)"
-  echo "  --num-preprocessing-threads N Number of preprocessing threads (default: $NUM_THREADS)"
+  echo "  --num-preprocessor-threads N Number of preprocessing threads (default: $NUM_THREADS)"
   echo "  --max-doc-length \"N1 N2 ...\"  Max document length(s) to sweep (space-separated)"
   echo "  --stride N                    Stride for document chunking"
   echo "  -h, --help                    Show this help message"
@@ -111,7 +111,7 @@ while [[ $# -gt 0 ]]; do
       STEPS="$2"; shift 2 ;;
     --configs)
       read -ra CONFIGS <<< "$2"; shift 2 ;;
-    --num-preprocessing-threads)
+    --num-preprocessor-threads | --num_preprocessor_threads)
       NUM_THREADS="$2"; shift 2 ;;
     --max-doc-length)
       MAX_DOC_LENGTHS="$2"; shift 2 ;;
@@ -189,7 +189,7 @@ for model in $MODELS; do
         run_idx=$((run_idx + 1))
 
         CMD=(CUDA_VISIBLE_DEVICES=1 python docuverse/utils/ingest_and_test.py)
-        CMD+=(--num_preprocessing_threads "$NUM_THREADS")
+        CMD+=(--num_preprocessor_threads "$NUM_THREADS")
         [ "$model" != "_none_" ] && CMD+=(--model_name "$model")
         [ "$mdl" != "_none_" ]   && CMD+=(--max_doc_length "$mdl")
         [ -n "$STRIDE" ]         && CMD+=(--stride "$STRIDE")
