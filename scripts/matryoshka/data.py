@@ -18,6 +18,8 @@ _PROJECT_ROOT = str(Path(__file__).parent.parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+from docuverse.utils.jsonl_utils import get_nested_field
+
 
 class EmbeddingDataset:
     """Manages embedding loading, caching, and neighbor mining.
@@ -88,6 +90,10 @@ class EmbeddingDataset:
     def load_query_embeddings(self) -> np.ndarray:
         """Load or compute query embeddings (supervised mode).
 
+        When loading from a JSONL query file, if entries contain a ``relevant``
+        field (a list of corpus doc IDs), relevance pairs are extracted
+        automatically — no separate ``--relevance_file`` needed.
+
         Returns:
             (M, d) numpy array of query embeddings
         """
@@ -105,11 +111,8 @@ class EmbeddingDataset:
             )
         elif self.config.query_file:
             print(f"Computing query embeddings from {self.config.query_file}")
-            self.query_embeddings, self.query_ids = self._compute_embeddings(
+            self.query_embeddings, self.query_ids = self._compute_query_embeddings(
                 self.config.query_file,
-                self.config.query_text_field,
-                self.config.query_id_field,
-                prompt_name="query",
             )
             if self.config.query_embeddings_cache:
                 self._save_pickle(
@@ -128,7 +131,9 @@ class EmbeddingDataset:
     def load_relevance(self) -> Dict[str, Dict[str, float]]:
         """Load query-corpus relevance pairs.
 
-        Expects a JSONL file with fields: query_id, corpus_id, relevance (optional).
+        Sources (checked in order):
+        1. Already populated (e.g. from ``relevant`` field in query JSONL)
+        2. Separate ``--relevance_file`` JSONL
 
         Returns:
             Dict mapping query_id -> {corpus_id: relevance_score}
@@ -137,15 +142,18 @@ class EmbeddingDataset:
             return self.relevance
 
         if not self.config.relevance_file:
-            raise ValueError("relevance_file must be provided for supervised training")
+            raise ValueError(
+                "No relevance data available. Either provide --relevance_file "
+                "or include a 'relevant' field in the query JSONL."
+            )
 
         self.relevance = {}
         with open(self.config.relevance_file, "r") as f:
             for line in f:
                 rec = json.loads(line.strip())
-                qid = str(rec.get("query_id", rec.get("qid", "")))
-                cid = str(rec.get("corpus_id", rec.get("docid", rec.get("pid", ""))))
-                score = float(rec.get("relevance", rec.get("score", 1.0)))
+                qid = self._get_first(rec, "query_id", "qid")
+                cid = self._get_first(rec, "corpus_id", "docid", "pid")
+                score = float(self._get_first(rec, "relevance", "score", default=1.0))
                 if qid not in self.relevance:
                     self.relevance[qid] = {}
                 self.relevance[qid][cid] = score
@@ -284,6 +292,18 @@ class EmbeddingDataset:
 
     # ---- Internal helpers ----
 
+    @staticmethod
+    def _get_first(rec: Dict, *fields: str, default=None) -> str:
+        """Try multiple field paths (via get_nested_field) and return the first hit."""
+        for f in fields:
+            try:
+                return str(get_nested_field(rec, f))
+            except (KeyError, IndexError):
+                continue
+        if default is not None:
+            return str(default)
+        raise KeyError(f"None of {fields} found in record: {list(rec.keys())}")
+
     def _create_train_val_split(self):
         """Create train/val split of corpus indices."""
         N = len(self.corpus_embeddings)
@@ -310,34 +330,69 @@ class EmbeddingDataset:
             pickle.dump({"embeddings": embeddings, "ids": ids}, f)
         print(f"  Saved {len(ids)} embeddings to {path}")
 
-    def _compute_embeddings(
-        self,
-        jsonl_path: str,
-        text_field: str,
-        id_field: str,
-        prompt_name: Optional[str] = None,
+    def _compute_query_embeddings(
+        self, jsonl_path: str
     ) -> Tuple[np.ndarray, List[str]]:
-        """Compute embeddings from a JSONL file using SentenceTransformer."""
-        from sentence_transformers import SentenceTransformer
-        from docuverse.utils import detect_device
+        """Load queries from JSONL and compute embeddings.
 
-        # Load texts
+        Also extracts inline relevance if entries contain a ``relevant`` field
+        (list of corpus doc IDs), populating ``self.relevance``.
+
+        Example JSONL entry with inline relevance::
+
+            {"id": "q1", "text": "query text", "relevant": ["doc_3", "doc_17"]}
+        """
+        text_field = self.config.query_text_field
+        id_field = self.config.query_id_field
+
         texts, ids = [], []
+        inline_relevance: Dict[str, Dict[str, float]] = {}
+
         with open(jsonl_path, "r") as f:
             for line in f:
                 rec = json.loads(line.strip())
-                texts.append(str(rec[text_field]))
-                ids.append(str(rec[id_field]))
+                qid = str(get_nested_field(rec, id_field))
+                texts.append(str(get_nested_field(rec, text_field)))
+                ids.append(qid)
 
-        print(f"  Loaded {len(texts)} texts from {jsonl_path}")
+                # Extract inline relevance
+                try:
+                    rel_docs = get_nested_field(rec, "relevant")
+                    if isinstance(rel_docs, list):
+                        inline_relevance[qid] = {
+                            str(cid): 1.0 for cid in rel_docs
+                        }
+                except (KeyError, IndexError):
+                    pass
 
-        # Load model
+        print(f"  Loaded {len(texts)} queries from {jsonl_path}")
+
+        if inline_relevance:
+            n_pairs = sum(len(v) for v in inline_relevance.values())
+            print(
+                f"  Extracted {n_pairs} relevance pairs "
+                f"for {len(inline_relevance)} queries from 'relevant' field"
+            )
+            self.relevance = inline_relevance
+
+        # Compute embeddings
+        embeddings = self._encode_texts(texts, prompt_name="query")
+        return embeddings, ids
+
+    def _encode_texts(
+        self, texts: List[str], prompt_name: Optional[str] = None
+    ) -> np.ndarray:
+        """Encode a list of texts using SentenceTransformer."""
+        from sentence_transformers import SentenceTransformer
+        from docuverse.utils import detect_device
+
         device = self.config.device
         if device == "auto":
             device = detect_device()
-        model = SentenceTransformer(self.config.model_name, device=device, trust_remote_code=True)
+        model = SentenceTransformer(
+            self.config.model_name, device=device, trust_remote_code=True
+        )
 
-        # Encode
         embeddings = model.encode(
             texts,
             batch_size=self.config.batch_size,
@@ -345,7 +400,31 @@ class EmbeddingDataset:
             normalize_embeddings=True,
             prompt_name=prompt_name,
         )
+        return embeddings
 
+    def _compute_embeddings(
+        self,
+        jsonl_path: str,
+        text_field: str,
+        id_field: str,
+        prompt_name: Optional[str] = None,
+    ) -> Tuple[np.ndarray, List[str]]:
+        """Compute embeddings from a JSONL file using SentenceTransformer.
+
+        Field names support nested dot-notation (e.g. ``document.text``,
+        ``metadata.id``) via :func:`get_nested_field`.
+        """
+        # Load texts
+        texts, ids = [], []
+        with open(jsonl_path, "r") as f:
+            for line in f:
+                rec = json.loads(line.strip())
+                texts.append(str(get_nested_field(rec, text_field)))
+                ids.append(str(get_nested_field(rec, id_field)))
+
+        print(f"  Loaded {len(texts)} texts from {jsonl_path}")
+
+        embeddings = self._encode_texts(texts, prompt_name=prompt_name)
         return embeddings, ids
 
     def _mine_neighbors_brute_force(

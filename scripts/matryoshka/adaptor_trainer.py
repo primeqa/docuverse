@@ -17,6 +17,7 @@ Training objective (supervised, Eq. 6):
 Two-stage training: first unsupervised (Eq. 4), then supervised (Eq. 6).
 """
 
+import os
 from typing import Optional
 
 import numpy as np
@@ -135,25 +136,53 @@ class MatryoshkaAdaptorTrainer(BaseMatryoshkaTrainer):
 
         Stage 1: Unsupervised training with L_topk + alpha*L_pair + beta*L_rec
         Stage 2: Supervised training with all four losses (if supervised mode)
+
+        If a ``best_model.pt`` checkpoint already exists in the output
+        directory, Stage 1 is skipped and the checkpoint is loaded instead.
+        Stage 2 (supervised fine-tuning) always runs when supervised=True.
         """
         if self.config.supervised:
-            # Stage 1: Unsupervised
-            print("\n--- Stage 1: Unsupervised pre-training ---")
-            orig_supervised = self.config.supervised
-            self.config.supervised = False
-            super().train()
+            best_path = os.path.join(self.config.output_dir, "best_model.pt")
 
-            # Stage 2: Supervised
+            if os.path.exists(best_path):
+                # Load existing unsupervised checkpoint, skip Stage 1
+                print("\n--- Stage 1: Unsupervised (loading existing checkpoint) ---")
+                print(f"  Found existing checkpoint: {best_path}")
+
+                # Ensure embeddings and model are ready
+                if self.dataset.corpus_embeddings is None:
+                    self.dataset.load_corpus_embeddings()
+                if self.dataset.query_embeddings is None:
+                    self.dataset.load_query_embeddings()
+                if self.dataset.relevance is None:
+                    self.dataset.load_relevance()
+                if self.model is None:
+                    self._init_model_and_optimizer()
+
+                self.load(best_path)
+                print(f"  Loaded model from step {self.global_step} "
+                      f"(best_val_loss={self.best_val_loss:.4f})")
+            else:
+                # Stage 1: Unsupervised training from scratch
+                print("\n--- Stage 1: Unsupervised pre-training ---")
+                orig_supervised = self.config.supervised
+                self.config.supervised = False
+                super().train()
+                self.config.supervised = orig_supervised
+
+            # Stage 2: Supervised fine-tuning (always runs)
             print("\n--- Stage 2: Supervised fine-tuning ---")
-            self.config.supervised = orig_supervised
             # Reset training state but keep model weights
             self.global_step = 0
             self.best_val_loss = float("inf")
             self.patience_counter = 0
-            # Rebuild optimizer with potentially different LR
+            # Lower LR for fine-tuning
             if self.optimizer is not None:
                 for g in self.optimizer.param_groups:
-                    g["lr"] = self.config.lr * 0.1  # Lower LR for fine-tuning
+                    g["lr"] = self.config.lr * 0.1
+            # Bypass checkpoint detection so Stage 2 actually trains
+            self._skip_checkpoint_load = True
             super().train()
+            self._skip_checkpoint_load = False
         else:
             super().train()

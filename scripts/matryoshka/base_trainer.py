@@ -73,6 +73,7 @@ class BaseMatryoshkaTrainer(ABC):
         self.global_step = 0
         self.best_val_loss = float("inf")
         self.patience_counter = 0
+        self._skip_checkpoint_load = False  # Set True to bypass checkpoint detection
 
     def _init_model_and_optimizer(self):
         """Initialize model and optimizer after embedding dim is known."""
@@ -168,6 +169,25 @@ class BaseMatryoshkaTrainer(ABC):
             print("No trainable parameters. Running baseline computation...")
             self._run_baseline()
             return
+
+        # Check for existing checkpoint
+        if not self._skip_checkpoint_load:
+            best_path = os.path.join(self.config.output_dir, "best_model.pt")
+            if os.path.exists(best_path):
+                print(f"\n  Found existing checkpoint: {best_path}")
+                print(f"  Loading pre-trained model (skipping training)...")
+                self.load(best_path)
+                print(f"  Loaded model from step {self.global_step} "
+                      f"(best_val_loss={self.best_val_loss:.4f})")
+
+                # Run evaluation only
+                corpus_tensor = torch.tensor(
+                    self.dataset.corpus_embeddings, dtype=torch.float32
+                )
+                self.dataset.mine_topk_neighbors()
+                self._evaluate_all_dims(corpus_tensor)
+                tm.add_timing("checkpoint_load_and_eval")
+                return
 
         n_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         print(f"Model parameters: {n_params:,}")

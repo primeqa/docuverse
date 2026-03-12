@@ -51,6 +51,7 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
+from docuverse.utils import save_command_line
 
 # Add project root to path
 _PROJECT_ROOT = str(Path(__file__).parent.parent.parent)
@@ -211,6 +212,8 @@ def create_trainer(config: MatryoshkaTrainingConfig):
 
 
 def main():
+    save_command_line(args=sys.argv)
+
     tm = timer("matryoshka_train")
     config = parse_args()
 
