@@ -426,7 +426,7 @@ def _parallel_queue_worker(inqueue, result_queue, thread_number, expected_items,
               file=sys.stderr, flush=True)
 
 def parallel_process(process_func, data, num_threads, post_func=None, post_label=None,
-                     msg="Processing result:"):
+                     msg="Processing result:", use_threads=False):
     """
     This method parallelizes the processing of a list of documents using multiple threads.
 
@@ -466,6 +466,54 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     if num_threads <= 1:
         return [apply_funcs(dt) for dt in tqdm(data, desc=msg, smoothing=1)]
 
+    if use_threads:
+        import threading
+        import copy
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        # HuggingFace fast tokenizers are not thread-safe (Rust borrow semantics).
+        # Give each thread its own deep copy of process_func (which carries the tiler/tokenizer).
+        _thread_local = threading.local()
+
+        def _thread_apply(item):
+            if not hasattr(_thread_local, 'func'):
+                _thread_local.func = copy.deepcopy(process_func)
+                _thread_local.post = copy.deepcopy(post_func) if post_func is not None else None
+            result = _thread_local.func(item)
+            if _thread_local.post is not None:
+                if isinstance(result[0], dict):
+                    result = [{**r, post_label: _thread_local.post(r)} for r in result]
+                else:
+                    setattr(result, post_label, _thread_local.post(result))
+            return result
+
+        results = [None] * len(data)
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = {executor.submit(_thread_apply, item): i for i, item in enumerate(data)}
+            with tqdm(total=len(data), desc=msg) as tk:
+                for future in as_completed(futures):
+                    i = futures[future]
+                    try:
+                        results[i] = future.result()
+                    except Exception:
+                        import traceback
+                        print(f"\n[Thread {i}] Error: {traceback.format_exc()}", flush=True)
+                        results[i] = []
+                    tk.update(1)
+        return results
+
+    # Smoke-test: run the first item in the main process before forking.
+    # This surfaces Python exceptions with a full traceback immediately,
+    # rather than losing them to a worker crash.
+    if data:
+        try:
+            apply_funcs(data[0])
+        except Exception:
+            import traceback
+            print(f"\n[parallel_process] Smoke test failed on first item — "
+                  f"aborting parallel run.\n{traceback.format_exc()}", flush=True)
+            raise
+
     import multiprocessing as mp
 
     # Use 'fork' context for fast startup (avoids re-importing modules).
@@ -502,6 +550,7 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     # Collect results with main progress bar at position 0
     results = [None] * num_docs
     errors = {}
+    reported_dead = set()
     tk = tqdm(desc=msg, total=num_docs, position=0)
     collected = 0
     while collected < num_docs:
@@ -517,50 +566,52 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
             collected += 1
             tk.update(1)
         except Exception:
-            # Check which workers are still alive
-            alive = [(i, p) for i, p in enumerate(processes) if p.is_alive()]
-            dead = [(i, p) for i, p in enumerate(processes) if not p.is_alive()]
+            pass
 
-            # Report any workers that died with non-zero exit codes
-            for i, p in dead:
-                if p.exitcode is not None and p.exitcode != 0:
-                    if p.exitcode < 0:
-                        import signal
-                        try:
-                            sig_name = signal.Signals(-p.exitcode).name
-                        except (ValueError, AttributeError):
-                            sig_name = f"signal {-p.exitcode}"
-                        print(f"\n  [Worker {i}] Killed by {sig_name} "
-                              f"(exit code {p.exitcode})",
-                              flush=True)
+        # Proactively report workers that have newly died (checked every iteration)
+        import signal as _signal
+        for i, p in enumerate(processes):
+            if i in reported_dead or p.is_alive():
+                continue
+            reported_dead.add(i)
+            ec = p.exitcode
+            if ec is None:
+                continue
+            if ec < 0:
+                try:
+                    sig_name = _signal.Signals(-ec).name
+                except (ValueError, AttributeError):
+                    sig_name = f"signal {-ec}"
+                print(f"\n  [Worker {i}] Killed by {sig_name} (exit code {ec})",
+                      flush=True)
+            elif ec != 0:
+                print(f"\n  [Worker {i}] Exited with code {ec}", flush=True)
+
+        # If all workers are gone and there's nothing left in the queue, stop waiting
+        if len(reported_dead) == num_threads:
+            # Drain any remaining queued results before giving up
+            while True:
+                try:
+                    item = result_queue.get_nowait()
+                    if len(item) == 3:
+                        idx, _, tb_str = item
+                        results[idx] = []
+                        errors[idx] = tb_str
                     else:
-                        print(f"\n  [Worker {i}] Exited with code {p.exitcode}",
-                              flush=True)
-
-            if not alive:
-                tk.close()
-                _report_failed_items(results, data, num_docs, collected, errors)
-                break
+                        idx, result = item
+                        results[idx] = result
+                    collected += 1
+                    tk.update(1)
+                except Exception:
+                    break
+            tk.close()
+            _report_failed_items(results, data, num_docs, collected, errors)
+            break
     else:
         tk.close()
 
     for p in processes:
         p.join(timeout=10)
-
-    # Final exit-code check for workers that died after collection finished
-    for i, p in enumerate(processes):
-        if p.exitcode is not None and p.exitcode != 0:
-            if p.exitcode < 0:
-                import signal
-                try:
-                    sig_name = signal.Signals(-p.exitcode).name
-                except (ValueError, AttributeError):
-                    sig_name = f"signal {-p.exitcode}"
-                print(f"  [Worker {i}] Killed by {sig_name} "
-                      f"(exit code {p.exitcode})", flush=True)
-            else:
-                print(f"  [Worker {i}] Exited with code {p.exitcode}",
-                      flush=True)
 
     # Report any items that failed with exceptions
     if errors:
