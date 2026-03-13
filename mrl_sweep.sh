@@ -281,7 +281,7 @@ for model in $MODELS; do
           fi
           BSUB_CMD+=(-J "$job_name")
           # Build log file name encoding model, doc-length, and dim
-          log_parts=()
+          log_parts=("%J")
           [ -n "$SHORT_MODEL" ]    && log_parts+=("$SHORT_MODEL")
           [ "$mdl" != "_none_" ]   && log_parts+=("mdl${mdl}")
           log_parts+=("dim${i}")
