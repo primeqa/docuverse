@@ -254,13 +254,13 @@ for model in $MODELS; do
           [ "$mdl" != "_none_" ]   && log_parts+=("mdl${mdl}")
           log_parts+=("dim${i}")
           log_tag=$(IFS=-; echo "${log_parts[*]}")
-          BSUB_CMD+=(-o "/u/raduf/tmp/${cfg_base}_${log_tag}.%J.out" -e "/u/raduf/tmp/${cfg_base}_${log_tag}.%J.err")
+          BSUB_CMD+=(-o "/u/raduf/tmp/${cfg_base}_${log_tag}.out" -e "/u/raduf/tmp/${cfg_base}_${log_tag}.err")
           [ -n "$BSUB_QUEUE" ]        && BSUB_CMD+=(-q "$BSUB_QUEUE")
           [ -n "$BSUB_REQUIREMENTS" ] && BSUB_CMD+=(-R "$BSUB_REQUIREMENTS")
           [ -n "$BSUB_EXTRA" ]        && read -ra _bsub_extra_arr <<< "$BSUB_EXTRA" && BSUB_CMD+=("${_bsub_extra_arr[@]}")
           
           TMP_DB_PATH="$(dirname "$config")/tmp$$.db"
-          CMD+=("--server $TMP_DB_PATH")
+          CMD+=("--server file:$TMP_DB_PATH")
 
           echo "  Submitting: ${BSUB_CMD[*]} ... ${CMD[*]}"
           "${BSUB_CMD[@]}" bash -c "
