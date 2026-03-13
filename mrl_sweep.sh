@@ -87,6 +87,11 @@ MODELS=""
 MAX_DOC_LENGTHS=""
 STRIDE=""
 CONFIGS=()
+USE_BSUB=0
+BSUB_QUEUE=""
+BSUB_REQUIREMENTS=""
+BSUB_EXTRA=""
+CONDA_ENV="docu"
 
 # ---- Parse arguments ----
 usage() {
@@ -99,6 +104,11 @@ usage() {
   echo "  --num-preprocessor-threads N Number of preprocessing threads (default: $NUM_THREADS)"
   echo "  --max-doc-length \"N1 N2 ...\"  Max document length(s) to sweep (space-separated)"
   echo "  --stride N                    Stride for document chunking"
+  echo "  --bsub                        Submit jobs via bsub instead of running locally"
+  echo "  --queue Q                     bsub queue name (implies --bsub)"
+  echo "  --bsub-requirements R         bsub resource requirements string, e.g. \"rusage[mem=16000,ngpus_physical=1]\""
+  echo "  --bsub-extra \"ARGS\"           Extra arguments passed verbatim to bsub"
+  echo "  --conda-env NAME              Conda environment to activate (default: $CONDA_ENV)"
   echo "  -h, --help                    Show this help message"
   exit 0
 }
@@ -117,6 +127,16 @@ while [[ $# -gt 0 ]]; do
       MAX_DOC_LENGTHS="$2"; shift 2 ;;
     --stride)
       STRIDE="$2"; shift 2 ;;
+    --bsub)
+      USE_BSUB=1; shift ;;
+    --queue)
+      BSUB_QUEUE="$2"; USE_BSUB=1; shift 2 ;;
+    --bsub-requirements | --bsub-req)
+      BSUB_REQUIREMENTS="$2"; USE_BSUB=1; shift 2 ;;
+    --bsub-extra)
+      BSUB_EXTRA="$2"; USE_BSUB=1; shift 2 ;;
+    --conda-env)
+      CONDA_ENV="$2"; shift 2 ;;
     -h|--help)
       usage ;;
     -*)
@@ -160,6 +180,13 @@ echo "Threads:       $NUM_THREADS"
 [ -n "$MODELS" ]          && echo "Models:        $MODELS"
 [ -n "$MAX_DOC_LENGTHS" ] && echo "MaxDocLengths: $MAX_DOC_LENGTHS"
 [ -n "$STRIDE" ]          && echo "Stride:        $STRIDE"
+if [ "$USE_BSUB" -eq 1 ]; then
+  echo "Submit:        bsub"
+  [ -n "$BSUB_QUEUE" ]        && echo "Queue:         $BSUB_QUEUE"
+  [ -n "$BSUB_REQUIREMENTS" ] && echo "Requirements:  $BSUB_REQUIREMENTS"
+  [ -n "$BSUB_EXTRA" ]        && echo "Extra args:    $BSUB_EXTRA"
+  echo "Conda env:     $CONDA_ENV"
+fi
 
 # Count total combinations
 n_models=$(echo $MODELS | wc -w)
@@ -188,7 +215,7 @@ for model in $MODELS; do
       for i in $STEPS; do
         run_idx=$((run_idx + 1))
 
-        CMD=(CUDA_VISIBLE_DEVICES=1 python docuverse/utils/ingest_and_test.py)
+        CMD=(python docuverse/utils/ingest_and_test.py)
         CMD+=(--num_preprocessor_threads "$NUM_THREADS")
         [ "$model" != "_none_" ] && CMD+=(--model_name "$model")
         [ "$mdl" != "_none_" ]   && CMD+=(--max_doc_length "$mdl")
@@ -197,6 +224,7 @@ for model in $MODELS; do
         CMD+=(--matryoshka_dim "$i")
 
         # Build short name: model[-mdlN]-dimN
+        short_suffix=""
         if [ -n "$SHORT_MODEL" ]; then
           short_suffix="${SHORT_MODEL}"
           [ "$mdl" != "_none_" ] && short_suffix="${short_suffix}-mdl${mdl}"
@@ -205,7 +233,32 @@ for model in $MODELS; do
         fi
 
         echo "[$run_idx/$total]"
-        runCmd "${CMD[*]}"
+        if [ "$USE_BSUB" -eq 1 ]; then
+          # Build bsub arguments
+          BSUB_CMD=(bsub)
+          # Job name: config basename + short suffix or dim
+          cfg_base=$(basename "$config" | sed 's/\.\(yaml\|yml\|json\)$//')
+          if [ -n "$short_suffix" ]; then
+            job_name="${cfg_base}_${short_suffix}"
+          else
+            job_name="${cfg_base}_dim${i}"
+          fi
+          BSUB_CMD+=(-J "$job_name")
+          BSUB_CMD+=(-o "${job_name}.%J.out" -e "${job_name}.%J.err")
+          [ -n "$BSUB_QUEUE" ]        && BSUB_CMD+=(-q "$BSUB_QUEUE")
+          [ -n "$BSUB_REQUIREMENTS" ] && BSUB_CMD+=(-R "$BSUB_REQUIREMENTS")
+          [ -n "$BSUB_EXTRA" ]        && read -ra _bsub_extra_arr <<< "$BSUB_EXTRA" && BSUB_CMD+=("${_bsub_extra_arr[@]}")
+
+          echo "  Submitting: ${BSUB_CMD[*]} ... ${CMD[*]}"
+          "${BSUB_CMD[@]}" bash -c "
+source \$(conda info --base)/etc/profile.d/conda.sh
+conda activate ${CONDA_ENV}
+cd $(pwd)
+${CMD[*]}
+"
+        else
+          runCmd "CUDA_VISIBLE_DEVICES=1 ${CMD[*]}"
+        fi
       done
     done
   done
