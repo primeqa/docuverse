@@ -252,6 +252,9 @@ for model in $MODELS; do
           [ -n "$BSUB_QUEUE" ]        && BSUB_CMD+=(-q "$BSUB_QUEUE")
           [ -n "$BSUB_REQUIREMENTS" ] && BSUB_CMD+=(-R "$BSUB_REQUIREMENTS")
           [ -n "$BSUB_EXTRA" ]        && read -ra _bsub_extra_arr <<< "$BSUB_EXTRA" && BSUB_CMD+=("${_bsub_extra_arr[@]}")
+          
+          TMP_DB_PATH="$(dirname "$config")/tmp$$.db"
+          CMD+=("--server $TMP_DB_PATH")
 
           echo "  Submitting: ${BSUB_CMD[*]} ... ${CMD[*]}"
           "${BSUB_CMD[@]}" bash -c "
@@ -259,6 +262,7 @@ source \$(conda info --base)/etc/profile.d/conda.sh
 conda activate ${CONDA_ENV}
 cd $(pwd)
 ${CMD[*]}
+rm $TMP_DB_PATH
 "
         else
           runCmd "CUDA_VISIBLE_DEVICES=${GPU_ID} ${CMD[*]}"
