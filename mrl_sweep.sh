@@ -115,18 +115,41 @@ usage() {
   exit 0
 }
 
+# collect_values: consume all following args until the next flag (starts with -)
+# Usage: collect_values "$@"; set -- "${_remaining[@]}"
+# Results are in _collected (array)
+collect_values() {
+  _collected=()
+  _remaining=()
+  local found=0
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == -* && $found -gt 0 ]]; then
+      _remaining=("$@")
+      return
+    fi
+    _collected+=("$1")
+    found=$((found + 1))
+    shift
+  done
+  _remaining=()
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model)
-      MODELS="$2"; shift 2 ;;
+      shift; collect_values "$@"; set -- "${_remaining[@]}"
+      MODELS="${_collected[*]}" ;;
     --steps)
-      STEPS="$2"; shift 2 ;;
+      shift; collect_values "$@"; set -- "${_remaining[@]}"
+      STEPS="${_collected[*]}" ;;
     --configs)
-      read -ra CONFIGS <<< "$2"; shift 2 ;;
+      shift; collect_values "$@"; set -- "${_remaining[@]}"
+      CONFIGS+=("${_collected[@]}") ;;
+    --max-doc-length)
+      shift; collect_values "$@"; set -- "${_remaining[@]}"
+      MAX_DOC_LENGTHS="${_collected[*]}" ;;
     --num-preprocessor-threads | --num_preprocessor_threads)
       NUM_THREADS="$2"; shift 2 ;;
-    --max-doc-length)
-      MAX_DOC_LENGTHS="$2"; shift 2 ;;
     --stride)
       STRIDE="$2"; shift 2 ;;
     --bsub)
@@ -202,6 +225,15 @@ n_doclen=$(echo $MAX_DOC_LENGTHS | wc -w)
 total=$((n_configs * n_models * n_doclen * n_steps))
 echo "Total runs:    $total  ($n_configs configs x $n_models models x $n_doclen doc-lengths x $n_steps steps)"
 echo
+
+if [ "$USE_BSUB" -eq 1 ]; then
+  read -r -p "Proceed with submitting $total bsub jobs? [Y/n] " response
+  case "$response" in
+    [nN]|[nN][oO])
+      echo "Aborted."
+      exit 0 ;;
+  esac
+fi
 
 # ---- If no models/doc-lengths given, use a single empty placeholder ----
 [ -z "$MODELS" ]          && MODELS="_none_"
