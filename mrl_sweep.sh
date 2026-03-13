@@ -260,7 +260,7 @@ for model in $MODELS; do
           [ -n "$BSUB_EXTRA" ]        && read -ra _bsub_extra_arr <<< "$BSUB_EXTRA" && BSUB_CMD+=("${_bsub_extra_arr[@]}")
           
           TMP_DB_PATH="$(dirname "$config")/tmp$$.db"
-          CMD+=("--server $TMP_DB_PATH")
+          CMD+=("--server file:$TMP_DB_PATH")
 
           echo "  Submitting: ${BSUB_CMD[*]} ... ${CMD[*]}"
           "${BSUB_CMD[@]}" bash -c "
