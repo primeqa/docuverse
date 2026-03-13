@@ -248,7 +248,13 @@ for model in $MODELS; do
             job_name="${cfg_base}_dim${i}"
           fi
           BSUB_CMD+=(-J "$job_name")
-          BSUB_CMD+=(-o "${job_name}.%J.out" -e "${job_name}.%J.err")
+          # Build log file name encoding model, doc-length, and dim
+          log_parts=()
+          [ -n "$SHORT_MODEL" ]    && log_parts+=("$SHORT_MODEL")
+          [ "$mdl" != "_none_" ]   && log_parts+=("mdl${mdl}")
+          log_parts+=("dim${i}")
+          log_tag=$(IFS=-; echo "${log_parts[*]}")
+          BSUB_CMD+=(-o "/u/raduf/tmp/${cfg_base}_${log_tag}.%J.out" -e "/u/raduf/tmp/${cfg_base}_${log_tag}.%J.err")
           [ -n "$BSUB_QUEUE" ]        && BSUB_CMD+=(-q "$BSUB_QUEUE")
           [ -n "$BSUB_REQUIREMENTS" ] && BSUB_CMD+=(-R "$BSUB_REQUIREMENTS")
           [ -n "$BSUB_EXTRA" ]        && read -ra _bsub_extra_arr <<< "$BSUB_EXTRA" && BSUB_CMD+=("${_bsub_extra_arr[@]}")
