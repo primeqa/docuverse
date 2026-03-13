@@ -92,6 +92,7 @@ BSUB_QUEUE=""
 BSUB_REQUIREMENTS=""
 BSUB_EXTRA=""
 CONDA_ENV="docu"
+GPU_ID="0"
 
 # ---- Parse arguments ----
 usage() {
@@ -109,6 +110,7 @@ usage() {
   echo "  --bsub-requirements R         bsub resource requirements string, e.g. \"rusage[mem=16000,ngpus_physical=1]\""
   echo "  --bsub-extra \"ARGS\"           Extra arguments passed verbatim to bsub"
   echo "  --conda-env NAME              Conda environment to activate (default: $CONDA_ENV)"
+  echo "  --gpu ID                      CUDA_VISIBLE_DEVICES for local runs (default: $GPU_ID, ignored with --bsub)"
   echo "  -h, --help                    Show this help message"
   exit 0
 }
@@ -137,6 +139,8 @@ while [[ $# -gt 0 ]]; do
       BSUB_EXTRA="$2"; USE_BSUB=1; shift 2 ;;
     --conda-env)
       CONDA_ENV="$2"; shift 2 ;;
+    --gpu)
+      GPU_ID="$2"; shift 2 ;;
     -h|--help)
       usage ;;
     -*)
@@ -257,7 +261,7 @@ cd $(pwd)
 ${CMD[*]}
 "
         else
-          runCmd "CUDA_VISIBLE_DEVICES=1 ${CMD[*]}"
+          runCmd "CUDA_VISIBLE_DEVICES=${GPU_ID} ${CMD[*]}"
         fi
       done
     done
