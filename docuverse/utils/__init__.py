@@ -382,6 +382,7 @@ def file_is_of_type(input_file, extensions: Union[str, List[str]]):
 _parallel_process_func = None
 _parallel_post_func = None
 _parallel_post_label = None
+_parallel_data = None
 
 def _parallel_queue_worker(inqueue, result_queue, thread_number, expected_items, msg):
     """Worker with its own tqdm progress bar. Uses fork-inherited globals."""
@@ -394,7 +395,7 @@ def _parallel_queue_worker(inqueue, result_queue, thread_number, expected_items,
                   position=thread_number + 1, total=expected_items) as tk:
             while True:
                 try:
-                    idx, text = inqueue.get(block=True, timeout=1)
+                    idx = inqueue.get(block=True, timeout=1)
                 except queue_module.Empty:
                     break
                 except Exception as e:
@@ -402,6 +403,7 @@ def _parallel_queue_worker(inqueue, result_queue, thread_number, expected_items,
                           file=sys.stderr, flush=True)
                     break
                 try:
+                    text = _parallel_data[idx]
                     result = _parallel_process_func(text)
                     if _parallel_post_func is not None:
                         if isinstance(result[0], dict):
@@ -412,9 +414,10 @@ def _parallel_queue_worker(inqueue, result_queue, thread_number, expected_items,
                             setattr(result, _parallel_post_label, _parallel_post_func(result))
                     result_queue.put((idx, result))
                 except Exception as e:
+                    tb_str = traceback.format_exc()
                     print(f"[Worker {thread_number}] Error processing item {idx}: {e}",
                           file=sys.stderr, flush=True)
-                    result_queue.put((idx, []))
+                    result_queue.put((idx, [], tb_str))
                 tk.update(1)
     except Exception as e:
         # Catch-all for anything that kills the worker (tqdm init, missing globals, etc.)
@@ -474,18 +477,19 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
 
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-    # Set module-level globals so forked workers inherit them
-    global _parallel_process_func, _parallel_post_func, _parallel_post_label
+    # Set module-level globals so forked workers inherit them (copy-on-write)
+    global _parallel_process_func, _parallel_post_func, _parallel_post_label, _parallel_data
     _parallel_process_func = process_func
     _parallel_post_func = post_func
     _parallel_post_label = post_label
+    _parallel_data = data
 
     num_docs = len(data)
     inqueue = ctx.Queue()
     result_queue = ctx.Queue()
 
-    for i, doc in enumerate(data):
-        inqueue.put((i, doc))
+    for i in range(num_docs):
+        inqueue.put(i)
 
     items_per_worker = (num_docs + num_threads - 1) // num_threads
     processes = []
@@ -497,12 +501,19 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
 
     # Collect results with main progress bar at position 0
     results = [None] * num_docs
+    errors = {}
     tk = tqdm(desc=msg, total=num_docs, position=0)
     collected = 0
     while collected < num_docs:
         try:
-            idx, result = result_queue.get(timeout=5)
-            results[idx] = result
+            item = result_queue.get(timeout=5)
+            if len(item) == 3:
+                idx, _, tb_str = item
+                results[idx] = []
+                errors[idx] = tb_str
+            else:
+                idx, result = item
+                results[idx] = result
             collected += 1
             tk.update(1)
         except Exception:
@@ -528,7 +539,7 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
 
             if not alive:
                 tk.close()
-                _report_failed_items(results, data, num_docs, collected)
+                _report_failed_items(results, data, num_docs, collected, errors)
                 break
     else:
         tk.close()
@@ -551,44 +562,76 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
                 print(f"  [Worker {i}] Exited with code {p.exitcode}",
                       flush=True)
 
+    # Report any items that failed with exceptions
+    if errors:
+        _report_failed_items(results, data, num_docs, collected, errors)
+
     # Replace any remaining None entries with empty lists
     results = [r if r is not None else [] for r in results]
 
     return results
 
 
-def _report_failed_items(results, data, num_docs, collected):
-    """Report items that were not processed due to worker crashes."""
+def _report_failed_items(results, data, num_docs, collected, errors=None):
+    """Report items that were not processed due to worker crashes or exceptions."""
+    if errors is None:
+        errors = {}
+
     failed_indices = [i for i, r in enumerate(results) if r is None]
-    if not failed_indices:
+    errored_indices = sorted(errors.keys())
+    all_problem_indices = sorted(set(failed_indices) | set(errored_indices))
+
+    if not all_problem_indices:
         return
 
-    n_failed = len(failed_indices)
-    print(f"\nWARNING: {n_failed}/{num_docs} items were not processed "
-          f"({collected} succeeded, worker process(es) crashed).")
+    n_crashed = len(failed_indices)
+    n_errored = len(errored_indices)
+    parts = []
+    if n_crashed:
+        parts.append(f"{n_crashed} crashed")
+    if n_errored:
+        parts.append(f"{n_errored} raised exceptions")
+    print(f"\nWARNING: {len(all_problem_indices)}/{num_docs} items failed "
+          f"({', '.join(parts)}).")
 
-    # Report failed items with as much identifying info as possible
-    MAX_DISPLAY = 20
-    for idx in failed_indices[:MAX_DISPLAY]:
-        item = data[idx]
-        if isinstance(item, dict):
-            # Try common id fields, then fall back to first 80 chars of first string value
-            item_id = (item.get('id') or item.get('_id') or item.get('docid')
-                       or item.get('doc_id') or item.get('pid'))
-            if item_id is not None:
-                print(f"  - index {idx}: id={item_id}")
+    # Group errors by traceback to avoid repeating the same exception N times
+    tb_groups = {}
+    for idx in errored_indices:
+        tb = errors[idx]
+        tb_groups.setdefault(tb, []).append(idx)
+
+    if tb_groups:
+        print(f"\n  Distinct exceptions ({len(tb_groups)}):")
+        for i, (tb, indices) in enumerate(tb_groups.items(), 1):
+            # Indent the traceback for readability
+            indented_tb = "\n".join(f"    {line}" for line in tb.rstrip().splitlines())
+            print(f"\n  [{i}] Affected {len(indices)} item(s) "
+                  f"(first indices: {indices[:5]}{'...' if len(indices) > 5 else ''}):")
+            print(indented_tb)
+
+    # Report crashed items (no exception captured — worker died)
+    if n_crashed:
+        MAX_DISPLAY = 20
+        print(f"\n  Items lost to worker crashes (no traceback available):")
+        for idx in failed_indices[:MAX_DISPLAY]:
+            item = data[idx]
+            if isinstance(item, dict):
+                item_id = (item.get('id') or item.get('_id') or item.get('docid')
+                           or item.get('doc_id') or item.get('pid'))
+                if item_id is not None:
+                    print(f"    - index {idx}: id={item_id}")
+                else:
+                    preview = next((str(v)[:80] for v in item.values()
+                                    if isinstance(v, str) and v.strip()), None)
+                    print(f"    - index {idx}: {preview or '(no preview)'}")
             else:
-                preview = next((str(v)[:80] for v in item.values()
-                                if isinstance(v, str) and v.strip()), None)
-                print(f"  - index {idx}: {preview or '(no preview)'}")
-        else:
-            print(f"  - index {idx}: {str(item)[:80]}")
-    if n_failed > MAX_DISPLAY:
-        print(f"  ... and {n_failed - MAX_DISPLAY} more")
+                print(f"    - index {idx}: {str(item)[:80]}")
+        if n_crashed > MAX_DISPLAY:
+            print(f"    ... and {n_crashed - MAX_DISPLAY} more")
 
-    # Log the full list of failed indices for programmatic use
-    print(f"  Failed indices: {failed_indices[:100]}"
-          f"{'...' if n_failed > 100 else ''}")
+    # Log the full list for programmatic use
+    print(f"  All failed indices: {all_problem_indices[:100]}"
+          f"{'...' if len(all_problem_indices) > 100 else ''}")
 
 def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes') -> str:
     """
