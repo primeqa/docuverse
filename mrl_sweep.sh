@@ -291,7 +291,8 @@ for model in $MODELS; do
           [ -n "$BSUB_REQUIREMENTS" ] && BSUB_CMD+=(-R "$BSUB_REQUIREMENTS")
           [ -n "$BSUB_EXTRA" ]        && read -ra _bsub_extra_arr <<< "$BSUB_EXTRA" && BSUB_CMD+=("${_bsub_extra_arr[@]}")
           
-          TMP_DB_PATH="$(dirname "$config")/tmp$$.db"
+          RANDOM_VALUE=$RANDOM
+          TMP_DB_PATH="$(dirname "$config")/tmp${RANDOM_VALUE}.db"
           CMD+=("--server file:$TMP_DB_PATH")
 
           echo "  Submitting: ${BSUB_CMD[*]} ... ${CMD[*]}"
