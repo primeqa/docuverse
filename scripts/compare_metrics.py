@@ -9,6 +9,8 @@ Usage:
 """
 
 import argparse
+import csv
+import io
 import json
 import os
 import re
@@ -107,9 +109,15 @@ def _parse_json(content):
 
 
 def _parse_timing(lines):
-    """Extract timing info from the Timing: section."""
-    timing = {}
+    """Extract timing info from the Timing: section at all nesting levels.
+
+    Uses short leaf names when unique, otherwise disambiguates with a
+    parent-qualified path (e.g. 'search/encode' vs 'ingest/encode').
+    """
+    # First pass: collect all entries with their hierarchy info
+    entries = []  # list of (indent, name, secs, full_path)
     in_timing = False
+    parent_stack = []  # [(indent, name), ...]
     for line in lines:
         if line.strip().startswith("Timing:"):
             in_timing = True
@@ -119,18 +127,37 @@ def _parse_timing(lines):
                 break
             if not line.strip() or line.strip().startswith("Name"):
                 continue
-            # e.g. "  ingest_and_test   180.3s   100.0%  ..."
-            # or   "    search            6.3s     3.5%  ..."
             m = re.match(r"^(\s*)(\S+)\s+([\d.]+)s", line)
             if m:
                 indent = len(m.group(1))
                 name = m.group(2)
                 secs = float(m.group(3))
-                if indent == 0:  # top-level = total
-                    timing["total"] = secs
-                elif indent == 2:  # direct children (ingest, search, etc.)
-                    timing[name] = secs
-                # skip deeper nesting
+
+                # Pop stack back to parent level
+                while parent_stack and parent_stack[-1][0] >= indent:
+                    parent_stack.pop()
+
+                if indent == 0:
+                    full_path = "total"
+                else:
+                    full_path = "/".join(p[1] for p in parent_stack[1:])
+                    full_path = f"{full_path}/{name}" if full_path else name
+
+                entries.append((indent, name, secs, full_path))
+                parent_stack.append((indent, name))
+
+    # Second pass: detect duplicate short names and use qualified paths for those
+    from collections import Counter
+    name_counts = Counter(name for _, name, _, _ in entries if name != "Root")
+
+    timing = {}
+    for indent, name, secs, full_path in entries:
+        if indent == 0:
+            timing["total"] = secs
+        elif name_counts[name] > 1:
+            timing[full_path] = secs
+        else:
+            timing[name] = secs
     return timing
 
 
@@ -171,6 +198,16 @@ def format_table(rows, columns):
     return "\n".join(lines)
 
 
+def format_csv(rows, columns):
+    """Format a list of dicts as CSV and return as a string."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Model"] + columns)
+    for row in rows:
+        writer.writerow([row["name"]] + [row.get(col, "") for col in columns])
+    return buf.getvalue().rstrip("\n")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Compare quality scores and run-times across .metrics files.")
@@ -186,6 +223,8 @@ def main():
                         help="Hide timing section")
     parser.add_argument("--no-quality", action="store_true",
                         help="Hide quality section")
+    parser.add_argument("--csv", action="store_true", dest="csv_output",
+                        help="Output in CSV format instead of aligned table")
     args = parser.parse_args()
 
     # Parse all files
@@ -238,25 +277,39 @@ def main():
         rows.sort(key=lambda r: r.get(sort_key) if r.get(sort_key) is not None else -1,
                   reverse=True)
 
-    # Print quality table
-    if not args.no_quality and quality_cols:
-        print("=== Quality Scores ===\n")
-        print(format_table(rows, quality_cols))
-        print()
+    fmt = format_csv if args.csv_output else format_table
 
-    # Print timing table
-    if not args.no_timing and timing_cols:
-        timing_display = [f"{k} (s)" for k in timing_cols]
-        # Build timing rows with renamed keys
-        timing_rows = []
-        for row in rows:
-            tr = {"name": row["name"]}
-            for k, display in zip(timing_cols, timing_display):
-                tr[display] = row.get(k)
-            timing_rows.append(tr)
-        print("=== Timing (seconds) ===\n")
-        print(format_table(timing_rows, timing_display))
-        print()
+    if args.csv_output:
+        # Single unified CSV table with all columns
+        all_cols = []
+        if not args.no_quality:
+            all_cols += quality_cols
+        if not args.no_timing:
+            all_cols += [f"{k} (s)" for k in timing_cols]
+            for row in rows:
+                for k in timing_cols:
+                    row[f"{k} (s)"] = row.get(k)
+        if all_cols:
+            print(fmt(rows, all_cols))
+    else:
+        # Print quality table
+        if not args.no_quality and quality_cols:
+            print("=== Quality Scores ===\n")
+            print(fmt(rows, quality_cols))
+            print()
+
+        # Print timing table
+        if not args.no_timing and timing_cols:
+            timing_display = [f"{k} (s)" for k in timing_cols]
+            timing_rows = []
+            for row in rows:
+                tr = {"name": row["name"]}
+                for k, display in zip(timing_cols, timing_display):
+                    tr[display] = row.get(k)
+                timing_rows.append(tr)
+            print("=== Timing (seconds) ===\n")
+            print(fmt(timing_rows, timing_display))
+            print()
 
 
 if __name__ == "__main__":

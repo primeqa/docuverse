@@ -197,27 +197,22 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                         pass
                 raise e
         else:
-            _batch_size = _batch_size
             _with_torch = torch.cuda.is_available()
             while _batch_size >= 1:
                 try:
-                    embs = self.model.encode(texts,
-                                             show_progress_bar=show_progress_bar,
-                                             normalize_embeddings=True,
-                                             batch_size=_batch_size,
-                                             prompt_name=prompt_name
-                                             ).tolist()
+                    embs = self._tokenize_and_encode(
+                        texts, _batch_size, show_progress_bar,
+                        normalize_embeddings=True, prompt_name=prompt_name
+                    )
                     return embs
                 except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
                     print(f"Got an error: {e}, reducing batch size to {_batch_size // 2}")
                     if "out of memory" in str(e):
                         print(f"GPU out of memory, reducing batch size from {_batch_size} to {_batch_size // 2}")
-                        # Clear CUDA cache to free GPU memory
                         if _with_torch:
                             torch.cuda.empty_cache()
                         if _batch_size <= 1:
                             print("Using CPU for current batch only, will continue on GPU")
-                            # Temporarily move model to CPU for this batch only
                             original_device = self.model.device
                             cpu_model = self.model.to('cpu')
                             embs = cpu_model.encode(texts,
@@ -226,7 +221,6 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                                                      batch_size=1,
                                                      prompt_name=prompt_name
                                                      ).tolist()
-                            # Move model back to original device
                             self.model = cpu_model.to(original_device)
                             del cpu_model
                             if _with_torch:
@@ -235,6 +229,70 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                     _batch_size = _batch_size // 2
             raise RuntimeError("Out of memory, you're out of luck...")
         return embs
+
+    def _tokenize_and_encode(self, texts, batch_size, show_progress_bar,
+                             normalize_embeddings=True, prompt_name=None):
+        """Encode texts with separate tokenization and forward-pass timing."""
+        from docuverse.utils.timer import timer
+        from sentence_transformers.util import batch_to_device
+        from tqdm.auto import tqdm
+
+        model = self.model
+        device = model.device
+
+        # Resolve prompt from prompt_name
+        prompt = None
+        if prompt_name is not None:
+            prompt = model.prompts.get(prompt_name)
+
+        # Prepend prompt to texts if needed
+        if prompt is not None:
+            sentences = [prompt + text for text in texts]
+        else:
+            sentences = list(texts)
+
+        # Sort by length for efficient batching (same as SentenceTransformer.encode)
+        length_sorted_idx = np.argsort([-model._text_length(s) for s in sentences])
+        sentences_sorted = [sentences[int(idx)] for idx in length_sorted_idx]
+
+        # Build extra_features for prompt_length
+        extra_features = {}
+        if prompt is not None and hasattr(model, 'tokenize'):
+            prompt_tok = model.tokenize([prompt])
+            if "input_ids" in prompt_tok:
+                extra_features["prompt_length"] = prompt_tok["input_ids"].shape[-1] - 1
+
+        # Get the timer name from the hierarchy
+        tm_name = timer.get_top_method("encoding")
+        tm = timer(tm_name)
+
+        # Phase 1: Tokenize all batches
+        all_features = []
+        for start_index in range(0, len(sentences_sorted), batch_size):
+            batch = sentences_sorted[start_index:start_index + batch_size]
+            features = model.tokenize(batch)
+            all_features.append(features)
+        tm.add_timing("tokenize")
+
+        # Phase 2: Forward pass on all batches
+        all_embeddings = []
+        for features in tqdm(all_features, desc="Encoding", disable=not show_progress_bar):
+            features = batch_to_device(features, device)
+            features.update(extra_features)
+            with torch.no_grad():
+                out_features = model.forward(features)
+                embeddings = out_features["sentence_embedding"].detach()
+                if normalize_embeddings:
+                    embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+                all_embeddings.extend(embeddings.cpu())
+        tm.add_timing("model_forward")
+
+        # Unsort back to original order
+        all_embeddings = [all_embeddings[idx] for idx in np.argsort(length_sorted_idx)]
+
+        # Convert to list of lists
+        return np.asarray([emb.float().numpy() if emb.dtype == torch.bfloat16
+                           else emb.numpy() for emb in all_embeddings]).tolist()
 
     @staticmethod
     def normalize(passage_vectors):
