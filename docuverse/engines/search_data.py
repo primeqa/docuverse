@@ -301,16 +301,30 @@ class SearchData:
         return cache_file_name
 
     @staticmethod
-    def read_cache_file_if_needed(cache_file_name, input_file):
+    def read_cache_file_if_needed(cache_file_name, input_files):
         passages = []
 
-        if (input_file is None or
-                os.path.exists(cache_file_name) and os.path.getmtime(cache_file_name) > os.path.getmtime(input_file)):
-            input_stream = open_stream(cache_file_name, write=False, binary=True)
-            # for line in tqdm(input_stream, desc="Reading cache file:"):
-            #     passages.append(orjson.loads(line.decode('utf-8'))
-            passages = pickle.load(input_stream)
-            input_stream.close()
+        if isinstance(input_files, str):
+            input_files = [input_files]
+
+        existing = [f for f in (input_files or []) if f and os.path.exists(f)]
+        most_recent_mtime = max((os.path.getmtime(f) for f in existing), default=None)
+
+        if (not existing or
+                os.path.exists(cache_file_name) and
+                (most_recent_mtime is None or
+                 os.path.getmtime(cache_file_name) > most_recent_mtime)):
+            try:
+                input_stream = open_stream(cache_file_name, write=False, binary=True)
+                passages = pickle.load(input_stream)
+                input_stream.close()
+            except Exception as e:
+                print(f"Warning: cache file {cache_file_name} is unreadable ({e}), re-processing.")
+                try:
+                    os.remove(cache_file_name)
+                except OSError:
+                    pass
+                passages = []
 
         return passages
 
@@ -512,8 +526,7 @@ class SearchData:
 
         # ── Step 2: Check cache → return early if hit ───────────────────────
         if cache_filename:
-            check_file = raw_spec or cache_key
-            cached_passages = cls.read_cache_file_if_needed(cache_filename, check_file)
+            cached_passages = cls.read_cache_file_if_needed(cache_filename, files)
             if cached_passages:
                 passages = (cached_passages[:max_num_documents]
                             if 'max_num_documents' in kwargs else cached_passages)
@@ -598,7 +611,8 @@ class SearchData:
                                        post_func=post_func,
                                        post_label=post_label,
                                        data=all_data, num_threads=num_threads,
-                                       msg="Tokenizing")
+                                       msg="Tokenizing",
+                                       use_threads=True)
             # Guard against None entries from crashed worker processes
             passages = list(chain.from_iterable(r for r in results if r is not None))
             del results

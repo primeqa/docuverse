@@ -81,7 +81,8 @@ class MilvusEngine(RetrievalEngine):
         self.model = None
         self.init_model(**kwargs)
         # Milvus does not accept '-', only letters, numbers, and "_"
-        self.init_client()
+        # init_client() is deferred to first use so that forked preprocessing
+        # workers (parallel_process) are spawned before gRPC threads exist.
         self.output_fields = ["id", "text", 'title'] if self.config.store_text_in_index else ["title", "id"]
         # self.output_fields = [self.config.data_template.get(f"{t}_header", t) for t in ["id", "text", 'title']]
         extra = get_param(self.config.data_template, 'extra_fields', None)
@@ -167,7 +168,7 @@ class MilvusEngine(RetrievalEngine):
 
     def check_client(self):
         if self.client is None:
-            raise RuntimeError("MilvusEngine server is not defined/initialized.")
+            self.init_client()
 
     def delete_index(self, index_name: str|None=None, fmt=None, **kwargs):
         self.check_client()
