@@ -97,6 +97,7 @@ def main_cli():
                              output_stream=ostring,
                              stat_list=config.timing_stats
                              )
+        timer.display_statistics(output_stream=ostring)
         timing = ostring.getvalue()
 
         print(f"Results:\n{results}\n")
