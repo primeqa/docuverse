@@ -39,9 +39,13 @@ class SparseSentenceTransformer:
                tqdm_instance=None,
                process_name=None,
                prompt_name=None,
+               tm=None,
                **kwargs):
         # input_dict=self.tokenizer(sentences, max_length=512,padding='max_length',return_tensors='pt')
-        tm = timer(f"{process_name if process_name is not None else self.process_name}::encode", disable=False)
+        if tm is not None:
+            tm = timer(f"{tm.name}::encode", disable=False)
+        else:
+            tm = timer(f"{process_name if process_name is not None else self.process_name}::encode", disable=False)
         expansions = []
         num_toks = 0
         max_num_expansion = 500
@@ -77,20 +81,28 @@ class SparseSentenceTransformer:
                         input_dict['token_type_ids'] = input_dict['token_type_ids'].cuda()
                 tm.add_timing("copy_to_gpu")
                 outputs = self.model(**input_dict)  # , return_dict=True)
+                if self.device == "cuda":
+                    torch.cuda.synchronize()
                 tm.add_timing("bert_encoding")
                 hidden_state = outputs[0]
                 tm.add_timing("copy_to_cpu")
                 maxarg = torch.log(1.0 + torch.relu(hidden_state))
+                if self.device == "cuda":
+                    torch.cuda.synchronize()
                 tm.add_timing("relu")
 
                 input_mask_expanded = attention_mask.unsqueeze(-1).to(maxarg.device)# .expand(hidden_state.size()).type(hidden_state.dtype)
                  # bs * seqlen * voc
                 maxdim1 = torch.max(maxarg * input_mask_expanded, dim=1).values  # bs * voc
+                if self.device == "cuda":
+                    torch.cuda.synchronize()
                 tm.add_timing("attention_mask_filter")
                 # get topk high weights
 
                 max_size = maxdim1.shape[1]
                 topk, indices = torch.topk(maxdim1, k=self.doc_max_tokens) # (weight - (bs * max_terms), index - (bs * max_terms))
+                if self.device == "cuda":
+                    torch.cuda.synchronize()
                 tm.add_timing("get_topk_weights")
                 topk_n = topk.tolist()
                 inds = indices.tolist()
@@ -177,6 +189,7 @@ class SparseEmbeddingFunction(EmbeddingFunction):
     def encode(self, texts: Union[str, List[str]], _batch_size: int = -1,
                show_progress_bar=None,
                tqdm_instance=None,
+               tm=None,
                **kwargs) -> \
             Union[Dict[str, float|int], List[Dict[str, float|int]]]:
         if _batch_size == -1:
@@ -187,6 +200,7 @@ class SparseEmbeddingFunction(EmbeddingFunction):
         res = self.model.encode(texts, _batch_size=_batch_size,
                                 show_progress_bar=show_progress_bar,
                                 tqdm_instance=tqdm_instance,
+                                tm=tm,
                                 **kwargs)
         
         if kwargs.get("create_vector_for_ingestion", False):
@@ -194,8 +208,9 @@ class SparseEmbeddingFunction(EmbeddingFunction):
 
         return res
 
-    def encode_query(self, query: str, show_progress_bar=False, tqdm_instance=None, prompt_name=None, **kwargs):
+    def encode_query(self, query: str, show_progress_bar=False, tqdm_instance=None, prompt_name=None, tm=None, **kwargs):
         # return self.encode(query, max_terms=self.model.query_max_tokens)
         return self.model.encode([query], max_terms=self.model.query_max_tokens,
-                                 show_progress_bar=show_progress_bar, prompt_name=prompt_name, **kwargs)[0]
+                                 show_progress_bar=show_progress_bar, prompt_name=prompt_name,
+                                 tm=tm, **kwargs)[0]
 

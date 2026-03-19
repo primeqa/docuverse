@@ -100,17 +100,17 @@ class MilvusDenseEngine(MilvusEngine):
             search_params = get_param(self.milvus_defaults, "search_params." + search_params)
         return search_params
 
-    def encode_data(self, texts, batch_size, **kwargs):
+    def encode_data(self, texts, batch_size, tm=None, **kwargs):
         if 'prompt_name' not in kwargs:
             kwargs['prompt_name'] = "document"
         passage_vectors = super().encode_data(texts=texts, batch_size=batch_size,
-                                              **kwargs)
+                                              tm=tm, **kwargs)
         if self.storage_size != "fp32":
             passage_vectors = [np.array(p, dtype=self.storage_rep[1]) for p in passage_vectors]
         return passage_vectors
 
-    def encode_query(self, question):
+    def encode_query(self, question, tm=None):
         return  self.encode_data([question.text], batch_size=1,
-                                        prompt_name="query")[0]
+                                        prompt_name="query", tm=tm)[0]
 
 

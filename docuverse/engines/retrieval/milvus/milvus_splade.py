@@ -56,8 +56,8 @@ class MilvusSpladeEngine(MilvusEngine):
 
         return search_params
 
-    def encode_query(self, question):
-        query_vector = self.model.encode_query([question.text], show_progress_bar=False)
+    def encode_query(self, question, tm=None):
+        query_vector = self.model.encode_query([question.text], show_progress_bar=False, tm=tm)
         return list(query_vector)[0]
 
     @classmethod

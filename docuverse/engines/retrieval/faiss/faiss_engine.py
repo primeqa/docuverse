@@ -288,7 +288,7 @@ class FAISSEngine(RetrievalEngine):
                 for doc in train_corpus
             ]
             train_texts = [t for t in train_texts if t]
-            train_embeddings = self.model.encode(train_texts, show_progress_bar=True)
+            train_embeddings = self.model.encode(train_texts, show_progress_bar=True, tm=tm)
             self.index.train(np.array(train_embeddings).astype('float32'))
             logging.info("Training complete")
 
@@ -300,7 +300,7 @@ class FAISSEngine(RetrievalEngine):
         # Process in batches
         for i in range(0, corpus_size, self.ingestion_batch_size):
             last = min(i + self.ingestion_batch_size, corpus_size)
-            data = self._create_data(corpus[i:last], tq_instance=tq1)
+            data = self._create_data(corpus[i:last], tq_instance=tq1, tm=tm)
             tm.add_timing("encoding_data")
 
             self._insert_data(data, tq_instance=tq2)
@@ -314,7 +314,7 @@ class FAISSEngine(RetrievalEngine):
         logging.info(f"Ingested {corpus_size} documents into FAISS index {self.config.index_name}")
         return True
 
-    def _create_data(self, corpus: List[Dict[str, Any]], tq_instance=None, **kwargs) -> Tuple[List, np.ndarray, List, List]:
+    def _create_data(self, corpus: List[Dict[str, Any]], tq_instance=None, tm=None, **kwargs) -> Tuple[List, np.ndarray, List, List]:
         """
         Create data for ingestion from corpus documents.
 
@@ -359,7 +359,8 @@ class FAISSEngine(RetrievalEngine):
         embeddings = self.model.encode(
             documents,
             show_progress_bar=False,
-            _batch_size=len(documents)
+            _batch_size=len(documents),
+            tm=tm
         )
 
         if tq_instance:
@@ -409,7 +410,7 @@ class FAISSEngine(RetrievalEngine):
         query_text = query.text
 
         # Generate query embedding
-        embedding = self.model.encode([query_text], show_progress_bar=False)[0]
+        embedding = self.model.encode([query_text], show_progress_bar=False, tm=tm)[0]
         query_vector = np.array([embedding]).astype('float32')
         tm.add_timing("embedding")
 

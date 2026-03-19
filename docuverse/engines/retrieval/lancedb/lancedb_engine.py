@@ -149,7 +149,7 @@ class LanceDBEngine(RetrievalEngine):
 
         for i in range(0, corpus_size, batch_size):
             last = min(i + batch_size, corpus_size)
-            data = self._create_data(corpus[i:last], tq_instance=tq1)
+            data = self._create_data(corpus[i:last], tq_instance=tq1, tm=tm)
             tm.add_timing("encoding_data")
 
             self._insert_data(data, tq_instance=tq2)
@@ -163,7 +163,7 @@ class LanceDBEngine(RetrievalEngine):
         print(f"Ingested {corpus_size} documents into LanceDB table {self.config.index_name}")
         return True
 
-    def _create_data(self, corpus, tq_instance=None, **kwargs):
+    def _create_data(self, corpus, tq_instance=None, tm=None, **kwargs):
         """Encode a batch of documents and prepare for insertion."""
         texts = []
         records = []
@@ -196,7 +196,7 @@ class LanceDBEngine(RetrievalEngine):
             return []
 
         embeddings = self.model.encode(texts, show_progress_bar=False,
-                                       _batch_size=len(texts))
+                                       _batch_size=len(texts), tm=tm)
 
         for record, emb in zip(records, embeddings):
             record[self.VECTOR_COLUMN] = np.array(emb, dtype=np.float32).tolist()
@@ -241,7 +241,7 @@ class LanceDBEngine(RetrievalEngine):
         tm.add_timing("open_table")
 
         query_embedding = self.model.encode(
-            [query.text], show_progress_bar=False, prompt_name="query"
+            [query.text], show_progress_bar=False, prompt_name="query", tm=tm
         )[0]
         tm.add_timing("encode")
 

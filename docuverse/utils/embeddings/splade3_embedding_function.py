@@ -89,7 +89,7 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
     #     return res
 
     @staticmethod
-    def _encode_data(method, texts, tqdm_instance=None, **kwargs):
+    def _encode_data(method, texts, tqdm_instance=None, tm=None, **kwargs):
         if tqdm_instance is not None:
             tq = tqdm_instance
         # else:
@@ -98,10 +98,10 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
         embs = method(texts)
         return embs
 
-    def encode(self, texts: Union[str, List[str]], **kwargs) -> \
+    def encode(self, texts: Union[str, List[str]], tm=None, **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
-        return self._encode_data(method=self.model.encode_documents, texts=texts, **kwargs)
+        return self._encode_data(method=self.model.encode_documents, texts=texts, tm=tm, **kwargs)
 
-    def encode_query(self, texts: Union[str, List[str]], **kwargs) -> \
+    def encode_query(self, texts: Union[str, List[str]], tm=None, **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:
-        return self._encode_data(method=self.model.encode_queries, texts=texts, **kwargs)
+        return self._encode_data(method=self.model.encode_queries, texts=texts, tm=tm, **kwargs)

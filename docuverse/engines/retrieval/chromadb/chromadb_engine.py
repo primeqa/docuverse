@@ -209,7 +209,7 @@ class ChromaDBEngine(RetrievalEngine):
         # Process in batches
         for i in range(0, corpus_size, self.ingestion_batch_size):
             last = min(i + self.ingestion_batch_size, corpus_size)
-            data = self._create_data(corpus[i:last], tq_instance=tq1)
+            data = self._create_data(corpus[i:last], tq_instance=tq1, tm=tm)
             tm.add_timing("encoding_data")
             
             self._insert_data(data, tq_instance=tq2)
@@ -220,7 +220,7 @@ class ChromaDBEngine(RetrievalEngine):
         logging.info(f"Ingested {corpus_size} documents into collection {self.config.index_name}")
         return True
 
-    def _create_data(self, corpus: List[Dict[str, Any]], tq_instance=None, **kwargs) -> Tuple[List, List, List, List]:
+    def _create_data(self, corpus: List[Dict[str, Any]], tq_instance=None, tm=None, **kwargs) -> Tuple[List, List, List, List]:
         """
         Create data for ingestion from corpus documents.
         
@@ -262,14 +262,15 @@ class ChromaDBEngine(RetrievalEngine):
         
         # Generate embeddings
         embeddings = self.model.encode(
-            documents, 
-            show_progress_bar=False, 
-            _batch_size=len(documents)
+            documents,
+            show_progress_bar=False,
+            _batch_size=len(documents),
+            tm=tm
         )
-        
+
         if tq_instance:
             tq_instance.update(len(documents))
-            
+
         return documents, embeddings, metadatas, ids
 
     def _insert_data(self, data: Tuple[List, List, List, List], tq_instance=None) -> None:
@@ -316,7 +317,7 @@ class ChromaDBEngine(RetrievalEngine):
             filter_condition = {filter_key: filter_value}
         tm.add_timing("filter_condition")
         # Generate query embedding
-        embedding = self.model.encode([query_text], show_progress_bar=False)[0]
+        embedding = self.model.encode([query_text], show_progress_bar=False, tm=tm)[0]
         tm.add_timing("embedding")
         
         # Perform the search

@@ -33,7 +33,7 @@ class OllamaSentenceTransformer:
                 "Make sure Ollama is running (ollama serve)"
             )
 
-    def encode(self, sentences, batch_size: int = 32, normalize=True, **kwargs):
+    def encode(self, sentences, batch_size: int = 32, normalize=True, tm=None, **kwargs):
         """Encode sentences using Ollama model."""
         single_vector=False
         if isinstance(sentences, str):
@@ -127,7 +127,7 @@ class OllamaEmbeddingFunction(EmbeddingFunction):
     def __call__(self, sentences, batch_size: int = 32, **kwargs):
         return self.encode(sentences, batch_size=batch_size, **kwargs)
 
-    def encode(self, sentences, batch_size: int = 32, **kwargs):
+    def encode(self, sentences, batch_size: int = 32, tm=None, **kwargs):
         """Encode sentences using Ollama model."""
         if isinstance(sentences, str):
             sentences = [sentences]

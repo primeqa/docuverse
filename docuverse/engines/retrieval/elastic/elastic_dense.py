@@ -120,8 +120,8 @@ class ElasticDenseEngine(ElasticEngine):
         if self.pipeline_name is not None:
             self.client.ingest.put_pipeline(processors=processors, id=self.pipeline_name)
 
-    def add_fields(self, actions, bulk_batch, corpus, k, num_passages):
+    def add_fields(self, actions, bulk_batch, corpus, k, num_passages, tm=None):
         if not self.config.model_on_server:
-            passage_vectors = self.model.encode([d['text'] for d in corpus[k:k+bulk_batch]], show_progress_bar=False)
+            passage_vectors = self.model.encode([d['text'] for d in corpus[k:k+bulk_batch]], show_progress_bar=False, tm=tm)
             for pi, (action, row) in enumerate(zip(actions, corpus[k:min(k + bulk_batch, num_passages)])):
                 action["_source"]['vector'] = passage_vectors[pi]

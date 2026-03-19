@@ -125,6 +125,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                show_progress_bar=None,
                tqdm_instance=None,
                prompt_name=None,
+               tm=None,
                **kwargs) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
         embs = []
@@ -141,14 +142,14 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                 for i in range(0, len(texts), _batch_size):
                     i_end = min(i + _batch_size, len(texts))
                     tems = self._encode_data(texts=stexts[i:i_end], _batch_size=_batch_size,
-                                             show_progress_bar=False)
+                                             show_progress_bar=False, tm=tm)
                     embs.extend(tems)
                     del tems  # Free memory immediately
                     tqdm_instance.update(i_end - i)
             else:
                 embs = self._encode_data(texts=stexts, _batch_size=_batch_size,
                                          show_progress_bar=show_progress_bar,
-                                         prompt_name=prompt_name)
+                                         prompt_name=prompt_name, tm=tm)
             # Optimize memory by reordering in-place where possible
             result_embs = [None] * len(texts)
             for i in range(len(texts)):
@@ -177,7 +178,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
 
     def _encode_data(self, texts, _batch_size,
                      show_progress_bar,
-                     prompt_name=None):
+                     prompt_name=None, tm=None):
         embs = []
         if isinstance(texts, list) and len(texts) > 30 and self.num_devices > 1:
             try:
@@ -202,7 +203,8 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                 try:
                     embs = self._tokenize_and_encode(
                         texts, _batch_size, show_progress_bar,
-                        normalize_embeddings=True, prompt_name=prompt_name
+                        normalize_embeddings=True, prompt_name=prompt_name,
+                        tm=tm
                     )
                     return embs
                 except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
@@ -231,7 +233,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         return embs
 
     def _tokenize_and_encode(self, texts, batch_size, show_progress_bar,
-                             normalize_embeddings=True, prompt_name=None):
+                             normalize_embeddings=True, prompt_name=None, tm=None):
         """Encode texts with separate tokenization and forward-pass timing."""
         from docuverse.utils.timer import timer
         from sentence_transformers.util import batch_to_device
@@ -262,9 +264,9 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             if "input_ids" in prompt_tok:
                 extra_features["prompt_length"] = prompt_tok["input_ids"].shape[-1] - 1
 
-        # Get the timer name from the hierarchy
-        tm_name = timer.get_top_method("encoding")
-        tm = timer(tm_name)
+        # Create sub-timer for encode phases
+        if tm is None:
+            tm = timer(timer.get_top_method("encode"))
 
         # Phase 1: Tokenize all batches
         all_features = []
@@ -272,7 +274,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             batch = sentences_sorted[start_index:start_index + batch_size]
             features = model.tokenize(batch)
             all_features.append(features)
-        tm.add_timing("tokenize")
+        tm.add_timing("encode::tokenize")
 
         # Phase 2: Forward pass on all batches
         all_embeddings = []
@@ -285,7 +287,9 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                 if normalize_embeddings:
                     embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
                 all_embeddings.extend(embeddings.cpu())
-        tm.add_timing("model_forward")
+        if device.type == 'cuda':
+            torch.cuda.synchronize()
+        tm.add_timing("encode::model_forward")
 
         # Unsort back to original order
         all_embeddings = [all_embeddings[idx] for idx in np.argsort(length_sorted_idx)]

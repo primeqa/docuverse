@@ -50,10 +50,10 @@ class EmbeddingFunction:
         pass
 
     def encode(self, texts:Union[List[str], str], _batch_size:int=-1,
-               show_progress_bar=False, tqdm_instance=None, prompt_name=None, **kwargs):
+               show_progress_bar=False, tqdm_instance=None, prompt_name=None, tm=None, **kwargs):
         return []
 
-    def encode_query(self, texts: Union[List[str], str], prompt_name:str|None=None, **kwargs):
+    def encode_query(self, texts: Union[List[str], str], prompt_name:str|None=None, tm=None, **kwargs):
         return []
 
     # def encode_query(self, texts:Union[List[str], str], _batch_size:int=-1,

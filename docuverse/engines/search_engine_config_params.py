@@ -584,6 +584,15 @@ class EngineArguments(GenericArguments):
         }
     )
 
+    timing_stats: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Comma-separated list of statistics to save in the .timing.json file. "
+                    "Available: count,sum,mean,median,std,min,max,p5,p25,p75,p95,p99. "
+                    "Default (when flag is omitted): count,sum,mean,median,std,p95,p99,max"
+        }
+    )
+
     action_flags = {
         "i": "ingest",
         "u": "update",

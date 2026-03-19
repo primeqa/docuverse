@@ -9,10 +9,11 @@
 Author: Radu Florian
 raduf@us.ibm.com )'''
 from datetime import datetime
+import json
+import os
 import sys
-from typing import Dict
-
-from numpy.matlib import empty
+import numpy as np
+from typing import Dict, List, Optional
 
 msec = 1
 sec = 1000
@@ -48,7 +49,26 @@ class timer(object):
         write_output                               0.1s      100.0%        0.4%    1054.9    5258.4
     '''
     timing = {}
+    timing_samples = {}
+    timing_count_keys = {}  # Maps full timing key -> count key name (e.g., "queries", "docs")
     processed = 0
+
+    # Available statistics for display_statistics()
+    AVAILABLE_STATS = {
+        "count": "Count",
+        "sum": "Sum(ms)",
+        "mean": "Mean(ms)",
+        "median": "Med(ms)",
+        "std": "Std(ms)",
+        "min": "Min(ms)",
+        "max": "Max(ms)",
+        "p5": "P5(ms)",
+        "p25": "P25(ms)",
+        "p75": "P75(ms)",
+        "p95": "P95(ms)",
+        "p99": "P99(ms)",
+    }
+    DEFAULT_STATS = ["count", "sum", "mean", "median", "std", "p95", "p99", "max"]
 
     def __init__(self, name="timer", disable=False):
         self._orig = datetime.now()
@@ -183,6 +203,7 @@ class timer(object):
     @staticmethod
     def static_add_timing(name, key, val):
         '''Adds the given number of milliseconds given in val to the given key.
+        Also stores the individual sample for statistical analysis.
         Arguments:
             - key - the label to add the timing to
             - val - the number of milliseconds to add
@@ -190,8 +211,10 @@ class timer(object):
         key = name + "::" + key
         if key not in timer.timing:
             timer.timing[key] = val
+            timer.timing_samples[key] = [val]
         else:
             timer.timing[key] += val
+            timer.timing_samples[key].append(val)
 
     @staticmethod
     def get_top_method(default="timer"):
@@ -217,8 +240,10 @@ class timer(object):
             namelist = [t.split("::") for t in timer.timing.keys()]
 
         if len(namelist) == 1:
+            full_key = "::".join(namelist[0])
             return [{"key":"::".join(namelist[0][level:]), "children":[],
-                     "time":timer.timing["::".join(namelist[0])], "percent": 100}]
+                     "time":timer.timing[full_key], "percent": 100,
+                     "full_key": full_key}]
         else:
             _keys = sorted(namelist, key=lambda val: val[level])
             children = []
@@ -247,7 +272,8 @@ class timer(object):
                 time = max(time, 0.01)
                 for child in children:
                     child['percent'] = child['time']/time*100
-                res.append({"key": K, "children": children, "time": time, "percent": 100})
+                res.append({"key": K, "children": children, "time": time, "percent": 100,
+                            "full_key": level_key})
 
             for K, L in leaves.items():
                 level_key = "::".join(L[0:level+1])
@@ -259,6 +285,7 @@ class timer(object):
 
     @staticmethod
     def display_timing(totalms, level=0, stat_list=None, keys: dict[str, int]|None=None,
+                       key_associations: dict[str, str]|None=None,
                        sorted_by:str|None=None,
                        reverse=False, output_stream=None):
         '''Static method that will print the hierarchical times for the labeled times.
@@ -267,16 +294,32 @@ class timer(object):
             - totalms - the total number of milliseconds - used to compute the absolute % times.
             - level   - the level of the tree to display (default 0)
             - stat_list - filter for the labels
-            - keys: dict[Str:Int] - a list of keys to break performance by (e.g., num_words, num_chars, etc.)
-            # - num_words - the number of processed words; needed for words/s speed calculation
-            # - num_chars - the number of processed characters; needed for kc/s speed calculation
+            - keys: dict[str, int] - a list of keys to break performance by (e.g., num_words, num_chars, etc.)
+            - key_associations: dict[str, str] - maps timing node names to count key names.
+                    Looked up by full_key first, then by node display key.
+                    Children inherit from their parent. Unassociated nodes show '-'.
+                    Example: {"ingest": "docs", "search": "queries"}
+                    If None, all nodes show all speed columns (backward-compatible).
             '''
         if keys is None:
             keys = {}
         if output_stream is None:
             output_stream = sys.stdout
-        # def _display_tree(node, level, num_words=1, num_chars=1):
-        def _display_tree(node, level, keys: dict[str, int]):
+
+        def _resolve_count_key(node, parent_count_key):
+            '''Resolve the count key for a node: check key_associations by full_key,
+            then by display key, then inherit from parent.'''
+            if key_associations is None:
+                return None  # No associations → show all columns
+            full_key = node.get('full_key', '')
+            # Check full_key, then each suffix (right-to-left) for flexible matching
+            if full_key in key_associations:
+                return key_associations[full_key]
+            if node['key'] in key_associations:
+                return key_associations[node['key']]
+            return parent_count_key
+
+        def _display_tree(node, level, keys: dict[str, int], parent_count_key=None):
             def process_val(v):
                 vv = 1000*v*1.0/ms
                 if vv < 10000:
@@ -292,15 +335,16 @@ class timer(object):
             perc = node["percent"]
             okey = (" " * 2 * level) + node['key']
 
-            # print("{:<40s}{:>10.1f}s {:>10.1f}% {:10.1f}%{:10.1f}{:10.1f}".
-            #       format(okey, secs, perc, ms*100 / totalms, num_words * 1.0 / ms,
-            #              num_chars * 1.0 / ms),
-            #       file=output_stream)
+            node_count_key = _resolve_count_key(node, parent_count_key)
+
             print("{:<40s}{:>10.1f}s {:>10.1f}% {:10.1f}%".
                   format(okey, secs, perc, ms*100 / totalms),
                   file=output_stream, end='')
             for k, v in keys.items():
-                print(process_val(v), end='', file=output_stream)
+                if key_associations is None or node_count_key == k:
+                    print(process_val(v), end='', file=output_stream)
+                else:
+                    print(f"{'-':>10s}", end='', file=output_stream)
             print(file=output_stream)
             if sorted_by == "%":
                 node["children"] = sorted(node["children"], key=lambda val: val["percent"], reverse=reverse)
@@ -308,27 +352,17 @@ class timer(object):
                 node["children"] = sorted(node["children"], key=lambda val: val["key"], reverse=reverse)
 
             for child in node["children"]:
-                _display_tree(child, level+1, keys)
+                _display_tree(child, level+1, keys, node_count_key)
 
         tree = timer._compute_timing_tree(None, 0)
 
         if len(tree) > 1:
-            tree = {"key": "Root", 'children': tree, 'percent': 100, 'time': totalms}
+            tree = {"key": "Root", 'children': tree, 'percent': 100, 'time': totalms,
+                    'full_key': ''}
             for child in tree['children']:
                 child['percent'] = child['time']*100/totalms
         else:
             tree = tree[0]
-
-        # if num_chars*1000/totalms > 1000000: # kchars/s > 1000
-        #     range='M'
-        #     num_chars /= 1000
-        #     num_words /= 1000
-        # elif num_words*1000/totalms<100: # kchars/s < 0.1
-        #     num_chars *= 1000
-        #     num_words *= 1000
-        #     range=''
-        # else:
-        #     range='k'
 
         print(f"{'Name':<40s} {'Time (s)':>10s}  {'Rel %':>10s}  {'Abs %':>10s}", file=output_stream, end='')
         for k, v in keys.items():
@@ -338,7 +372,187 @@ class timer(object):
         _display_tree(tree, level, keys)
 
     @staticmethod
+    def _compute_stat(samples_array, stat_name):
+        '''Compute a single statistic from a numpy array of samples.'''
+        if stat_name == "count":
+            return len(samples_array)
+        elif stat_name == "sum":
+            return float(np.sum(samples_array))
+        elif stat_name == "mean":
+            return float(np.mean(samples_array))
+        elif stat_name == "median":
+            return float(np.median(samples_array))
+        elif stat_name == "std":
+            return float(np.std(samples_array))
+        elif stat_name == "min":
+            return float(np.min(samples_array))
+        elif stat_name == "max":
+            return float(np.max(samples_array))
+        elif stat_name.startswith("p"):
+            percentile = int(stat_name[1:])
+            return float(np.percentile(samples_array, percentile))
+        else:
+            raise ValueError(f"Unknown statistic: {stat_name}")
+
+    @staticmethod
+    def get_statistics(stats: Optional[List[str]] = None) -> Dict[str, Dict[str, float]]:
+        '''Compute statistics for all timing keys from individual samples.
+
+        Arguments:
+            stats: list of statistic names to compute. If None, uses DEFAULT_STATS.
+                   Available: "count", "sum", "mean", "median", "std", "min", "max",
+                              "p5", "p25", "p75", "p95", "p99"
+
+        Returns:
+            Dict mapping timing key -> dict of {stat_name: value}
+        '''
+        if stats is None:
+            stats = timer.DEFAULT_STATS
+
+        result = {}
+        for key, samples in timer.timing_samples.items():
+            arr = np.array(samples)
+            result[key] = {s: timer._compute_stat(arr, s) for s in stats}
+        return result
+
+    @staticmethod
+    def display_statistics(stats: Optional[List[str]] = None,
+                           output_stream=None,
+                           name_width: int = 50,
+                           col_width: int = 10,
+                           strip_common_prefix: bool = True):
+        '''Display a flat table of timing statistics computed from individual samples.
+
+        Arguments:
+            stats: list of statistic names to display as columns. If None, uses DEFAULT_STATS.
+                   Available: "count", "sum", "mean", "median", "std", "min", "max",
+                              "p5", "p25", "p75", "p95", "p99"
+            output_stream: where to print (default sys.stdout)
+            name_width: width of the key name column
+            col_width: width of each statistic column
+            strip_common_prefix: if True, strip the common prefix from all keys
+        '''
+        if output_stream is None:
+            output_stream = sys.stdout
+        if stats is None:
+            stats = timer.DEFAULT_STATS
+
+        all_stats = timer.get_statistics(stats)
+        if not all_stats:
+            print("No timing data collected.", file=output_stream)
+            return
+
+        keys = sorted(all_stats.keys())
+
+        # Strip common prefix if requested
+        display_keys = keys
+        prefix = ""
+        if strip_common_prefix and len(keys) > 1:
+            parts = [k.split("::") for k in keys]
+            common = []
+            for level_parts in zip(*parts):
+                if len(set(level_parts)) == 1:
+                    common.append(level_parts[0])
+                else:
+                    break
+            if common:
+                prefix = "::".join(common) + "::"
+                display_keys = [k[len(prefix):] if k.startswith(prefix) else k for k in keys]
+
+        # Build header
+        headers = [timer.AVAILABLE_STATS.get(s, s) for s in stats]
+        header_line = f"{'Key':<{name_width}s}" + "".join(f"{h:>{col_width}s}" for h in headers)
+        print(header_line, file=output_stream)
+        print("-" * len(header_line), file=output_stream)
+
+        # Build rows
+        def _fmt(val, stat_name):
+            if stat_name == "count":
+                return f"{int(val):>{col_width}d}"
+            elif abs(val) < 0.01:
+                return f"{val:>{col_width}.4f}"
+            elif abs(val) < 10:
+                return f"{val:>{col_width}.3f}"
+            elif abs(val) < 1000:
+                return f"{val:>{col_width}.1f}"
+            elif abs(val) < 1000000:
+                return f"{val/1000:>{col_width-1}.1f}k"
+            else:
+                return f"{val/1000000:>{col_width-1}.1f}M"
+
+        for key, display_key in zip(keys, display_keys):
+            row_stats = all_stats[key]
+            row = f"{display_key:<{name_width}s}"
+            row += "".join(_fmt(row_stats[s], s) for s in stats)
+            print(row, file=output_stream)
+
+    @staticmethod
+    def save_statistics(path: str,
+                        stats: Optional[List[str]] = None,
+                        save_samples: bool = False):
+        '''Save timing statistics to disk.
+
+        The format is determined by the file extension:
+          - .json  — JSON with computed statistics (and optionally raw samples)
+          - .csv   — CSV table (one row per timing key, one column per statistic)
+          - .tsv   — TSV table (same layout as CSV, tab-separated)
+
+        Arguments:
+            path: output file path (.json, .csv, or .tsv)
+            stats: which statistics to include. If None, uses DEFAULT_STATS.
+            save_samples: if True and format is JSON, also store the raw sample
+                          lists under a "samples" key.
+        '''
+        if stats is None:
+            stats = timer.DEFAULT_STATS
+
+        all_stats = timer.get_statistics(stats)
+        ext = os.path.splitext(path)[1].lower()
+
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+        if ext == ".json":
+            out = {"statistics": {}}
+            for key in sorted(all_stats):
+                entry = all_stats[key]
+                # Convert numpy/int types to plain Python for JSON serialisation
+                entry = {s: (int(v) if s == "count" else round(v, 6))
+                         for s, v in entry.items()}
+                out["statistics"][key] = entry
+            if save_samples:
+                out["samples"] = {k: [round(v, 6) for v in vs]
+                                  for k, vs in sorted(timer.timing_samples.items())}
+            with open(path, "w") as f:
+                json.dump(out, f, indent=2)
+
+        elif ext in (".csv", ".tsv"):
+            sep = "," if ext == ".csv" else "\t"
+            lines = [sep.join(["key"] + stats)]
+            for key in sorted(all_stats):
+                vals = all_stats[key]
+                row = [key] + [
+                    str(int(vals[s])) if s == "count" else f"{vals[s]:.6f}"
+                    for s in stats
+                ]
+                lines.append(sep.join(row))
+            with open(path, "w") as f:
+                f.write("\n".join(lines) + "\n")
+
+        else:
+            raise ValueError(
+                f"Unsupported extension '{ext}'. Use .json, .csv, or .tsv"
+            )
+
+    @staticmethod
+    def reset():
+        '''Reset all timing data.'''
+        timer.timing = {}
+        timer.timing_samples = {}
+        timer.processed = 0
+
+    @staticmethod
     def test():
+        timer.reset()
         tm = timer("Something")
         tm.add_timing("method1", 1000)
         tm.add_timing("method1::submethod1", 500)
@@ -355,7 +569,68 @@ class timer(object):
         tm.add_timing("method4::submethod1::subsubmethod2", 100)
         tm.add_timing("method4::submethod1", 250)
 
+        print("=== Without key_associations (backward-compatible): ===")
         tm.display_timing(9000, keys={'pigs':100, 'cats':10000})
+
+        # Test with key_associations
+        print("\n=== With key_associations: ===")
+        timer.reset()
+        tm = timer("ingest_and_test")
+        tm.add_timing("ingest", 5000)
+        tm.add_timing("ingest::encode", 4000)
+        tm.add_timing("ingest::encode::tokenize", 1000)
+        tm.add_timing("ingest::encode::model_forward", 3000)
+        tm.add_timing("ingest::data_insertion", 1000)
+        tm.add_timing("search", 3000)
+        tm.add_timing("search::encode", 500)
+        tm.add_timing("search::encode::tokenize", 100)
+        tm.add_timing("search::encode::model_forward", 400)
+        tm.add_timing("search::encode::tokenize", 120)
+        tm.add_timing("search::encode::model_forward", 450)
+        tm.add_timing("search::milvus_search", 2500)
+
+        timer.display_timing(8000,
+                             keys={'docs': 5000, 'queries': 200},
+                             key_associations={'ingest': 'docs', 'search': 'queries'},
+                             stat_list="sum,mean")
+
+        # Test display_statistics with multiple samples
+        print("\n--- Statistics Demo ---")
+        timer.reset()
+        import random
+        random.seed(42)
+        tm = timer("ingest_and_test::search::retrieve")
+        for _ in range(100):
+            tm.add_timing("encode::tokenize", random.gauss(5, 1))
+            tm.add_timing("encode::model_forward", random.gauss(20, 5))
+            tm.add_timing("milvus_search", random.gauss(3, 0.5))
+
+        # Default statistics
+        print("\nDefault stats:")
+        timer.display_statistics()
+
+        # Custom statistics selection
+        print("\nCustom stats (just count, mean, p95):")
+        timer.display_statistics(stats=["count", "mean", "p95"])
+
+        # Save to disk
+        import tempfile
+        tmpdir = tempfile.mkdtemp()
+        for ext in (".json", ".csv", ".tsv"):
+            p = os.path.join(tmpdir, f"timing{ext}")
+            timer.save_statistics(p)
+            print(f"\nSaved {ext}: {p}")
+            with open(p) as f:
+                print(f.read()[:300])
+        # JSON with raw samples
+        p = os.path.join(tmpdir, "timing_samples.json")
+        timer.save_statistics(p, stats=["count", "mean", "p95"], save_samples=True)
+        print(f"\nSaved JSON with samples: {p}")
+        with open(p) as f:
+            content = json.load(f)
+            print(f"  keys: {list(content.keys())}")
+            first = list(content['samples'].keys())[0]
+            print(f"  samples['{first}']: {len(content['samples'][first])} values")
 
 
 if __name__ == "__main__":

@@ -205,8 +205,9 @@ class MilvusEngine(RetrievalEngine):
         tq.write(f"Ingesting with a batch size of {ingestion_batch}")
         for i in range(0, len(texts), ingestion_batch):
             last = min(i+ingestion_batch, len(texts))
-            data = self._create_data(corpus[i:last], texts[i:last], tq_instance=tq1, **kwargs)
-            tm.add_timing("encoding_data")
+            tm.mark()
+            data = self._create_data(corpus[i:last], texts[i:last], tq_instance=tq1, tm=tm, **kwargs)
+            # tm.add_timing("encode")
             self._insert_data(data, tq_instance=tq2)
             tm.add_timing("data_milvusing")
             tq.update(last-i)
@@ -215,13 +216,13 @@ class MilvusEngine(RetrievalEngine):
     def _analyze_data(self, corpus):
         pass
 
-    def _create_data(self, corpus, texts, tq_instance=None, **kwargs):
+    def _create_data(self, corpus, texts, tq_instance=None, tm=None, **kwargs):
         passage_vectors = [[]] * len(corpus)
         if tq_instance is not None:
-            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=False)
+            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=False, tm=tm)
             tq_instance.update(len(texts))
         else:
-            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=True)
+            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=True, tm=tm)
         data = []
         for i, (item, vector) in enumerate(zip(corpus, passage_vectors)):
             if vector_is_empty(vector):
@@ -265,9 +266,10 @@ class MilvusEngine(RetrievalEngine):
             print(f"{tm.time_since_beginning()}: Currently ingested items: {ingested_items}")
             time.sleep(10)
 
-    def encode_data(self, texts, batch_size, **kwargs):
+    def encode_data(self, texts, batch_size, tm=None, **kwargs):
         passage_vectors = self.model.encode(texts,
                                             _batch_size=batch_size,
+                                            tm=tm,
                                             **kwargs)
         # create embeddings
         return passage_vectors
@@ -298,8 +300,8 @@ class MilvusEngine(RetrievalEngine):
         self.check_client()
         search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'
-        query_vector = self.encode_query(question)
-        tm.add_timing("encode")
+        query_vector = self.encode_query(question, tm=tm)
+        # tm.add_timing("encode")
         if vector_is_empty(query_vector):
             print(f"Query \"{question.text}\" has 0 length representation.")
             return SearchResult(question=question, data=[])
@@ -340,18 +342,20 @@ class MilvusEngine(RetrievalEngine):
         # tm.add_timing("remove duplicates")
         return result
 
-    def encode_query(self, question):
+    def encode_query(self, question, tm=None):
         """
         Encodes a question text using the model's encode function. By default, it uses the usual encoding mechanism,
         but it can be overridden if necessary.
 
         Args:
             question (Question): The question object containing the text to be encoded.
+            tm: Optional timer instance for performance tracking.
 
         Returns:
             list: The encoded representation of the question text.
         """
-        return self.model.encode(question.text, show_progress_bar=False, prompt_name=self.config.query_prompt_name)
+        return self.model.encode(question.text, show_progress_bar=False, prompt_name=self.config.query_prompt_name,
+                                 tm=tm)
 
     def get_search_params(self):
         pass

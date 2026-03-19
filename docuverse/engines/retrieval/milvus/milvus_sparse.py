@@ -63,11 +63,12 @@ class MilvusSparseEngine(MilvusEngine):
 
         return search_params
 
-    def encode_query(self, question):
+    def encode_query(self, question, tm=None):
         query_vector = self.model.encode_query(query=question.text,
                                                encode_question=get_param(self.config,
                                                                         'sparse_config.runtime_query_encoding',
-                                                                         True)
+                                                                         True),
+                                               tm=tm
                                                )
         return query_vector
 
