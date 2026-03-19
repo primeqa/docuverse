@@ -93,6 +93,7 @@ BSUB_REQUIREMENTS=""
 BSUB_EXTRA=""
 CONDA_ENV="docu"
 GPU_ID="0"
+EXCLUDE_FILE=""
 
 # ---- Parse arguments ----
 usage() {
@@ -111,6 +112,9 @@ usage() {
   echo "  --bsub-extra \"ARGS\"           Extra arguments passed verbatim to bsub"
   echo "  --conda-env NAME              Conda environment to activate (default: $CONDA_ENV)"
   echo "  --gpu ID                      CUDA_VISIBLE_DEVICES for local runs (default: $GPU_ID, ignored with --bsub)"
+  echo "  --exclude FILE                File with combinations to skip (tab-separated):"
+  echo "                                  <model> <max_doc_length> <config> <dim>"
+  echo "                                Lines starting with # are ignored. Use * to match any value."
   echo "  -h, --help                    Show this help message"
   exit 0
 }
@@ -164,6 +168,8 @@ while [[ $# -gt 0 ]]; do
       CONDA_ENV="$2"; shift 2 ;;
     --gpu)
       GPU_ID="$2"; shift 2 ;;
+    --exclude)
+      EXCLUDE_FILE="$2"; shift 2 ;;
     -h|--help)
       usage ;;
     -*)
@@ -207,6 +213,7 @@ echo "Threads:       $NUM_THREADS"
 [ -n "$MODELS" ]          && echo "Models:        $MODELS"
 [ -n "$MAX_DOC_LENGTHS" ] && echo "MaxDocLengths: $MAX_DOC_LENGTHS"
 [ -n "$STRIDE" ]          && echo "Stride:        $STRIDE"
+[ -n "$EXCLUDE_FILE" ]    && echo "Exclude file:  $EXCLUDE_FILE"
 if [ "$USE_BSUB" -eq 1 ]; then
   echo "Submit:        bsub"
   [ -n "$BSUB_QUEUE" ]        && echo "Queue:         $BSUB_QUEUE"
@@ -235,11 +242,51 @@ if [ "$USE_BSUB" -eq 1 ]; then
   esac
 fi
 
+# ---- Load exclusion list ----
+declare -A EXCLUDE_SET
+n_excluded=0
+if [ -n "$EXCLUDE_FILE" ]; then
+  if [ ! -f "$EXCLUDE_FILE" ]; then
+    echo "Error: exclude file not found: $EXCLUDE_FILE"
+    exit 1
+  fi
+  while IFS=$'\t' read -r ex_model ex_mdl ex_config ex_dim; do
+    # Skip empty lines and comments
+    [ -z "$ex_model" ] && continue
+    [[ "$ex_model" == \#* ]] && continue
+    EXCLUDE_SET["${ex_model}|${ex_mdl}|${ex_config}|${ex_dim}"]=1
+    n_excluded=$((n_excluded + 1))
+  done < "$EXCLUDE_FILE"
+  echo "Loaded $n_excluded exclusion(s) from $EXCLUDE_FILE"
+fi
+
 # ---- If no models/doc-lengths given, use a single empty placeholder ----
 [ -z "$MODELS" ]          && MODELS="_none_"
 [ -z "$MAX_DOC_LENGTHS" ] && MAX_DOC_LENGTHS="_none_"
 
+# is_excluded: check if a combination should be skipped
+# Supports * as wildcard in any field of the exclude file
+is_excluded() {
+  local e_model="$1" e_mdl="$2" e_config="$3" e_dim="$4"
+  # Check exact match first
+  if [ "${EXCLUDE_SET["${e_model}|${e_mdl}|${e_config}|${e_dim}"]+_}" ]; then
+    return 0
+  fi
+  # Check wildcard matches
+  for key in "${!EXCLUDE_SET[@]}"; do
+    IFS='|' read -r pat_model pat_mdl pat_config pat_dim <<< "$key"
+    if { [ "$pat_model" = "*" ]  || [ "$pat_model" = "$e_model" ]; } && \
+       { [ "$pat_mdl" = "*" ]    || [ "$pat_mdl" = "$e_mdl" ]; } && \
+       { [ "$pat_config" = "*" ] || [ "$pat_config" = "$e_config" ]; } && \
+       { [ "$pat_dim" = "*" ]    || [ "$pat_dim" = "$e_dim" ]; }; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 run_idx=0
+skip_count=0
 for model in $MODELS; do
   SHORT_MODEL=""
   if [ "$model" != "_none_" ]; then
@@ -250,6 +297,13 @@ for model in $MODELS; do
     for config in "${CONFIGS[@]}"; do
       for i in $STEPS; do
         run_idx=$((run_idx + 1))
+
+        # Check exclusion list
+        if [ "$n_excluded" -gt 0 ] && is_excluded "$model" "$mdl" "$config" "$i"; then
+          skip_count=$((skip_count + 1))
+          echo "[$run_idx/$total] Skipping (excluded): model=$model mdl=$mdl config=$config dim=$i"
+          continue
+        fi
 
         CMD=(python docuverse/utils/ingest_and_test.py)
         CMD+=(--num_preprocessor_threads "$NUM_THREADS")
@@ -281,7 +335,8 @@ for model in $MODELS; do
           fi
           BSUB_CMD+=(-J "$job_name")
           # Build log file name encoding model, doc-length, and dim
-          log_parts=("%J")
+          log_parts=("%J"
+          )
           [ -n "$SHORT_MODEL" ]    && log_parts+=("$SHORT_MODEL")
           [ "$mdl" != "_none_" ]   && log_parts+=("mdl${mdl}")
           log_parts+=("dim${i}")
@@ -310,3 +365,7 @@ rm $TMP_DB_PATH
     done
   done
 done
+
+if [ "$skip_count" -gt 0 ]; then
+  echo "Skipped $skip_count/$total run(s) due to exclusions."
+fi
