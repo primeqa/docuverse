@@ -419,9 +419,12 @@ class timer(object):
     def display_statistics(stats: Optional[List[str]] = None,
                            output_stream=None,
                            name_width: int = 50,
-                           col_width: int = 10,
-                           strip_common_prefix: bool = True):
-        '''Display a flat table of timing statistics computed from individual samples.
+                           col_width: int = 10):
+        '''Display a hierarchical table of timing statistics computed from individual samples.
+
+        The output mirrors the tree structure of display_timing(), with indented nodes
+        and statistics columns. Intermediate nodes that have no direct samples show
+        aggregated statistics from their children's combined samples.
 
         Arguments:
             stats: list of statistic names to display as columns. If None, uses DEFAULT_STATS.
@@ -430,42 +433,18 @@ class timer(object):
             output_stream: where to print (default sys.stdout)
             name_width: width of the key name column
             col_width: width of each statistic column
-            strip_common_prefix: if True, strip the common prefix from all keys
         '''
         if output_stream is None:
             output_stream = sys.stdout
         if stats is None:
             stats = timer.DEFAULT_STATS
 
-        all_stats = timer.get_statistics(stats)
-        if not all_stats:
+        if not timer.timing_samples:
             print("No timing data collected.", file=output_stream)
             return
 
-        keys = sorted(all_stats.keys())
+        all_stats = timer.get_statistics(stats)
 
-        # Strip common prefix if requested
-        display_keys = keys
-        prefix = ""
-        if strip_common_prefix and len(keys) > 1:
-            parts = [k.split("::") for k in keys]
-            common = []
-            for level_parts in zip(*parts):
-                if len(set(level_parts)) == 1:
-                    common.append(level_parts[0])
-                else:
-                    break
-            if common:
-                prefix = "::".join(common) + "::"
-                display_keys = [k[len(prefix):] if k.startswith(prefix) else k for k in keys]
-
-        # Build header
-        headers = [timer.AVAILABLE_STATS.get(s, s) for s in stats]
-        header_line = f"{'Key':<{name_width}s}" + "".join(f"{h:>{col_width}s}" for h in headers)
-        print(header_line, file=output_stream)
-        print("-" * len(header_line), file=output_stream)
-
-        # Build rows
         def _fmt(val, stat_name):
             if stat_name == "count":
                 return f"{int(val):>{col_width}d}"
@@ -480,11 +459,55 @@ class timer(object):
             else:
                 return f"{val/1000000:>{col_width-1}.1f}M"
 
-        for key, display_key in zip(keys, display_keys):
-            row_stats = all_stats[key]
-            row = f"{display_key:<{name_width}s}"
-            row += "".join(_fmt(row_stats[s], s) for s in stats)
-            print(row, file=output_stream)
+        def _get_node_stats(node):
+            '''Get statistics for a node. If the node has direct samples, use those.
+            Otherwise aggregate all descendant samples.'''
+            full_key = node.get('full_key', '')
+            if full_key in all_stats:
+                return all_stats[full_key]
+            # Aggregate from all descendant leaf samples
+            samples = _collect_descendant_samples(node)
+            if not samples:
+                return None
+            arr = np.array(samples)
+            return {s: timer._compute_stat(arr, s) for s in stats}
+
+        def _collect_descendant_samples(node):
+            '''Recursively collect all samples from leaf descendants.'''
+            full_key = node.get('full_key', '')
+            if full_key in timer.timing_samples:
+                return list(timer.timing_samples[full_key])
+            samples = []
+            for child in node.get('children', []):
+                samples.extend(_collect_descendant_samples(child))
+            return samples
+
+        def _display_tree(node, level):
+            okey = ("  " * level) + node['key']
+            node_stats = _get_node_stats(node)
+            if node_stats is not None:
+                row = f"{okey:<{name_width}s}"
+                row += "".join(_fmt(node_stats[s], s) for s in stats)
+                print(row, file=output_stream)
+            else:
+                print(f"{okey:<{name_width}s}", file=output_stream)
+            for child in node.get('children', []):
+                _display_tree(child, level + 1)
+
+        # Build the tree
+        tree = timer._compute_timing_tree(None, 0)
+        if len(tree) > 1:
+            tree = {"key": "Root", "children": tree, "full_key": ""}
+        else:
+            tree = tree[0]
+
+        # Header
+        headers = [timer.AVAILABLE_STATS.get(s, s) for s in stats]
+        header_line = f"{'Key':<{name_width}s}" + "".join(f"{h:>{col_width}s}" for h in headers)
+        print(header_line, file=output_stream)
+        print("-" * len(header_line), file=output_stream)
+
+        _display_tree(tree, 0)
 
     @staticmethod
     def save_statistics(path: str,
@@ -605,11 +628,11 @@ class timer(object):
             tm.add_timing("encode::model_forward", random.gauss(20, 5))
             tm.add_timing("milvus_search", random.gauss(3, 0.5))
 
-        # Default statistics
+        # Default statistics (hierarchical)
         print("\nDefault stats:")
         timer.display_statistics()
 
-        # Custom statistics selection
+        # Custom statistics selection (hierarchical)
         print("\nCustom stats (just count, mean, p95):")
         timer.display_statistics(stats=["count", "mean", "p95"])
 
