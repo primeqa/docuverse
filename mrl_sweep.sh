@@ -94,6 +94,7 @@ BSUB_EXTRA=""
 CONDA_ENV="docu"
 GPU_ID="0"
 EXCLUDE_FILE=""
+DRYRUN=0
 
 # ---- Parse arguments ----
 usage() {
@@ -115,6 +116,7 @@ usage() {
   echo "  --exclude FILE                File with combinations to skip (tab-separated):"
   echo "                                  <model> <max_doc_length> <config> <dim>"
   echo "                                Lines starting with # are ignored. Use * to match any value."
+  echo "  --dryrun                      Print commands without executing them"
   echo "  -h, --help                    Show this help message"
   exit 0
 }
@@ -170,6 +172,8 @@ while [[ $# -gt 0 ]]; do
       GPU_ID="$2"; shift 2 ;;
     --exclude)
       EXCLUDE_FILE="$2"; shift 2 ;;
+    --dryrun|--dry-run)
+      DRYRUN=1; shift ;;
     -h|--help)
       usage ;;
     -*)
@@ -214,6 +218,7 @@ echo "Threads:       $NUM_THREADS"
 [ -n "$MAX_DOC_LENGTHS" ] && echo "MaxDocLengths: $MAX_DOC_LENGTHS"
 [ -n "$STRIDE" ]          && echo "Stride:        $STRIDE"
 [ -n "$EXCLUDE_FILE" ]    && echo "Exclude file:  $EXCLUDE_FILE"
+[ "$DRYRUN" -eq 1 ]       && echo "Mode:          DRY RUN (no commands will be executed)"
 if [ "$USE_BSUB" -eq 1 ]; then
   echo "Submit:        bsub"
   [ -n "$BSUB_QUEUE" ]        && echo "Queue:         $BSUB_QUEUE"
@@ -323,6 +328,10 @@ for model in $MODELS; do
         fi
 
         echo "[$run_idx/$total]"
+        if [ "$DRYRUN" -eq 1 ]; then
+          echo "  CUDA_VISIBLE_DEVICES=${GPU_ID} ${CMD[*]}"
+          continue
+        fi
         if [ "$USE_BSUB" -eq 1 ]; then
           # Build bsub arguments
           BSUB_CMD=(bsub)
