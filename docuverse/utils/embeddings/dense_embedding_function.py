@@ -109,6 +109,10 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         else:
             self.model = SentenceTransformer(model_or_directory_name, device=device, trust_remote_code=True)
 
+        if self.torch_compile:
+            print("Applying torch.compile() to embedding model...")
+            self.model[0].auto_model = torch.compile(self.model[0].auto_model)
+
     @property
     def tokenizer(self):
         return self.model.tokenizer

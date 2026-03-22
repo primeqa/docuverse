@@ -79,6 +79,13 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    torch_compile: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, apply torch.compile() to the embedding model for faster inference (requires PyTorch 2.0+)."
+        }
+    )
+
     input_passages: Optional[str] | None = field(
         default=None,
         metadata={

@@ -21,7 +21,7 @@ from docuverse.utils.timer import timer
 
 class SparseSentenceTransformer:
     def __init__(self, model_name_or_path, device:str= 'cpu', doc_max_tokens=None, query_max_tokens=None,
-                 process_name="ingest_and_test::search", **kwargs):
+                 process_name="ingest_and_test::search", torch_compile=False, **kwargs):
         self.model = AutoModelForMaskedLM.from_pretrained(model_name_or_path)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         self.device = device
@@ -33,6 +33,9 @@ class SparseSentenceTransformer:
         self.doc_max_tokens = doc_max_tokens
         self.query_max_tokens = query_max_tokens
         self.process_name = process_name
+        if torch_compile:
+            print("Applying torch.compile() to sparse embedding model...")
+            self.model = torch.compile(self.model)
 
     @torch.no_grad()
     def encode(self, sentences: List[str], _batch_size=16, show_progress_bar=False,
@@ -177,7 +180,8 @@ class SparseEmbeddingFunction(EmbeddingFunction):
 
 
     def create_model(self, model_or_directory_name:str=None, device:str="cpu", **kwargs):
-        self.model = SparseSentenceTransformer(model_or_directory_name, device, **kwargs)
+        self.model = SparseSentenceTransformer(model_or_directory_name, device,
+                                               torch_compile=self.torch_compile, **kwargs)
 
     def __call__(self, texts: Union[List[str], str], **kwargs) -> \
             Union[Dict[str, float|int], List[Dict[str, float|int]]]:
