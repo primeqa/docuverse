@@ -34,6 +34,9 @@ class SparseSentenceTransformer:
         self.query_max_tokens = query_max_tokens
         self.process_name = process_name
         if torch_compile:
+            import logging
+            logging.getLogger("torch._dynamo").setLevel(logging.ERROR)
+            logging.getLogger("torch._inductor").setLevel(logging.ERROR)
             print("Applying torch.compile() to sparse embedding model...")
             self.model = torch.compile(self.model)
 

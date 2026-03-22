@@ -12,6 +12,10 @@ class EmbeddingFunction:
         torch.set_float32_matmul_precision('high')
         self.torch_dtype = convert_to_type(kwargs.get("model_torch_dtype", None))
         self.torch_compile = bool(kwargs.get("torch_compile", False))
+        if self.torch_compile:
+            import logging
+            logging.getLogger("torch._dynamo").setLevel(logging.ERROR)
+            logging.getLogger("torch._inductor").setLevel(logging.ERROR)
 
 
     @staticmethod

@@ -888,7 +888,7 @@ class DocUVerseConfig(GenericArguments):
             if os.path.exists(config_or_path):
                 try:
                     vals = read_config_file(config_or_path, parent)
-                    self._flatten_and_read_dict(vals)
+                    self._flatten_and_read_dict(vals, extra=parent)
                 except Exception as exc:
                     raise exc
             else:
@@ -901,13 +901,15 @@ class DocUVerseConfig(GenericArguments):
             return config_or_path
         return None
 
-    def _flatten_and_read_dict(self, vals):
+    def _flatten_and_read_dict(self, vals, extra=None):
         if get_param(vals, "retrieval|retriever"):  # By default, all parameters are assumed to be retriever params
             vals1 = {}
             for k, v in vals.items():
                 if v and v != "None":
                     vals1.update(v)
             vals = vals1
+        if extra:
+            vals.update(extra)
         self.read_dict(vals)
 
     def update(self, other_config):
