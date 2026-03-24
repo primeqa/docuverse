@@ -193,6 +193,22 @@ class SparseEmbeddingFunction(EmbeddingFunction):
     def encode_documents(self, *args, **kwargs) -> Union[Dict[str, float|int], List[Dict[str, float|int]]]:
         return self.encode(*args, **kwargs)
 
+    def _run_warmup(self, texts, _batch_size, **kwargs):
+        """Run warmup batches to trigger CUDA kernel JIT and memory allocation, then reset timers."""
+        warmup_batch = texts[:_batch_size] if len(texts) >= _batch_size else texts
+        print(f"Running {self.warmup_batches} warmup batch(es) "
+              f"({len(warmup_batch)} texts, batch_size={_batch_size})...")
+        self.print_gpu_stats("Before warmup")
+        for i in range(self.warmup_batches):
+            _ = self.model.encode(warmup_batch, _batch_size=_batch_size,
+                                  show_progress_bar=False, **kwargs)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        self.print_gpu_stats("After warmup")
+        timer.reset()
+        self._warmup_done = True
+        print(f"Warmup complete, timing counters reset.")
+
     def encode(self, texts: Union[str, List[str]], _batch_size: int = -1,
                show_progress_bar=None,
                tqdm_instance=None,
@@ -203,6 +219,9 @@ class SparseEmbeddingFunction(EmbeddingFunction):
             _batch_size = self.batch_size
         if show_progress_bar is None:
             show_progress_bar = not (isinstance(texts, str) or max(len(texts), _batch_size) <= 1)
+
+        if self.warmup_batches > 0 and not self._warmup_done:
+            self._run_warmup(texts, _batch_size, **kwargs)
 
         res = self.model.encode(texts, _batch_size=_batch_size,
                                 show_progress_bar=show_progress_bar,

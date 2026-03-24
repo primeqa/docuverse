@@ -26,7 +26,7 @@ class ElasticDenseEngine(ElasticEngine):
             else:
                 self.hidden_dim = 384  # Some default value, the system might crash if it's wrong.
         else:
-            self.hidden_dim = len(self.model.encode(['text'], show_progress_bar=False)[0])
+            self.hidden_dim = self.model.embedding_dim
             print(f"Hidden dimension for model: {self.hidden_dim}")
 
         self._set_pipelines()

@@ -43,7 +43,6 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         print('=== done initializing model')
 
     def detect_current_device(self, kwargs: dict[str, Any]) -> str:
-        import torch
         device = detect_device()
         if device == 'cpu':
             print(f"You are using {device}. This is much slower than using "
@@ -84,7 +83,6 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                 del self.model
                 self.model = None
                 # Clear CUDA cache
-                import torch
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
             except:
@@ -97,7 +95,6 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         if attn_implementation is not None:
             model_args: dict[str, Any] = {"attn_implementation": attn_implementation}
             if attn_implementation.find("flash") >= 0:
-                import torch
                 model_args["dtype"] = torch.bfloat16
             else:
                 model_args['dtype'] = self.torch_dtype
@@ -108,7 +105,8 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                                              model_kwargs=model_args)
         else:
             self.model = SentenceTransformer(model_or_directory_name, device=device, trust_remote_code=True)
-
+        float_types = {p.dtype for p in self.model.parameters()}
+        print(f"Floating point types used in the model {model_or_directory_name}: {float_types}")
         if self.torch_compile:
             print("Applying torch.compile() to embedding model...")
             self.model[0].auto_model = torch.compile(self.model[0].auto_model)
@@ -116,6 +114,11 @@ class DenseEmbeddingFunction(EmbeddingFunction):
     @property
     def tokenizer(self):
         return self.model.tokenizer
+
+    @property
+    def embedding_dim(self):
+        dim = self.model.get_sentence_embedding_dimension()
+        return self.matryoshka_dim if self.matryoshka_dim > 0 else dim
 
     def start_pool(self):
         self.emb_pool = self.model.start_multi_process_pool()
@@ -180,10 +183,31 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             truncated.append(t)
         return truncated
 
+    def _run_warmup(self, texts, _batch_size, prompt_name=None):
+        """Run warmup batches to trigger CUDA kernel JIT and memory allocation, then reset timers."""
+        from docuverse.utils.timer import timer
+        warmup_batch = texts[:_batch_size] if len(texts) >= _batch_size else texts
+        print(f"Running {self.warmup_batches} warmup batch(es) "
+              f"({len(warmup_batch)} texts, batch_size={_batch_size})...")
+        self.print_gpu_stats("Before warmup")
+        for i in range(self.warmup_batches):
+            _ = self._tokenize_and_encode(
+                warmup_batch, _batch_size, show_progress_bar=False,
+                normalize_embeddings=True, prompt_name=prompt_name
+            )
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        self.print_gpu_stats("After warmup")
+        timer.reset()
+        self._warmup_done = True
+        print(f"Warmup complete, timing counters reset.")
+
     def _encode_data(self, texts, _batch_size,
                      show_progress_bar,
                      prompt_name=None, tm=None):
         embs = []
+        if self.warmup_batches > 0 and not self._warmup_done:
+            self._run_warmup(texts, _batch_size, prompt_name=prompt_name)
         if isinstance(texts, list) and len(texts) > 30 and self.num_devices > 1:
             try:
                 if self.emb_pool is None:

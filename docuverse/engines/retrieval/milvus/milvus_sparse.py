@@ -27,7 +27,8 @@ class MilvusSparseEngine(MilvusEngine):
                                              doc_max_tokens=get_param(self.config, 'sparse_config.doc_max_tokens', None),
                                              query_max_tokens=get_param(self.config, 'sparse_config.query_max_tokens', None),
                                              process_name="ingest_and_test::search",
-                                             torch_compile=get_param(self.config, 'torch_compile', False)
+                                             torch_compile=get_param(self.config, 'torch_compile', False),
+                                             warmup_batches=get_param(self.config, 'warmup_batches', 0)
                                              )
 
     def prepare_index_params(self, embeddings_name="embeddings"):

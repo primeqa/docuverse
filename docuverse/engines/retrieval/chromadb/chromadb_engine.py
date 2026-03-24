@@ -77,7 +77,7 @@ class ChromaDBEngine(RetrievalEngine):
             self.config.model_name,
             **self.config.__dict__,
         )
-        self.hidden_dim = len(self.model.encode(['text'], show_progress_bar=False)[0])
+        self.hidden_dim = self.model.embedding_dim
 
     # ===== Index Management Methods =====
     

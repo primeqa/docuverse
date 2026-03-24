@@ -478,6 +478,18 @@ class RetrievalArguments(GenericArguments):
 
     index_params: dict = None
 
+    warmup_batches: int = field(
+        default=0,
+        metadata={
+            "help": "Number of warmup batches to run through the embedding model before "
+                    "recording timing statistics. Warmup eliminates inflated max values "
+                    "caused by CUDA kernel JIT compilation and memory allocation on the "
+                    "first batches. The warmup batches re-encode the first batch of actual "
+                    "data, so no extra input is needed. Ensure your dataset has enough "
+                    "examples for the post-warmup measurements to be meaningful."
+        }
+    )
+
     def __post_init__(self):
         super().__post_init__()
         # parse the query_header_template
