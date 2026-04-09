@@ -27,8 +27,9 @@ import argparse
 import gzip
 import sys
 import time
+from collections import defaultdict
 from pathlib import Path
-from typing import Iterator, List
+from typing import Iterator, List, Tuple
 
 import numpy as np
 import orjson
@@ -55,10 +56,10 @@ def load_model(
     model_kwargs = {}
     if attn_implementation is not None:
         model_kwargs["attn_implementation"] = attn_implementation
-
+    if dtype is not None:
+        model_kwargs["dtype"] = dtype
     model = SentenceTransformer(
-        model_path, device=device, model_kwargs=model_kwargs,
-        **({"dtype": dtype} if dtype is not None else {}),
+        model_path, device=device, model_kwargs=model_kwargs
     )
 
     if compile_model:
@@ -81,16 +82,26 @@ def find_files(data_dir: Path, glob_pattern: str) -> List[Path]:
     return files
 
 
+def _subdir_label(filepath: Path, data_dir: Path) -> str:
+    """Return the top-level subdirectory of *filepath* relative to *data_dir*.
+
+    Files directly in *data_dir* get the label ``"."``.
+    """
+    rel = filepath.relative_to(data_dir)
+    return rel.parts[0] if len(rel.parts) > 1 else "."
+
+
 def iter_text_chunks(
     data_dir: Path,
     glob_pattern: str,
     text_fields: List[str],
     max_docs: int,
     chunk_size: int,
-) -> Iterator[List[str]]:
-    """Yield lists of up to *chunk_size* texts from JSONL files.
+) -> Iterator[Tuple[List[str], List[str]]]:
+    """Yield ``(texts, subdir_labels)`` tuples of up to *chunk_size* items.
 
-    Respects *max_docs* (0 = unlimited).
+    *subdir_labels[i]* is the top-level subdirectory that ``texts[i]`` came
+    from (e.g. ``"en"``, ``"fr"``).  Respects *max_docs* (0 = unlimited).
     """
     files = find_files(data_dir, glob_pattern)
     if not files:
@@ -98,9 +109,11 @@ def iter_text_chunks(
     print(f"  Found {len(files)} file(s)")
 
     chunk: List[str] = []
+    chunk_subdirs: List[str] = []
     total = 0
 
     for filepath in files:
+        subdir = _subdir_label(filepath, data_dir)
         open_fn = gzip.open if str(filepath).endswith(".gz") else open
         with open_fn(filepath, "rt", encoding="utf-8", errors="replace") as fh:
             for line in fh:
@@ -121,16 +134,18 @@ def iter_text_chunks(
                         if not text:
                             continue
                         chunk.append(str(text))
+                        chunk_subdirs.append(subdir)
                         total += 1
                         if len(chunk) >= chunk_size:
-                            yield chunk
+                            yield chunk, chunk_subdirs
                             chunk = []
+                            chunk_subdirs = []
                         if 0 < max_docs <= total:
                             if chunk:
-                                yield chunk
+                                yield chunk, chunk_subdirs
                             return
     if chunk:
-        yield chunk
+        yield chunk, chunk_subdirs
 
 
 # ---------------------------------------------------------------------------
@@ -302,26 +317,33 @@ def main():
     # ------------------------------------------------------------------
     print(f"\nReading texts from {data_dir} (glob: {args.glob})")
     all_similarities: List[np.ndarray] = []
+    subdir_similarities: dict[str, List[np.ndarray]] = defaultdict(list)
     n_docs = 0
     pbar = tqdm(desc="Documents", unit="doc", dynamic_ncols=True)
 
-    for chunk in iter_text_chunks(
+    for texts, subdirs in iter_text_chunks(
         data_dir, args.glob, args.text_field, args.max_docs, args.chunk_size,
     ):
         emb_orig = model_original.encode(
-            chunk, batch_size=args.batch_size,
+            texts, batch_size=args.batch_size,
             show_progress_bar=False, convert_to_numpy=True,
             normalize_embeddings=True,
         )
         emb_pruned = model_pruned.encode(
-            chunk, batch_size=args.batch_size,
+            texts, batch_size=args.batch_size,
             show_progress_bar=False, convert_to_numpy=True,
             normalize_embeddings=True,
         )
         sims = cosine_similarity_paired(emb_orig, emb_pruned)
         all_similarities.append(sims)
-        n_docs += len(chunk)
-        pbar.update(len(chunk))
+
+        # Accumulate per-subdirectory
+        subdirs_arr = np.array(subdirs)
+        for sd in np.unique(subdirs_arr):
+            subdir_similarities[sd].append(sims[subdirs_arr == sd])
+
+        n_docs += len(texts)
+        pbar.update(len(texts))
         pbar.set_postfix(mean_cos=f"{sims.mean():.4f}")
 
     pbar.close()
@@ -334,6 +356,29 @@ def main():
     # ------------------------------------------------------------------
     similarities = np.concatenate(all_similarities)
     stats = print_report(similarities)
+
+    # Per-subdirectory breakdown (only if there are multiple)
+    subdir_stats = {}
+    if len(subdir_similarities) > 1:
+        print("\n=== Per-subdirectory breakdown ===")
+        # Compute stats for each subdir, sort by name
+        rows = []
+        for sd in sorted(subdir_similarities):
+            sd_sims = np.concatenate(subdir_similarities[sd])
+            sd_st = percentile_stats(sd_sims)
+            subdir_stats[sd] = sd_st
+            rows.append((sd, len(sd_sims), sd_st))
+
+        # Print as aligned table
+        max_name = max(len(r[0]) for r in rows)
+        hdr = f"  {'Subdir':<{max_name}}  {'Docs':>8}  {'Mean':>8}  {'Median':>8}  {'p05':>8}  {'Min':>8}"
+        print(hdr)
+        print("  " + "-" * (len(hdr) - 2))
+        for name, count, st in rows:
+            print(
+                f"  {name:<{max_name}}  {count:>8,}  {st['mean']:>8.4f}"
+                f"  {st['median']:>8.4f}  {st['p05']:>8.4f}  {st['min']:>8.4f}"
+            )
 
     # ------------------------------------------------------------------
     # Optional JSON output
@@ -349,6 +394,8 @@ def main():
             "torch_compile": args.torch_compile,
             "cosine_similarity": stats,
         }
+        if subdir_stats:
+            results["per_subdirectory"] = subdir_stats
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(orjson.dumps(results, option=orjson.OPT_INDENT_2))
