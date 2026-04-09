@@ -203,7 +203,28 @@ def prune_tokenizer_json(
         if tok["id"] in old_to_new:
             tok["id"] = old_to_new[tok["id"]]
 
+    # 4. Remap token IDs embedded in post_processor and padding sections
+    _remap_tokenizer_ids(pruned, old_to_new)
+
     return pruned
+
+
+def _remap_tokenizer_ids(tokenizer_data: dict, old_to_new: dict[int, int]):
+    """Remap hardcoded token IDs in post_processor and padding sections."""
+    # post_processor → special_tokens → <name> → ids: [old_id, ...]
+    post_proc = tokenizer_data.get("post_processor", {})
+    for _name, spec in post_proc.get("special_tokens", {}).items():
+        if "ids" in spec:
+            spec["ids"] = [
+                old_to_new.get(tid, tid) for tid in spec["ids"]
+            ]
+
+    # padding → pad_id
+    padding = tokenizer_data.get("padding")
+    if padding and "pad_id" in padding:
+        old_pad = padding["pad_id"]
+        if old_pad in old_to_new:
+            padding["pad_id"] = old_to_new[old_pad]
 
 
 def update_tokenizer_config(
@@ -276,6 +297,50 @@ def prune_model_weights(
         save_file(state_dict, str(output_dir / "model.safetensors"), metadata=metadata)
     else:
         torch.save(state_dict, str(output_dir / "pytorch_model.bin"))
+
+
+# ---------------------------------------------------------------------------
+# Size helpers
+# ---------------------------------------------------------------------------
+
+def _dir_size_bytes(path: Path) -> int:
+    """Total size of all files under *path* (recursive, follows symlinks)."""
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+def _fmt_size(n_bytes: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(n_bytes) < 1024:
+            return f"{n_bytes:.1f} {unit}"
+        n_bytes /= 1024
+    return f"{n_bytes:.1f} TB"
+
+
+def _count_params(model_path: Path) -> int:
+    """Count total parameters in a safetensors or pytorch_model.bin file."""
+    safetensors_path = model_path / "model.safetensors"
+    pytorch_path = model_path / "pytorch_model.bin"
+    if safetensors_path.exists():
+        from safetensors import safe_open
+        total = 0
+        with safe_open(str(safetensors_path), framework="pt") as f:
+            for k in f.keys():
+                total += f.get_tensor(k).numel()
+        return total
+    elif pytorch_path.exists():
+        state_dict = torch.load(str(pytorch_path), map_location="cpu", weights_only=True)
+        return sum(t.numel() for t in state_dict.values())
+    return 0
+
+
+def _fmt_params(n: int) -> str:
+    if n >= 1e9:
+        return f"{n / 1e9:.1f}B"
+    if n >= 1e6:
+        return f"{n / 1e6:.1f}M"
+    if n >= 1e3:
+        return f"{n / 1e3:.1f}K"
+    return str(n)
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +481,19 @@ def main():
     # Update config.json
     # ------------------------------------------------------------------
     config["vocab_size"] = new_vocab_size
+    # Remap special token IDs referenced in config
+    _TOKEN_ID_KEYS = (
+        "bos_token_id", "eos_token_id", "pad_token_id",
+        "cls_token_id", "sep_token_id", "mask_token_id",
+        "decoder_start_token_id",
+    )
+    for key in _TOKEN_ID_KEYS:
+        if key in config and config[key] is not None:
+            old_id = config[key]
+            if old_id in old_to_new:
+                config[key] = old_to_new[old_id]
+            else:
+                print(f"  WARNING: {key}={old_id} not in kept tokens")
     with open(output_dir / "config.json", "w") as f:
         json.dump(config, f, indent=2)
     print(f"  config.json: vocab_size → {new_vocab_size:,}")
@@ -462,8 +540,17 @@ def main():
     print("Verifying…")
     verify_output(output_dir)
 
+    # ------------------------------------------------------------------
+    # Report sizes
+    # ------------------------------------------------------------------
+    old_size = _dir_size_bytes(model_dir)
+    new_size = _dir_size_bytes(output_dir)
+    old_params = _count_params(model_dir)
+    new_params = _count_params(output_dir)
     print(f"\nDone. Pruned model written to {output_dir}")
-    print(f"  {orig_vocab_size:,} → {new_vocab_size:,} tokens ({removed:,} removed)")
+    print(f"  Vocab:      {orig_vocab_size:,} → {new_vocab_size:,} tokens ({removed:,} removed)")
+    print(f"  Params:     {_fmt_params(old_params)} → {_fmt_params(new_params)} ({_fmt_params(old_params - new_params)} removed)")
+    print(f"  Disk size:  {_fmt_size(old_size)} → {_fmt_size(new_size)} ({_fmt_size(old_size - new_size)} saved)")
 
 
 if __name__ == "__main__":
