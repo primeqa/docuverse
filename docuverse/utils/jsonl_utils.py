@@ -30,7 +30,7 @@ def get_nested_field(obj: Dict[str, Any], path: str) -> Any:
     Returns:
         The value at the specified path. If array wildcard is used, returns list of values.
 
-    Raises:
+    Raises:w
         KeyError: If path doesn't exist in the object
         IndexError: If array index is out of bounds
     """
