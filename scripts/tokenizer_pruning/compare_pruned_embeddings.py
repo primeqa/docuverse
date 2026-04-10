@@ -73,12 +73,26 @@ def load_model(
 # ---------------------------------------------------------------------------
 
 def find_files(data_dir: Path, glob_pattern: str) -> List[Path]:
-    """Return sorted list of JSONL / .jsonl.gz files matching *glob_pattern*."""
+    """Return sorted list of JSONL / .jsonl.gz files matching *glob_pattern*.
+
+    If the pattern is non-recursive (no ``**/``) and matches nothing, retries
+    with ``**/{pattern}`` so that ``*.jsonl.gz`` finds files in subdirectories.
+    """
     files = sorted(data_dir.glob(glob_pattern))
     files = [
         f for f in files
         if f.suffix in {".gz", ".jsonl"} or str(f).endswith(".jsonl.gz")
     ]
+    if not files and "**" not in glob_pattern:
+        recursive = f"**/{glob_pattern}"
+        files = sorted(data_dir.glob(recursive))
+        files = [
+            f for f in files
+            if f.suffix in {".gz", ".jsonl"} or str(f).endswith(".jsonl.gz")
+        ]
+        if files:
+            print(f"  (no matches for '{glob_pattern}', "
+                  f"using '{recursive}' instead)")
     return files
 
 
