@@ -34,7 +34,10 @@ import shutil
 import sys
 from pathlib import Path
 
-from docuverse.utils import save_command_line
+try:
+    from docuverse.utils import save_command_line
+except ImportError:
+    save_command_line = None
 
 import torch
 
@@ -405,7 +408,8 @@ def main():
         help="Overwrite --output_dir if it already exists",
     )
     args = parser.parse_args()
-    save_command_line(sys.argv)
+    if save_command_line is not None:
+        save_command_line(sys.argv)
 
     model_dir = Path(args.model)
     output_dir = Path(args.output_dir)
