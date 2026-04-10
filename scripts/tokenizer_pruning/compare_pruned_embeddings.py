@@ -38,6 +38,7 @@ import orjson
 import torch
 from tqdm import tqdm
 
+from docuverse.utils import save_command_line
 from docuverse.utils.jsonl_utils import get_nested_field
 
 
@@ -369,6 +370,7 @@ def main():
              "--compare_tokenization.",
     )
     args = parser.parse_args()
+    save_command_line(sys.argv)
 
     data_dir = Path(args.data_dir)
     if not data_dir.is_dir():

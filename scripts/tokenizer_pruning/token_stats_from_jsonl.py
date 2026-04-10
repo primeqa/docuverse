@@ -36,6 +36,7 @@ import numpy as np
 from tqdm import tqdm
 
 from docuverse.utils.jsonl_utils import get_nested_field
+from docuverse.utils import save_command_line
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +150,7 @@ def main():
     parser.add_argument("--max_seq_length", type=int, default=8192,
                         help="Max sequence length for truncation-rate calculation (default: 8192)")
     args = parser.parse_args()
+    save_command_line(sys.argv)
 
     data_dir = Path(args.data_dir)
     if not data_dir.is_dir():

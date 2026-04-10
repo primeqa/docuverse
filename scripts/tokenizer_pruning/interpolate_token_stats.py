@@ -24,6 +24,8 @@ from pathlib import Path
 
 import orjson
 
+from docuverse.utils import save_command_line
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,6 +73,7 @@ def main():
     parser.add_argument("--top_k", type=int, default=-1,
                         help="Keep only top-k tokens in output; -1 = all (default: -1)")
     args = parser.parse_args()
+    save_command_line(sys.argv)
 
     if len(args.files) < 2:
         sys.exit("ERROR: at least 2 input files are required")
