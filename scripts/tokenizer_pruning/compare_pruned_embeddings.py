@@ -20,7 +20,9 @@ Usage:
         [--dtype bfloat16] \\
         [--attn_implementation flash_attention_2] \\
         [--torch_compile] \\
-        [--output comparison.json]
+        [--output comparison.json] \\
+        [--compare_tokenization] \\
+        [--tokenization_output tokenization_diff.jsonl]
 """
 
 import argparse
@@ -163,6 +165,61 @@ def iter_text_chunks(
 
 
 # ---------------------------------------------------------------------------
+# Tokenization comparison
+# ---------------------------------------------------------------------------
+
+def compare_tokenization(
+    model_original,
+    model_pruned,
+    data_dir: Path,
+    glob_pattern: str,
+    text_fields: List[str],
+    max_docs: int,
+    chunk_size: int,
+    output_path: Path,
+) -> int:
+    """Stream texts, tokenize with both models, write differing examples to *output_path*.
+
+    Returns the number of differing examples found.
+    """
+    tok_orig = model_original.tokenizer
+    tok_pruned = model_pruned.tokenizer
+
+    n_total = 0
+    n_diff = 0
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open("wb") as out_fh:
+        pbar = tqdm(desc="Tokenization check", unit="doc", dynamic_ncols=True)
+        for texts, subdirs in iter_text_chunks(
+            data_dir, glob_pattern, text_fields, max_docs, chunk_size
+        ):
+            for text, subdir in zip(texts, subdirs):
+                n_total += 1
+                tokens_orig = tok_orig.tokenize(text)
+                tokens_pruned = tok_pruned.tokenize(text)
+                if tokens_orig != tokens_pruned:
+                    n_diff += 1
+                    record = {
+                        "text": text,
+                        "subdir": subdir,
+                        "tokens_original": tokens_orig,
+                        "tokens_pruned": tokens_pruned,
+                    }
+                    out_fh.write(orjson.dumps(record))
+                    out_fh.write(b"\n")
+            pbar.update(len(texts))
+            pbar.set_postfix(diffs=n_diff)
+        pbar.close()
+
+    print(f"\n=== Tokenization Comparison ===")
+    print(f"  Total documents checked: {n_total:,}")
+    print(f"  Documents with different tokenization: {n_diff:,}  ({100.0 * n_diff / max(n_total, 1):.2f}%)")
+    print(f"  Differences written to: {output_path}")
+    return n_diff
+
+
+# ---------------------------------------------------------------------------
 # Statistics
 # ---------------------------------------------------------------------------
 
@@ -297,6 +354,20 @@ def main():
         "--output", default=None,
         help="Optional path to write JSON results to",
     )
+
+    # Tokenization comparison
+    parser.add_argument(
+        "--compare_tokenization", action="store_true",
+        help="Instead of (or in addition to) comparing embeddings, tokenize each "
+             "text with both models and write examples where the token strings "
+             "differ to --tokenization_output.",
+    )
+    parser.add_argument(
+        "--tokenization_output", default="tokenization_diff.jsonl",
+        help="Path to write JSONL records of tokenization differences "
+             "(default: tokenization_diff.jsonl). Used only with "
+             "--compare_tokenization.",
+    )
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -325,6 +396,21 @@ def main():
         args.pruned, device, dtype, args.attn_implementation, args.torch_compile,
     )
     print(f"  Loaded in {time.time() - t0:.1f}s")
+
+    # ------------------------------------------------------------------
+    # Optional tokenization comparison (runs before embedding comparison)
+    # ------------------------------------------------------------------
+    if args.compare_tokenization:
+        compare_tokenization(
+            model_original,
+            model_pruned,
+            data_dir,
+            args.glob,
+            args.text_field,
+            args.max_docs,
+            args.chunk_size,
+            Path(args.tokenization_output),
+        )
 
     # ------------------------------------------------------------------
     # Stream texts and compare embeddings chunk by chunk

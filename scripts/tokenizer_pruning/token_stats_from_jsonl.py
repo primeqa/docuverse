@@ -53,7 +53,7 @@ def _init_worker(model_name_or_path: str, pos_counter: multiprocessing.Value):
     with pos_counter.get_lock():
         _worker_pos = pos_counter.value
         pos_counter.value += 1
-    _tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, fix_mistral_regex=True)
+    _tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     _tokenizer.model_max_length = int(1e9)  # suppress "sequence longer than max_length" warnings
 
 
@@ -170,7 +170,7 @@ def main():
     # ------------------------------------------------------------------
     from transformers import AutoTokenizer
     print("Loading tokenizer in main process for metadata…")
-    main_tokenizer = AutoTokenizer.from_pretrained(args.model, fix_mistral_regex=True)
+    main_tokenizer = AutoTokenizer.from_pretrained(args.model)
     vocab_size = main_tokenizer.vocab_size
     max_seq_length = args.max_seq_length
     print(f"  max_seq_length : {max_seq_length}")
