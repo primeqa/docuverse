@@ -84,7 +84,7 @@ class APIEmbedder:
 class GPUEmbedder:
     """Local GPU-based embedding generator using transformers."""
 
-    def __init__(self, model_name: str, device: str = None):
+    def __init__(self, model_name: str, device: str = None, use_torch_compile: bool = False):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -104,7 +104,9 @@ class GPUEmbedder:
             print(f"  Flash attention not supported, using default attention with bf16")
 
         self.model.eval()
-        self.model = torch.compile(self.model)
+        if use_torch_compile:
+            self.model = torch.compile(self.model)
+            print(f"  Using torch.compile")
         print(f"✓ Initialized GPU embedder: {model_name} on {device}")
 
     def tokenize(self, texts: List[str]):
@@ -744,7 +746,9 @@ def main():
     parser.add_argument("--warmup_batches", type=int, default=1,
                         help="Number of warmup batches to run before timing (default: 1)")
     parser.add_argument("--max_text_size", type=int, default=1536,
-                        help="The maximum size for the text to encode",)
+                        help="The maximum size for the text to encode")
+    parser.add_argument("--torch_compile", action="store_true",
+                        help="Enable torch.compile optimization for GPU model (default: disabled)")
 
     args = parser.parse_args()
 
@@ -782,7 +786,7 @@ def main():
 
     if not args.skip_gpu:
         try:
-            gpu_embedder = GPUEmbedder(args.local_model_name, args.device)
+            gpu_embedder = GPUEmbedder(args.local_model_name, args.device, args.torch_compile)
             embedders.append(("GPU", gpu_embedder))
         except Exception as e:
             print(f"✗ Failed to initialize GPU embedder: {e}")
