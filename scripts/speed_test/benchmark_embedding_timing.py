@@ -88,7 +88,7 @@ class _NumpyEncoder(json.JSONEncoder):
 # Add parent directory to path to import jsonl_utils
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from docuverse.utils.jsonl_utils import read_jsonl_file
-from docuverse.utils import save_command_line
+from docuverse.utils import save_command_line, prepare_for_save_and_backup
 
 
 class APIEmbedder:
@@ -794,8 +794,16 @@ def main():
                         help="Model weight dtype for GPU embedder (default: bf16)")
     parser.add_argument("--output_file", type=str, default=None,
                         help="Path to JSON file for saving benchmark results and full output text")
+    parser.add_argument("--fof", type=str, default=None,
+                        help="Path to a file-of-files: one input file path per line, "
+                             "expanded as if passed to --input_file")
 
     args = parser.parse_args()
+
+    if args.fof:
+        with open(args.fof) as fof:
+            fof_paths = [line.strip() for line in fof if line.strip() and not line.startswith("#")]
+        args.input_file = (args.input_file or []) + fof_paths
 
     save_command_line(sys.argv)
 
@@ -978,6 +986,7 @@ def main():
 
     if args.output_file:
         sys.stdout = sys.__stdout__
+        prepare_for_save_and_backup(args.output_file)
         output_data = {
             "results": all_file_results,
             "output": captured_output.getvalue(),
