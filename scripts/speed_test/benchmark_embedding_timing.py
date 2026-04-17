@@ -31,6 +31,11 @@ Usage:
     # With plots:
     python benchmark_embedding_timing.py --input_file data.jsonl \
         --batch_sizes 1,8,16,32 --plot --plot_format pdf
+
+    # Multiple input files (per-file results + aggregate statistics):
+    python benchmark_embedding_timing.py \
+        --input_file queries.jsonl documents.jsonl.bz2 \
+        --field_path text --batch_sizes 1,16,32
 """
 
 import argparse
@@ -50,7 +55,7 @@ from tqdm import tqdm
 
 # Add parent directory to path to import jsonl_utils
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from jsonl_utils import read_jsonl_file
+from docuverse.utils.jsonl_utils import read_jsonl_file
 
 
 class APIEmbedder:
@@ -86,14 +91,25 @@ class GPUEmbedder:
         self.device = device
         print(f"Loading model on {device}...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name).to(device)
+
+        # Load in bf16 and try to enable flash attention if supported
+        model_kwargs = {"torch_dtype": torch.bfloat16}
+        try:
+            self.model = AutoModel.from_pretrained(
+                model_name, attn_implementation="flash_attention_2", **model_kwargs
+            ).to(device)
+            print(f"  Using flash_attention_2 with bf16")
+        except (ValueError, ImportError):
+            self.model = AutoModel.from_pretrained(model_name, **model_kwargs).to(device)
+            print(f"  Flash attention not supported, using default attention with bf16")
+
         self.model.eval()
+        self.model = torch.compile(self.model)
         print(f"✓ Initialized GPU embedder: {model_name} on {device}")
 
-    def embed(self, texts: List[str]) -> np.ndarray:
-        """Generate embeddings using local GPU."""
-        # Tokenize
-        inputs = self.tokenizer(
+    def tokenize(self, texts: List[str]):
+        """Tokenize texts and move to device."""
+        return self.tokenizer(
             texts,
             padding=True,
             truncation=True,
@@ -101,15 +117,18 @@ class GPUEmbedder:
             max_length=512
         ).to(self.device)
 
-        # Generate embeddings
+    def encode(self, inputs) -> np.ndarray:
+        """Run transformer inference on pre-tokenized inputs."""
         with torch.no_grad():
             outputs = self.model(**inputs)
-            # Use mean pooling
             embeddings = self._mean_pooling(outputs.last_hidden_state, inputs['attention_mask'])
-            # Normalize embeddings
             embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-
         return embeddings.cpu().numpy()
+
+    def embed(self, texts: List[str]) -> np.ndarray:
+        """Generate embeddings using local GPU (tokenize + encode)."""
+        inputs = self.tokenize(texts)
+        return self.encode(inputs)
 
     def _mean_pooling(self, token_embeddings, attention_mask):
         """Apply mean pooling to get sentence embeddings."""
@@ -152,16 +171,30 @@ def generate_sample_texts(num_samples: int) -> List[str]:
     return texts
 
 
+def warmup_embedder(embedder, texts: List[str], batch_size: int, name: str,
+                    warmup_batches: int = 1):
+    """Run warmup batches for an embedder to stabilize GPU/torch.compile performance."""
+    if warmup_batches <= 0:
+        return
+    print(f"  Warming up {name} with {warmup_batches} batch(es) (batch_size={batch_size})...")
+    for wi in range(warmup_batches):
+        warmup_start = wi * batch_size
+        warmup_texts = texts[warmup_start % len(texts):(warmup_start % len(texts)) + batch_size]
+        if not warmup_texts:
+            warmup_texts = texts[:min(batch_size, len(texts))]
+        _ = embedder.embed(warmup_texts)
+    print(f"  Warmup complete for {name}.")
+
+
 def benchmark_embedder(embedder, texts: List[str], batch_size: int, name: str) -> dict:
     """Benchmark an embedder with given batch size."""
     num_batches = (len(texts) + batch_size - 1) // batch_size
     timings = []
+    tokenize_timings = []
+    encode_timings = []
+    has_split = hasattr(embedder, 'tokenize') and hasattr(embedder, 'encode')
 
     print(f"\n  Testing {name} with batch_size={batch_size} ({num_batches} batches)...")
-
-    # Warmup
-    warmup_texts = texts[:min(batch_size, len(texts))]
-    _ = embedder.embed(warmup_texts)
 
     # Benchmark with progress bar
     batch_ranges = list(range(0, len(texts), batch_size))
@@ -170,9 +203,22 @@ def benchmark_embedder(embedder, texts: List[str], batch_size: int, name: str) -
     for i in pbar:
         batch = texts[i:i + batch_size]
 
-        start_time = time.time()
-        embeddings = embedder.embed(batch)
-        elapsed = time.time() - start_time
+        if has_split:
+            tok_start = time.time()
+            inputs = embedder.tokenize(batch)
+            tok_elapsed = time.time() - tok_start
+
+            enc_start = time.time()
+            embeddings = embedder.encode(inputs)
+            enc_elapsed = time.time() - enc_start
+
+            elapsed = tok_elapsed + enc_elapsed
+            tokenize_timings.append(tok_elapsed)
+            encode_timings.append(enc_elapsed)
+        else:
+            start_time = time.time()
+            embeddings = embedder.embed(batch)
+            elapsed = time.time() - start_time
 
         timings.append(elapsed)
 
@@ -187,7 +233,7 @@ def benchmark_embedder(embedder, texts: List[str], batch_size: int, name: str) -
     throughput = len(texts) / total_time
     avg_latency_per_item = total_time / len(texts) * 1000  # ms
 
-    return {
+    result = {
         "name": name,
         "batch_size": batch_size,
         "num_samples": len(texts),
@@ -199,55 +245,144 @@ def benchmark_embedder(embedder, texts: List[str], batch_size: int, name: str) -
         "embedding_dim": embeddings.shape[-1]
     }
 
+    if has_split and tokenize_timings:
+        total_tokenize = sum(tokenize_timings)
+        total_encode = sum(encode_timings)
+        result.update({
+            "tokenize_time": total_tokenize,
+            "encode_time": total_encode,
+            "tokenize_pct": total_tokenize / total_time * 100,
+            "encode_pct": total_encode / total_time * 100,
+            "avg_tokenize_batch": np.mean(tokenize_timings),
+            "avg_encode_batch": np.mean(encode_timings),
+        })
 
-def print_results(results: List[dict]):
-    """Print benchmark results in a formatted table."""
-    print("\n" + "="*100)
+    return result
+
+
+def print_results(all_file_results: dict):
+    """Print all benchmark results in a unified table, grouped by batch size, method, and file."""
+    all_results = []
+    for results in all_file_results.values():
+        all_results.extend(results)
+
+    if not all_results:
+        print("\nNo benchmark results available!")
+        return
+
+    batch_sizes = sorted(set(r["batch_size"] for r in all_results))
+    file_labels = list(all_file_results.keys())
+    methods = sorted(set(r["name"] for r in all_results))
+    multiple_files = len(file_labels) > 1
+
+    print("\n" + "=" * 120)
     print("BENCHMARK RESULTS")
-    print("="*100)
-
-    # Group by batch size
-    batch_sizes = sorted(set(r["batch_size"] for r in results))
+    print("=" * 120)
 
     for batch_size in batch_sizes:
-        print(f"\n{'Batch Size: ' + str(batch_size):^100}")
-        print("-"*100)
-        print(f"{'Method':<20} {'Total Time (s)':<18} {'Throughput (q/s)':<20} {'Avg Latency (ms)':<20} {'Speedup':<15}")
-        print("-"*100)
+        print(f"\n{'Batch Size: ' + str(batch_size):^120}")
+        print("-" * 120)
 
-        batch_results = [r for r in results if r["batch_size"] == batch_size]
-        api_result = next((r for r in batch_results if "API" in r["name"]), None)
+        if multiple_files:
+            print(f"{'File':<30} {'Method':<10} {'Samples':<10} {'Total (s)':<12} "
+                  f"{'Throughput (q/s)':<20} {'Avg Latency (ms)':<20} {'Std Batch (s)':<15}")
+        else:
+            print(f"{'Method':<15} {'Samples':<10} {'Total (s)':<12} "
+                  f"{'Throughput (q/s)':<20} {'Avg Latency (ms)':<20} {'Std Batch (s)':<15}")
+        print("-" * 120)
 
-        for result in batch_results:
-            speedup = ""
-            if api_result and result["name"] != api_result["name"]:
-                speedup = f"{api_result['total_time'] / result['total_time']:.2f}x"
-            elif api_result and result["name"] == api_result["name"]:
-                speedup = "1.00x (baseline)"
+        for file_label in file_labels:
+            file_results = [r for r in all_file_results[file_label]
+                            if r["batch_size"] == batch_size]
+            for result in file_results:
+                if multiple_files:
+                    print(f"{file_label:<30} {result['name']:<10} "
+                          f"{result['num_samples']:<10} {result['total_time']:<12.3f} "
+                          f"{result['throughput']:<20.2f} {result['avg_latency_ms']:<20.2f} "
+                          f"{result['std_batch_time']:<15.4f}")
+                else:
+                    print(f"{result['name']:<15} "
+                          f"{result['num_samples']:<10} {result['total_time']:<12.3f} "
+                          f"{result['throughput']:<20.2f} {result['avg_latency_ms']:<20.2f} "
+                          f"{result['std_batch_time']:<15.4f}")
 
-            print(f"{result['name']:<20} "
-                  f"{result['total_time']:<18.3f} "
-                  f"{result['throughput']:<20.2f} "
-                  f"{result['avg_latency_ms']:<20.2f} "
-                  f"{speedup:<15}")
+    # Aggregate across files (shown only when multiple files)
+    if multiple_files:
+        print("\n" + "=" * 120)
+        print("AGGREGATE ACROSS FILES")
+        print("=" * 120)
 
-    print("\n" + "="*100)
+        for batch_size in batch_sizes:
+            print(f"\n{'Batch Size: ' + str(batch_size):^120}")
+            print("-" * 120)
+            print(f"{'Method':<15} {'Files':<8} {'Avg Throughput (q/s)':<22} "
+                  f"{'Std Throughput':<18} {'Avg Latency (ms)':<20} {'Std Latency (ms)':<18}")
+            print("-" * 120)
 
-    # Summary comparison
-    print("\nSUMMARY")
-    print("-"*100)
-    api_results = [r for r in results if "API" in r["name"]]
-    gpu_results = [r for r in results if "GPU" in r["name"]]
+            for method in methods:
+                entries = [r for r in all_results
+                           if r["batch_size"] == batch_size and r["name"] == method]
+                if not entries:
+                    continue
+                throughputs = [e["throughput"] for e in entries]
+                latencies = [e["avg_latency_ms"] for e in entries]
+                print(f"{method:<15} {len(entries):<8} "
+                      f"{np.mean(throughputs):<22.2f} {np.std(throughputs):<18.2f} "
+                      f"{np.mean(latencies):<20.2f} {np.std(latencies):<18.2f}")
 
+    # Timing breakdown (tokenization vs inference)
+    has_breakdown = any("tokenize_time" in r for r in all_results)
+    if has_breakdown:
+        print("\n" + "=" * 120)
+        print("TIMING BREAKDOWN (Tokenization vs Inference)")
+        print("=" * 120)
+
+        for batch_size in batch_sizes:
+            print(f"\n{'Batch Size: ' + str(batch_size):^120}")
+            print("-" * 120)
+
+            if multiple_files:
+                print(f"{'File':<30} {'Method':<10} {'Tokenize (s)':<15} {'Inference (s)':<15} "
+                      f"{'Tok %':<10} {'Inf %':<10} {'Avg Tok/bat (ms)':<20} {'Avg Inf/bat (ms)':<20}")
+            else:
+                print(f"{'Method':<15} {'Tokenize (s)':<15} {'Inference (s)':<15} "
+                      f"{'Tok %':<10} {'Inf %':<10} {'Avg Tok/bat (ms)':<20} {'Avg Inf/bat (ms)':<20}")
+            print("-" * 120)
+
+            for file_label in file_labels:
+                file_results = [r for r in all_file_results[file_label]
+                                if r["batch_size"] == batch_size and "tokenize_time" in r]
+                for result in file_results:
+                    if multiple_files:
+                        print(f"{file_label:<30} {result['name']:<10} "
+                              f"{result['tokenize_time']:<15.3f} {result['encode_time']:<15.3f} "
+                              f"{result['tokenize_pct']:<10.1f} {result['encode_pct']:<10.1f} "
+                              f"{result['avg_tokenize_batch']*1000:<20.2f} {result['avg_encode_batch']*1000:<20.2f}")
+                    else:
+                        print(f"{result['name']:<15} "
+                              f"{result['tokenize_time']:<15.3f} {result['encode_time']:<15.3f} "
+                              f"{result['tokenize_pct']:<10.1f} {result['encode_pct']:<10.1f} "
+                              f"{result['avg_tokenize_batch']*1000:<20.2f} {result['avg_encode_batch']*1000:<20.2f}")
+
+    # Summary
+    print("\n" + "=" * 120)
+    print("SUMMARY")
+    print("-" * 120)
+    for method in methods:
+        method_results = [r for r in all_results if r["name"] == method]
+        avg_throughput = np.mean([r["throughput"] for r in method_results])
+        avg_latency = np.mean([r["avg_latency_ms"] for r in method_results])
+        print(f"  {method}: Avg throughput = {avg_throughput:.2f} q/s, "
+              f"Avg latency = {avg_latency:.2f} ms")
+
+    api_results = [r for r in all_results if "API" in r["name"]]
+    gpu_results = [r for r in all_results if "GPU" in r["name"]]
     if api_results and gpu_results:
-        avg_api_throughput = np.mean([r["throughput"] for r in api_results])
-        avg_gpu_throughput = np.mean([r["throughput"] for r in gpu_results])
+        avg_api = np.mean([r["throughput"] for r in api_results])
+        avg_gpu = np.mean([r["throughput"] for r in gpu_results])
+        print(f"  GPU speedup over API: {avg_gpu / avg_api:.2f}x")
 
-        print(f"Average API throughput:  {avg_api_throughput:.2f} queries/sec")
-        print(f"Average GPU throughput:  {avg_gpu_throughput:.2f} queries/sec")
-        print(f"GPU speedup over API:   {avg_gpu_throughput / avg_api_throughput:.2f}x")
-
-    print("="*100 + "\n")
+    print("=" * 120 + "\n")
 
 
 def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png'):
@@ -509,6 +644,62 @@ def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png')
     print(f"\n✓ All plots saved to: {output_dir}/")
 
 
+def compute_short_labels(file_paths: List[str]) -> List[str]:
+    """Compute short labels by removing common prefix and suffix from file paths.
+
+    For inputs like:
+        benchmark/miracl/ar/train.jsonl.bz2
+        benchmark/miracl/bn/train.jsonl.bz2
+    Returns: ['ar', 'bn']
+    """
+    if len(file_paths) <= 1:
+        return [os.path.basename(f) for f in file_paths]
+
+    # Strip common directory prefix
+    common_dir = os.path.commonpath(file_paths)
+    if os.path.isfile(common_dir):
+        common_dir = os.path.dirname(common_dir)
+    stripped = [os.path.relpath(f, common_dir) for f in file_paths]
+
+    # Strip common suffix (e.g. /train.jsonl.bz2)
+    reversed_strs = [s[::-1] for s in stripped]
+    common_suffix = os.path.commonprefix(reversed_strs)[::-1]
+    if common_suffix:
+        suffix_len = len(common_suffix)
+        labels = [s[:-suffix_len].strip(os.sep).strip('/') for s in stripped]
+        if all(labels):
+            return labels
+
+    return stripped
+
+
+def load_texts_from_file(input_file: str, field_path: str = None,
+                         max_samples: int = None) -> List[str]:
+    """Load texts from a JSONL or JSONL.bz2 file.
+
+    Returns a list of text strings, or raises on error.
+    """
+    print(f"\nLoading texts from file: {input_file}")
+    if field_path:
+        print(f"  Using field path: {field_path}")
+    if max_samples:
+        print(f"  Max samples to read: {max_samples}")
+
+    texts = read_jsonl_file(
+        input_file,
+        field_path=field_path,
+        max_samples=max_samples,
+        verbose=True
+    )
+    print(f"  Loaded {len(texts)} texts from file")
+
+    if texts:
+        preview = texts[0][:100] + "..." if len(texts[0]) > 100 else texts[0]
+        print(f"  Preview: {preview}")
+
+    return texts
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark OpenAI API vs GPU embeddings")
     parser.add_argument("--model_name", type=str,
@@ -527,8 +718,9 @@ def main():
                              "Default: 100 for generated texts, all texts for input files.")
     parser.add_argument("--batch_sizes", type=str, default="1,8,16,32",
                         help="Comma-separated list of batch sizes to test")
-    parser.add_argument("--input_file", type=str, default=None,
-                        help="Path to JSONL or JSONL.bz2 file containing texts to embed")
+    parser.add_argument("--input_file", type=str, nargs="+", default=None,
+                        help="Path(s) to JSONL or JSONL.bz2 file(s) containing texts to embed. "
+                             "When multiple files are given, benchmarks run per-file with aggregate stats.")
     parser.add_argument("--field_path", type=str, default=None,
                         help="Dot-separated path to text field in JSONL with array support. "
                              "Examples: 'document.text', 'documents[*].text', 'documents[0].text', 'documents[].text'. "
@@ -549,6 +741,8 @@ def main():
                         help="Directory to save plots (default: benchmark_plots)")
     parser.add_argument("--plot_format", type=str, default="png", choices=["png", "pdf", "svg"],
                         help="Plot file format (default: png)")
+    parser.add_argument("--warmup_batches", type=int, default=1,
+                        help="Number of warmup batches to run before timing (default: 1)")
     parser.add_argument("--max_text_size", type=int, default=1536,
                         help="The maximum size for the text to encode",)
 
@@ -561,57 +755,21 @@ def main():
     print("EMBEDDING TIMING BENCHMARK")
     print("="*100)
     print(f"Batch sizes: {batch_sizes}")
+    print(f"Warmup batches: {args.warmup_batches}")
     print("="*100)
 
-    # Load or generate sample texts
+    # Build list of input sources: each is (label, file_path_or_None)
+    input_sources = []
     if args.input_file:
-        print(f"\nLoading texts from file: {args.input_file}")
-        if args.field_path:
-            print(f"  Using field path: {args.field_path}")
-        if args.max_samples:
-            print(f"  Max samples to read: {args.max_samples}")
-
-        try:
-            texts = read_jsonl_file(
-                args.input_file,
-                field_path=args.field_path,
-                max_samples=args.max_samples,
-                verbose=True
-            )
-            print(f"✓ Loaded {len(texts)} texts from file")
-
-            if not texts:
-                print("✗ No texts loaded from file!")
-                return
-
-            # Show preview of first text
-            preview = texts[0][:100] + "..." if len(texts[0]) > 100 else texts[0]
-            print(f"  Preview: {preview}")
-
-        except FileNotFoundError:
-            print(f"✗ Error: File not found: {args.input_file}")
-            return
-        except Exception as e:
-            print(f"✗ Error loading file: {e}")
-            return
+        labels = compute_short_labels(args.input_file)
+        for label, f in zip(labels, args.input_file):
+            input_sources.append((label, f))
     else:
-        # Generate sample texts
-        num_to_generate = args.num_samples if args.num_samples is not None else 100
-        print(f"\nGenerating {num_to_generate} sample texts...")
-        texts = generate_sample_texts(num_to_generate)
-        print(f"✓ Generated {len(texts)} sample texts")
+        input_sources.append(("generated", None))
 
-    # Random sampling if num_samples is specified and we have more texts than requested
-    if args.num_samples is not None and len(texts) > args.num_samples:
-        print(f"\nRandomly sampling {args.num_samples} texts from {len(texts)} available texts")
-        print(f"  Random seed: {args.random_seed}")
-        random.seed(args.random_seed)
-        texts = random.sample(texts, args.num_samples)
-        print(f"✓ Sampled {len(texts)} texts")
+    multiple_files = len(input_sources) > 1
 
-    print(f"\nFinal dataset size: {len(texts)} texts")
-
-    # Initialize embedders
+    # Initialize embedders (once, shared across all files)
     embedders = []
 
     if not args.skip_api:
@@ -626,17 +784,6 @@ def main():
         try:
             gpu_embedder = GPUEmbedder(args.local_model_name, args.device)
             embedders.append(("GPU", gpu_embedder))
-            # Will also prune the texts so they are short enough
-            new_t = []
-            eliminated = 0
-            for t in texts:
-                toks = gpu_embedder.tokenizer.tokenize(t)
-                if len(toks) <= args.max_text_size:
-                    new_t.append(t)
-                else:
-                    eliminated += 1
-            texts = new_t
-            print(f"We had to eliminate {eliminated} texts, {len(new_t)} remaining.")
         except Exception as e:
             print(f"✗ Failed to initialize GPU embedder: {e}")
             print("  Skipping GPU benchmarking")
@@ -645,32 +792,132 @@ def main():
         print("\n✗ No embedders available for benchmarking!")
         return
 
+    gpu_embedder_obj = next((emb for name, emb in embedders if name == "GPU"), None)
 
-    # Run benchmarks
-    results = []
-
-    for batch_size in batch_sizes:
+    # One-time warmup for all embedders
+    if args.warmup_batches > 0:
         print(f"\n{'='*100}")
-        print(f"BENCHMARKING WITH BATCH SIZE: {batch_size}")
+        print("WARMUP PHASE")
         print(f"{'='*100}")
+        warmup_batch_size = max(batch_sizes)
+        warmup_count = warmup_batch_size * args.warmup_batches
+
+        if args.input_file:
+            # Sample warmup texts from the first input file
+            try:
+                warmup_texts = load_texts_from_file(
+                    args.input_file[0],
+                    field_path=args.field_path,
+                    max_samples=warmup_count
+                )
+                if not warmup_texts:
+                    print("  No texts loaded from first file for warmup, using generated texts.")
+                    warmup_texts = generate_sample_texts(warmup_count)
+                elif len(warmup_texts) > warmup_count:
+                    random.seed(args.random_seed)
+                    warmup_texts = random.sample(warmup_texts, warmup_count)
+            except Exception as e:
+                print(f"  Failed to load warmup texts from first file: {e}")
+                warmup_texts = generate_sample_texts(warmup_count)
+        else:
+            warmup_texts = generate_sample_texts(warmup_count)
 
         for name, embedder in embedders:
+            warmup_embedder(embedder, warmup_texts, warmup_batch_size, name,
+                            warmup_batches=args.warmup_batches)
+
+    # Iterate over input files
+    all_file_results = {}  # file_label -> list of result dicts
+
+    for file_idx, (file_label, file_path) in enumerate(input_sources):
+        if multiple_files:
+            print(f"\n{'#'*100}")
+            print(f"FILE {file_idx + 1}/{len(input_sources)}: {file_label}")
+            print(f"{'#'*100}")
+
+        # Load or generate texts
+        if file_path is not None:
             try:
-                result = benchmark_embedder(embedder, texts, batch_size, name)
-                results.append(result)
+                texts = load_texts_from_file(
+                    file_path,
+                    field_path=args.field_path,
+                    max_samples=args.max_samples
+                )
+                if not texts:
+                    print(f"✗ No texts loaded from {file_label}, skipping.")
+                    continue
+            except FileNotFoundError:
+                print(f"✗ Error: File not found: {file_path}, skipping.")
+                continue
             except Exception as e:
-                print(f"  ✗ Error benchmarking {name} with batch_size={batch_size}: {e}")
+                print(f"✗ Error loading file {file_path}: {e}, skipping.")
+                continue
+        else:
+            num_to_generate = args.num_samples if args.num_samples is not None else 100
+            print(f"\nGenerating {num_to_generate} sample texts...")
+            texts = generate_sample_texts(num_to_generate)
+            print(f"  Generated {len(texts)} sample texts")
 
-    # Print results
-    if results:
-        print_results(results)
+        # Random sampling if num_samples is specified and we have more texts than requested
+        if args.num_samples is not None and len(texts) > args.num_samples:
+            print(f"\nRandomly sampling {args.num_samples} texts from {len(texts)} available texts")
+            print(f"  Random seed: {args.random_seed}")
+            random.seed(args.random_seed)
+            texts = random.sample(texts, args.num_samples)
+            print(f"  Sampled {len(texts)} texts")
 
-        # Generate plots if requested
+        # Prune texts that exceed max_text_size (requires GPU tokenizer)
+        if gpu_embedder_obj is not None:
+            new_t = []
+            eliminated = 0
+            for t in texts:
+                toks = gpu_embedder_obj.tokenizer.tokenize(t)
+                if len(toks) <= args.max_text_size:
+                    new_t.append(t)
+                else:
+                    eliminated += 1
+            texts = new_t
+            if eliminated > 0:
+                print(f"  Eliminated {eliminated} texts exceeding {args.max_text_size} tokens, "
+                      f"{len(texts)} remaining.")
+
+        print(f"\nFinal dataset size: {len(texts)} texts")
+
+        if not texts:
+            print(f"✗ No texts remaining for {file_label} after filtering, skipping.")
+            continue
+
+        # Run benchmarks for this file
+        file_results = []
+
+        for batch_size in batch_sizes:
+            for name, embedder in embedders:
+                try:
+                    result = benchmark_embedder(embedder, texts, batch_size, name)
+                    result["source_file"] = file_label
+                    file_results.append(result)
+                except Exception as e:
+                    print(f"  ✗ Error benchmarking {name} with batch_size={batch_size}: {e}")
+
+        if file_results:
+            all_file_results[file_label] = file_results
+        else:
+            print(f"\n✗ No benchmark results for {file_label}!")
+
+    # Print all results at the end
+    if all_file_results:
+        print_results(all_file_results)
+
+        # Generate plots
         if args.plot:
             print("\n" + "="*100)
             print("GENERATING PLOTS")
             print("="*100)
-            create_plots(results, args.plot_dir, args.plot_format)
+            for file_label, file_results in all_file_results.items():
+                plot_dir = args.plot_dir
+                if multiple_files:
+                    plot_dir = os.path.join(args.plot_dir, file_label.replace('.', '_'))
+                create_plots(file_results, plot_dir, args.plot_format)
     else:
         print("\n✗ No benchmark results available!")
 
