@@ -52,7 +52,7 @@ done
 if [[ -z "${output_file}" ]]; then
     model_slug="${local_model//\//_}"   # replace / with _
     model_slug="${model_slug//-/_}"     # replace - with _
-    output_file="benchmark_${model_slug}.json"
+    output_file="latency/benchmark_${model_slug}.json"
 fi
 
 # ── assemble and run ──────────────────────────────────────────────────────────
