@@ -858,7 +858,32 @@ def main():
     gpu_embedder_obj = next((emb for name, emb in embedders if name == "GPU"), None)
 
     # One-time warmup for all embedders
-    if args.warmup_batches > 0:
+    if multiple_files:
+        # Full benchmark run on first input file; results discarded as warmup
+        print(f"\n{'='*100}")
+        print("WARMUP PHASE (first input file — full benchmark run, results discarded)")
+        print(f"{'='*100}")
+        _, first_path = input_sources[0]
+        try:
+            warmup_texts = load_texts_from_file(
+                first_path, field_path=args.field_path, max_samples=args.max_samples
+            )
+            if args.num_samples is not None and len(warmup_texts) > args.num_samples:
+                random.seed(args.random_seed)
+                warmup_texts = random.sample(warmup_texts, args.num_samples)
+            if gpu_embedder_obj is not None:
+                warmup_texts = [t for t in warmup_texts
+                                if len(gpu_embedder_obj.tokenizer.tokenize(t)) <= args.max_text_size]
+            if warmup_texts:
+                for batch_size in batch_sizes:
+                    for name, embedder in embedders:
+                        try:
+                            benchmark_embedder(embedder, warmup_texts, batch_size, name)
+                        except Exception as e:
+                            print(f"  Warmup batch_size={batch_size} {name} failed: {e}")
+        except Exception as e:
+            print(f"  Warmup from first file failed: {e}")
+    elif args.warmup_batches > 0:
         print(f"\n{'='*100}")
         print("WARMUP PHASE")
         print(f"{'='*100}")
