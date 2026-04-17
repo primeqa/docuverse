@@ -268,7 +268,7 @@ def benchmark_embedder(embedder, texts: List[str], batch_size: int, name: str) -
         # Update progress bar with current throughput
         if len(timings) > 0:
             current_throughput = len(batch) / elapsed
-            pbar.set_postfix({"throughput": f"{current_throughput:.1f} q/s"})
+            pbar.set_postfix({"throughput": f"{current_throughput:.1f} spans/s"})
 
     total_time = sum(timings)
     avg_time = np.mean(timings)
@@ -328,10 +328,10 @@ def print_results(all_file_results: dict):
 
         if multiple_files:
             print(f"{'File':<30} {'Method':<10} {'Samples':<10} {'Total (s)':<12} "
-                  f"{'Throughput (q/s)':<20} {'Avg Latency (ms)':<20} {'Std Batch (s)':<15}")
+                  f"{'Throughput (spans/s)':<20} {'Avg Latency (ms)':<20} {'Std Batch (s)':<15}")
         else:
             print(f"{'Method':<15} {'Samples':<10} {'Total (s)':<12} "
-                  f"{'Throughput (q/s)':<20} {'Avg Latency (ms)':<20} {'Std Batch (s)':<15}")
+                  f"{'Throughput (spans/s)':<20} {'Avg Latency (ms)':<20} {'Std Batch (s)':<15}")
         print("-" * 120)
 
         for file_label in file_labels:
@@ -358,7 +358,7 @@ def print_results(all_file_results: dict):
         for batch_size in batch_sizes:
             print(f"\n{'Batch Size: ' + str(batch_size):^120}")
             print("-" * 120)
-            print(f"{'Method':<15} {'Files':<8} {'Avg Throughput (q/s)':<22} "
+            print(f"{'Method':<15} {'Files':<8} {'Avg Throughput (spans/s)':<22} "
                   f"{'Std Throughput':<18} {'Avg Latency (ms)':<20} {'Std Latency (ms)':<18}")
             print("-" * 120)
 
@@ -415,7 +415,7 @@ def print_results(all_file_results: dict):
         method_results = [r for r in all_results if r["name"] == method]
         avg_throughput = np.mean([r["throughput"] for r in method_results])
         avg_latency = np.mean([r["avg_latency_ms"] for r in method_results])
-        print(f"  {method}: Avg throughput = {avg_throughput:.2f} q/s, "
+        print(f"  {method}: Avg throughput = {avg_throughput:.2f} spans/s, "
               f"Avg latency = {avg_latency:.2f} ms")
 
     api_results = [r for r in all_results if "API" in r["name"]]
@@ -458,7 +458,7 @@ def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png')
                color=colors.get(method, f'C{i}'), alpha=0.8)
 
     ax.set_xlabel('Batch Size', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Throughput (queries/sec)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Throughput (spans/s)', fontsize=12, fontweight='bold')
     ax.set_title('Embedding Generation Throughput Comparison', fontsize=14, fontweight='bold')
     ax.set_xticks(x)
     ax.set_xticklabels(batch_sizes)
@@ -552,7 +552,7 @@ def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png')
                 label=method, color=colors.get(method, None))
 
     ax1.set_xlabel('Batch Size', fontsize=12, fontweight='bold')
-    ax1.set_ylabel('Throughput (queries/sec)', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Throughput (spans/s)', fontsize=12, fontweight='bold')
     ax1.set_title('Throughput Scaling with Batch Size', fontsize=14, fontweight='bold')
     ax1.legend(fontsize=11)
     ax1.grid(True, alpha=0.3)
@@ -595,7 +595,7 @@ def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png')
         ax1.bar(np.arange(len(batch_sizes)) + offset, throughputs, width,
                label=method, color=colors.get(method, f'C{i}'), alpha=0.8)
     ax1.set_xlabel('Batch Size', fontweight='bold')
-    ax1.set_ylabel('Throughput (q/s)', fontweight='bold')
+    ax1.set_ylabel('Throughput (spans/s)', fontweight='bold')
     ax1.set_title('Throughput Comparison', fontweight='bold')
     ax1.set_xticks(np.arange(len(batch_sizes)))
     ax1.set_xticklabels(batch_sizes)
@@ -629,7 +629,7 @@ def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png')
         ax3.plot(bs, throughputs, marker='o', linewidth=2, markersize=6,
                 label=method, color=colors.get(method, None))
     ax3.set_xlabel('Batch Size', fontweight='bold')
-    ax3.set_ylabel('Throughput (q/s)', fontweight='bold')
+    ax3.set_ylabel('Throughput (spans/s)', fontweight='bold')
     ax3.set_title('Throughput Scaling', fontweight='bold')
     ax3.legend()
     ax3.grid(True, alpha=0.3)
@@ -668,7 +668,7 @@ def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png')
             avg_throughput = np.mean([r["throughput"] for r in method_results])
             avg_latency = np.mean([r["avg_latency_ms"] for r in method_results])
             summary_text += f"{method}:\n"
-            summary_text += f"  Avg Throughput: {avg_throughput:.2f} q/s\n"
+            summary_text += f"  Avg Throughput: {avg_throughput:.2f} spans/s\n"
             summary_text += f"  Avg Latency: {avg_latency:.2f} ms\n\n"
 
         ax4.text(0.5, 0.5, summary_text, transform=ax4.transAxes,
