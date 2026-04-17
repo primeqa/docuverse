@@ -56,6 +56,7 @@ from tqdm import tqdm
 # Add parent directory to path to import jsonl_utils
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from docuverse.utils.jsonl_utils import read_jsonl_file
+from docuverse.utils import save_command_line
 
 
 class APIEmbedder:
@@ -761,6 +762,8 @@ def main():
                         help="Model weight dtype for GPU embedder (default: bf16)")
 
     args = parser.parse_args()
+
+    save_command_line(sys.argv)
 
     # Parse batch sizes
     batch_sizes = [int(x.strip()) for x in args.batch_sizes.split(",")]
