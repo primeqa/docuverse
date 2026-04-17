@@ -84,7 +84,14 @@ class APIEmbedder:
 class GPUEmbedder:
     """Local GPU-based embedding generator using transformers."""
 
-    def __init__(self, model_name: str, device: str = None, use_torch_compile: bool = False):
+    DTYPE_MAP = {
+        "fp32": torch.float32,
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+    }
+
+    def __init__(self, model_name: str, device: str = None, use_torch_compile: bool = False,
+                 dtype: str = "bf16"):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -92,8 +99,9 @@ class GPUEmbedder:
         print(f"Loading model on {device}...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-        # Load in bf16 and try to enable flash attention if supported
-        model_kwargs = {"torch_dtype": torch.bfloat16}
+        torch_dtype = self.DTYPE_MAP.get(dtype, torch.bfloat16)
+        print(f"  Using dtype: {dtype}")
+        model_kwargs = {"torch_dtype": torch_dtype}
         try:
             self.model = AutoModel.from_pretrained(
                 model_name, attn_implementation="flash_attention_2", **model_kwargs
@@ -749,6 +757,8 @@ def main():
                         help="The maximum size for the text to encode")
     parser.add_argument("--torch_compile", action="store_true",
                         help="Enable torch.compile optimization for GPU model (default: disabled)")
+    parser.add_argument("--dtype", type=str, default="bf16", choices=["fp32", "fp16", "bf16"],
+                        help="Model weight dtype for GPU embedder (default: bf16)")
 
     args = parser.parse_args()
 
@@ -786,7 +796,7 @@ def main():
 
     if not args.skip_gpu:
         try:
-            gpu_embedder = GPUEmbedder(args.local_model_name, args.device, args.torch_compile)
+            gpu_embedder = GPUEmbedder(args.local_model_name, args.device, args.torch_compile, args.dtype)
             embedders.append(("GPU", gpu_embedder))
         except Exception as e:
             print(f"✗ Failed to initialize GPU embedder: {e}")
