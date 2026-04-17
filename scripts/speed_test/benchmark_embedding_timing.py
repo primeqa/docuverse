@@ -39,6 +39,8 @@ Usage:
 """
 
 import argparse
+import io
+import json
 import time
 import os
 import sys
@@ -52,6 +54,36 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 from tqdm import tqdm
+
+
+class _TeeStream:
+    """Write to two streams simultaneously (e.g. stdout + StringIO capture buffer)."""
+    def __init__(self, primary, secondary):
+        self.primary = primary
+        self.secondary = secondary
+
+    def write(self, data):
+        self.primary.write(data)
+        self.secondary.write(data)
+
+    def flush(self):
+        self.primary.flush()
+        self.secondary.flush()
+
+    def isatty(self):
+        return False
+
+
+class _NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that converts numpy scalars to Python native types."""
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 # Add parent directory to path to import jsonl_utils
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -760,10 +792,16 @@ def main():
                         help="Enable torch.compile optimization for GPU model (default: disabled)")
     parser.add_argument("--dtype", type=str, default="bf16", choices=["fp32", "fp16", "bf16"],
                         help="Model weight dtype for GPU embedder (default: bf16)")
+    parser.add_argument("--output_file", type=str, default=None,
+                        help="Path to JSON file for saving benchmark results and full output text")
 
     args = parser.parse_args()
 
     save_command_line(sys.argv)
+
+    captured_output = io.StringIO()
+    if args.output_file:
+        sys.stdout = _TeeStream(sys.__stdout__, captured_output)
 
     # Parse batch sizes
     batch_sizes = [int(x.strip()) for x in args.batch_sizes.split(",")]
@@ -937,6 +975,16 @@ def main():
                 create_plots(file_results, plot_dir, args.plot_format)
     else:
         print("\n✗ No benchmark results available!")
+
+    if args.output_file:
+        sys.stdout = sys.__stdout__
+        output_data = {
+            "results": all_file_results,
+            "output": captured_output.getvalue(),
+        }
+        with open(args.output_file, "w") as f:
+            json.dump(output_data, f, indent=2, cls=_NumpyEncoder)
+        print(f"Results saved to: {args.output_file}")
 
 
 if __name__ == "__main__":
