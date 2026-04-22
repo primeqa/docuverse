@@ -49,7 +49,7 @@ import numpy as np
 from typing import List
 from openai import OpenAI
 import torch
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, AutoConfig
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
@@ -138,32 +138,72 @@ class GPUEmbedder:
         print(f"  Using dtype: {dtype}")
         model_kwargs = {"torch_dtype": torch_dtype,
                         "trust_remote_code": trust_remote_code}
-        try:
-            self.model = AutoModel.from_pretrained(
-                model_name, attn_implementation="flash_attention_2", **model_kwargs
-            ).to(device)
-            print(f"  Using flash_attention_2 with bf16")
-        except (ValueError, ImportError):
-            self.model = AutoModel.from_pretrained(model_name, **model_kwargs).to(device)
-            print(f"  Flash attention not supported, using default attention with bf16")
+        # Try attention implementations in order: flash_attention_2 → default → eager
+        # The "eager" fallback also patches the model config to disable
+        # use_memory_efficient_attention, which some remote-code models
+        # (e.g. Snowflake/GTE) set to require xformers.
+        attn_attempts = [
+            ("flash_attention_2", {"attn_implementation": "flash_attention_2"}),
+            ("default", {}),
+            ("eager", {"attn_implementation": "eager"}),
+        ]
+        for attn_label, attn_kwargs in attn_attempts:
+            try:
+                extra_kwargs = {}
+                if attn_label == "eager":
+                    # Load config and disable flags that force xformers / sdpa
+                    config = AutoConfig.from_pretrained(
+                        model_name, trust_remote_code=trust_remote_code
+                    )
+                    for flag in ("use_memory_efficient_attention",
+                                 "unpad_inputs"):
+                        if hasattr(config, flag):
+                            setattr(config, flag, False)
+                    extra_kwargs["config"] = config
+                self.model = AutoModel.from_pretrained(
+                    model_name, **attn_kwargs, **extra_kwargs, **model_kwargs
+                ).to(self.device)
+                # Validate with a test forward pass — some attention implementations
+                # (e.g. flash_attention_2) load successfully but fail at inference time.
+                self.model.eval()
+                with torch.no_grad():
+                    test_ids = torch.zeros(1, 4, dtype=torch.long, device=self.device)
+                    test_mask = torch.ones(1, 4, dtype=torch.long, device=self.device)
+                    self.model(input_ids=test_ids, attention_mask=test_mask)
+                print(f"  Using attention: {attn_label}")
+                break
+            except (ValueError, ImportError, OSError) as e:
+                print(f"  Attention '{attn_label}' failed ({type(e).__name__}): {e}")
+            except Exception as e:
+                print(f"  Attention '{attn_label}' failed at inference ({type(e).__name__}): {e}")
+                self.model = None
+        else:
+            raise RuntimeError(
+                f"Could not load model {model_name} with any attention implementation"
+            )
 
-        self.model.eval()
         if use_torch_compile:
             self.model = torch.compile(self.model)
             print(f"  Using torch.compile")
-        print(f"✓ Initialized GPU embedder: {model_name} on {device}")
 
         # Retrieve the model's max sequence length from config
         self.max_position_embeddings = getattr(
             self.model.config, "max_position_embeddings", None
         )
+        # Effective max tokens for tokenization — can be overridden by set_max_num_tokens()
+        self.max_num_tokens = self.max_position_embeddings
         print(f"✓ Initialized GPU embedder: {model_name} on {device}"
               f" (max_position_embeddings={self.max_position_embeddings})")
+
+    def set_max_num_tokens(self, max_num_tokens: int):
+        """Set the effective max token length used during tokenization."""
+        self.max_num_tokens = max_num_tokens
 
     def tokenize(self, texts: List[str], max_length: int = None):
         """Tokenize texts and move to device."""
         if max_length is None:
-            max_length = self.max_position_embeddings or 512
+            max_length = self.max_num_tokens or self.max_position_embeddings or 512
+        # print(f"Device is {self.device}")
         return self.tokenizer(
             texts,
             padding=True,
@@ -895,6 +935,11 @@ def main():
                   f"\033[0m")
             args.max_num_tokens = model_max
 
+    # Propagate the resolved max_num_tokens to the GPU embedder so that
+    # tokenize() truncates at the correct length.
+    if gpu_embedder_obj is not None:
+        gpu_embedder_obj.set_max_num_tokens(args.max_num_tokens)
+
     # One-time warmup for all embedders
     if multiple_files:
         # Full benchmark run on first input file; results discarded as warmup
@@ -910,8 +955,15 @@ def main():
                 random.seed(args.random_seed)
                 warmup_texts = random.sample(warmup_texts, args.num_samples)
             if gpu_embedder_obj is not None:
-                warmup_texts = [t for t in warmup_texts
-                                if len(gpu_embedder_obj.tokenizer.tokenize(t)) <= args.max_text_size]
+                for i, t in enumerate(warmup_texts):
+                    toks = gpu_embedder_obj.tokenizer.tokenize(t)
+                    if len(toks) > args.max_num_tokens:
+                        token_ids = gpu_embedder_obj.tokenizer.convert_tokens_to_ids(
+                            toks[:args.max_num_tokens]
+                        )
+                        warmup_texts[i] = gpu_embedder_obj.tokenizer.decode(
+                            token_ids, skip_special_tokens=True
+                        )
             if warmup_texts:
                 for batch_size in batch_sizes:
                     for name, embedder in embedders:
