@@ -124,17 +124,20 @@ class GPUEmbedder:
     }
 
     def __init__(self, model_name: str, device: str = None, use_torch_compile: bool = False,
-                 dtype: str = "bf16"):
+                 dtype: str = "bf16", trust_remote_code: bool = False):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.device = device
         print(f"Loading model on {device}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_name, trust_remote_code=trust_remote_code
+        )
 
         torch_dtype = self.DTYPE_MAP.get(dtype, torch.bfloat16)
         print(f"  Using dtype: {dtype}")
-        model_kwargs = {"torch_dtype": torch_dtype}
+        model_kwargs = {"torch_dtype": torch_dtype,
+                        "trust_remote_code": trust_remote_code}
         try:
             self.model = AutoModel.from_pretrained(
                 model_name, attn_implementation="flash_attention_2", **model_kwargs
@@ -150,14 +153,23 @@ class GPUEmbedder:
             print(f"  Using torch.compile")
         print(f"✓ Initialized GPU embedder: {model_name} on {device}")
 
-    def tokenize(self, texts: List[str]):
+        # Retrieve the model's max sequence length from config
+        self.max_position_embeddings = getattr(
+            self.model.config, "max_position_embeddings", None
+        )
+        print(f"✓ Initialized GPU embedder: {model_name} on {device}"
+              f" (max_position_embeddings={self.max_position_embeddings})")
+
+    def tokenize(self, texts: List[str], max_length: int = None):
         """Tokenize texts and move to device."""
+        if max_length is None:
+            max_length = self.max_position_embeddings or 512
         return self.tokenizer(
             texts,
             padding=True,
             truncation=True,
             return_tensors="pt",
-            max_length=512
+            max_length=max_length
         ).to(self.device)
 
     def encode(self, inputs) -> np.ndarray:
@@ -786,8 +798,6 @@ def main():
                         help="Plot file format (default: png)")
     parser.add_argument("--warmup_batches", type=int, default=1,
                         help="Number of warmup batches to run before timing (default: 1)")
-    parser.add_argument("--max_text_size", type=int, default=1536,
-                        help="The maximum size for the text to encode")
     parser.add_argument("--torch_compile", action="store_true",
                         help="Enable torch.compile optimization for GPU model (default: disabled)")
     parser.add_argument("--dtype", type=str, default="bf16", choices=["fp32", "fp16", "bf16"],
@@ -797,6 +807,13 @@ def main():
     parser.add_argument("--fof", type=str, default=None,
                         help="Path to a file-of-files: one input file path per line, "
                              "expanded as if passed to --input_file")
+    parser.add_argument("--trust_remote_code", action="store_true",
+                        help="Allow loading model code from the HuggingFace Hub repository "
+                             "(required for some models with custom architectures)")
+    parser.add_argument("--max_num_tokens", type=int, default=1536,
+                        help="Maximum number of tokens per text (texts are truncated to this length)")
+    parser.add_argument("--max_text_size", type=int, default=None,
+                        help="[Deprecated: use --max_num_tokens] Maximum number of tokens per text")
 
     args = parser.parse_args()
 
@@ -810,6 +827,15 @@ def main():
     captured_output = io.StringIO()
     if args.output_file:
         sys.stdout = _TeeStream(sys.__stdout__, captured_output)
+
+    # Resolve --max_text_size (deprecated) vs --max_num_tokens
+    if args.max_text_size is not None:
+        import warnings
+        warnings.warn("--max_text_size is deprecated, use --max_num_tokens instead", DeprecationWarning)
+        # Explicit --max_text_size overrides the default of --max_num_tokens,
+        # but if both are explicitly provided, --max_num_tokens wins.
+        if "--max_num_tokens" not in sys.argv:
+            args.max_num_tokens = args.max_text_size
 
     # Parse batch sizes
     batch_sizes = [int(x.strip()) for x in args.batch_sizes.split(",")]
@@ -845,7 +871,8 @@ def main():
 
     if not args.skip_gpu:
         try:
-            gpu_embedder = GPUEmbedder(args.local_model_name, args.device, args.torch_compile, args.dtype)
+            gpu_embedder = GPUEmbedder(args.local_model_name, args.device, args.torch_compile, args.dtype,
+                                       trust_remote_code=args.trust_remote_code)
             embedders.append(("GPU", gpu_embedder))
         except Exception as e:
             print(f"✗ Failed to initialize GPU embedder: {e}")
@@ -856,6 +883,17 @@ def main():
         return
 
     gpu_embedder_obj = next((emb for name, emb in embedders if name == "GPU"), None)
+
+    # Resolve max_text_size: take min of user-provided value and model's max_position_embeddings
+    if gpu_embedder_obj is not None and gpu_embedder_obj.max_position_embeddings is not None:
+        model_max = gpu_embedder_obj.max_position_embeddings
+        if args.max_num_tokens > model_max:
+            print(f"\033[91m\033[1m"
+                  f"  WARNING: --max_num_tokens={args.max_num_tokens} exceeds model's "
+                  f"max_position_embeddings={model_max}. "
+                  f"Clamping max_num_tokens to {model_max}."
+                  f"\033[0m")
+            args.max_num_tokens = model_max
 
     # One-time warmup for all embedders
     if multiple_files:
@@ -954,20 +992,22 @@ def main():
             texts = random.sample(texts, args.num_samples)
             print(f"  Sampled {len(texts)} texts")
 
-        # Prune texts that exceed max_text_size (requires GPU tokenizer)
+        # Truncate texts that exceed max_text_size (requires GPU tokenizer)
         if gpu_embedder_obj is not None:
-            new_t = []
-            eliminated = 0
-            for t in texts:
+            truncated_count = 0
+            for i, t in enumerate(texts):
                 toks = gpu_embedder_obj.tokenizer.tokenize(t)
-                if len(toks) <= args.max_text_size:
-                    new_t.append(t)
-                else:
-                    eliminated += 1
-            texts = new_t
-            if eliminated > 0:
-                print(f"  Eliminated {eliminated} texts exceeding {args.max_text_size} tokens, "
-                      f"{len(texts)} remaining.")
+                if len(toks) > args.max_num_tokens:
+                    # Decode the first max_num_tokens tokens back to text
+                    token_ids = gpu_embedder_obj.tokenizer.convert_tokens_to_ids(
+                        toks[:args.max_num_tokens]
+                    )
+                    texts[i] = gpu_embedder_obj.tokenizer.decode(
+                        token_ids, skip_special_tokens=True
+                    )
+                    truncated_count += 1
+            if truncated_count > 0:
+                print(f"  Truncated {truncated_count} texts to {args.max_num_tokens} tokens.")
 
         print(f"\nFinal dataset size: {len(texts)} texts")
 
