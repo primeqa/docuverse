@@ -160,11 +160,14 @@ class GPUEmbedder:
         model_kwargs = {"torch_dtype": torch_dtype,
                         "trust_remote_code": trust_remote_code,
                         "config": base_config}
-        # Try attention implementations in order: flash_attention_2 → default → eager
+        # Try attention implementations in order: flash_attention_2 → eager → default
+        # "eager" is tried before "default" because "default" defers to the
+        # model's custom code which may use xformers/unpad paths that trigger
+        # fatal CUDA assertions (e.g. GteModel/Snowflake) on some environments.
         attn_attempts = [
             ("flash_attention_2", {"attn_implementation": "flash_attention_2"}),
-            ("default", {}),
             ("eager", {"attn_implementation": "eager"}),
+            ("default", {}),
         ]
         last_exc = None
         for attn_label, attn_kwargs in attn_attempts:
