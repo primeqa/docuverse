@@ -165,11 +165,15 @@ class GPUEmbedder:
                 ).to(self.device)
                 # Validate with a test forward pass — some attention implementations
                 # (e.g. flash_attention_2) load successfully but fail at inference time.
+                # Use the tokenizer to produce valid token IDs; fabricated IDs (e.g.
+                # torch.zeros) can trigger fatal CUDA assertions in models with custom
+                # embedding tables, poisoning the GPU context for all later attempts.
                 self.model.eval()
                 with torch.no_grad():
-                    test_ids = torch.zeros(1, 4, dtype=torch.long, device=self.device)
-                    test_mask = torch.ones(1, 4, dtype=torch.long, device=self.device)
-                    self.model(input_ids=test_ids, attention_mask=test_mask)
+                    test_inputs = self.tokenizer(
+                        "test", return_tensors="pt"
+                    ).to(self.device)
+                    self.model(**test_inputs)
                 print(f"  Using attention: {attn_label}")
                 break
             except (ValueError, ImportError, OSError) as e:
