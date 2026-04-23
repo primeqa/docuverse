@@ -28,6 +28,7 @@ max_num_tokens="${DEFAULT_MAX_NUM_TOKENS}"
 batch_sizes="${DEFAULT_BATCH_SIZES}"
 skip_api="--skip_api"
 torch_compile="--torch_compile"
+trust_remote_code="--trust_remote_code"
 output_file=""
 extra_args=()
 
@@ -44,6 +45,8 @@ while [[ $# -gt 0 ]]; do
         --no_skip_api)        skip_api="";           shift ;;
         --torch_compile)      torch_compile="--torch_compile"; shift ;;
         --no_torch_compile)   torch_compile="";               shift ;;
+        --trust_remote_code)  trust_remote_code="--trust_remote_code"; shift ;;
+        --no_trust_remote_code) trust_remote_code="";                  shift ;;
         *)                    extra_args+=("$1");  shift ;;
     esac
 done
@@ -67,8 +70,9 @@ cmd=(
     --output_file       "${output_file}"
 )
 
-[[ -n "${skip_api}"      ]] && cmd+=("${skip_api}")
-[[ -n "${torch_compile}" ]] && cmd+=("${torch_compile}")
+[[ -n "${skip_api}"          ]] && cmd+=("${skip_api}")
+[[ -n "${torch_compile}"     ]] && cmd+=("${torch_compile}")
+[[ -n "${trust_remote_code}" ]] && cmd+=("${trust_remote_code}")
 [[ ${#extra_args[@]} -gt 0 ]] && cmd+=("${extra_args[@]}")
 
 echo "Running: ${cmd[*]}"
