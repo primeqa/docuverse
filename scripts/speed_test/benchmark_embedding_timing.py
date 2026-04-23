@@ -174,7 +174,20 @@ class GPUEmbedder:
             try:
                 self.model = AutoModel.from_pretrained(
                     model_name, **attn_kwargs, **model_kwargs
-                ).to(self.device)
+                )
+                # transformers ≥5.x meta-device loading corrupts non-persistent
+                # integer buffers (e.g. position_ids) with uninitialised memory.
+                # Re-initialise any position_ids buffers before moving to GPU.
+                for _name, _mod in self.model.named_modules():
+                    if hasattr(_mod, "position_ids") and isinstance(
+                        getattr(_mod, "position_ids"), torch.Tensor
+                    ):
+                        _mod.register_buffer(
+                            "position_ids",
+                            torch.arange(_mod.position_ids.shape[0]),
+                            persistent=False,
+                        )
+                self.model = self.model.to(self.device)
                 # Validate with a test forward pass — some attention implementations
                 # (e.g. flash_attention_2) load successfully but fail at inference time.
                 # Use a real tokenized string: all-zero token IDs can trigger CUDA
