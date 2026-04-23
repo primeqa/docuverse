@@ -147,6 +147,7 @@ class GPUEmbedder:
             ("default", {}),
             ("eager", {"attn_implementation": "eager"}),
         ]
+        last_exc = None
         for attn_label, attn_kwargs in attn_attempts:
             try:
                 extra_kwargs = {}
@@ -173,14 +174,16 @@ class GPUEmbedder:
                 print(f"  Using attention: {attn_label}")
                 break
             except (ValueError, ImportError, OSError) as e:
+                last_exc = e
                 print(f"  Attention '{attn_label}' failed ({type(e).__name__}): {e}")
             except Exception as e:
+                last_exc = e
                 print(f"  Attention '{attn_label}' failed at inference ({type(e).__name__}): {e}")
                 self.model = None
         else:
             raise RuntimeError(
                 f"Could not load model {model_name} with any attention implementation"
-            )
+            ) from last_exc
 
         if use_torch_compile:
             self.model = torch.compile(self.model)
