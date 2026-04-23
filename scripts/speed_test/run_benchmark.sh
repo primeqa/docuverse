@@ -16,7 +16,7 @@ DEFAULT_LOCAL_MODEL="ibm-granite/granite-embedding-125m-english"
 DEFAULT_FIELD_PATH="text"
 DEFAULT_MAX_SAMPLES="32768"
 DEFAULT_WARMUP_BATCHES="10"
-DEFAULT_MAX_TEXT_SIZE="1024"
+DEFAULT_MAX_NUM_TOKENS="1024"
 DEFAULT_BATCH_SIZES="1024"
 
 # ── parse our own flags so we can derive the output filename ──────────────────
@@ -24,7 +24,7 @@ local_model="${DEFAULT_LOCAL_MODEL}"
 field_path="${DEFAULT_FIELD_PATH}"
 max_samples="${DEFAULT_MAX_SAMPLES}"
 warmup_batches="${DEFAULT_WARMUP_BATCHES}"
-max_text_size="${DEFAULT_MAX_TEXT_SIZE}"
+max_num_tokens="${DEFAULT_MAX_NUM_TOKENS}"
 batch_sizes="${DEFAULT_BATCH_SIZES}"
 skip_api="--skip_api"
 torch_compile="--torch_compile"
@@ -37,7 +37,7 @@ while [[ $# -gt 0 ]]; do
         --field_path)         field_path="$2";     shift 2 ;;
         --max_samples)        max_samples="$2";    shift 2 ;;
         --warmup_batches)     warmup_batches="$2"; shift 2 ;;
-        --max_text_size)      max_text_size="$2";  shift 2 ;;
+        --max_num_tokens)     max_num_tokens="$2";  shift 2 ;;
         --batch_sizes)        batch_sizes="$2";    shift 2 ;;
         --output_file)        output_file="$2";    shift 2 ;;
         --skip_api)           skip_api="--skip_api"; shift ;;
@@ -62,7 +62,7 @@ cmd=(
     --field_path        "${field_path}"
     --max_samples       "${max_samples}"
     --warmup_batches    "${warmup_batches}"
-    --max_text_size     "${max_text_size}"
+    --max_num_tokens     "${max_num_tokens}"
     --batch_sizes       "${batch_sizes}"
     --output_file       "${output_file}"
 )
