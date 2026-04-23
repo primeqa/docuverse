@@ -145,6 +145,18 @@ class GPUEmbedder:
             if hasattr(base_config, _flag):
                 setattr(base_config, _flag, False)
 
+        # If flash_attn is installed but broken (e.g. ABI mismatch after a torch
+        # upgrade), its ImportError propagates through module-level imports in
+        # modeling_modernbert.py, preventing *any* attention implementation from
+        # loading.  Detect this early and block the broken package so that
+        # transformers falls back to its pure-PyTorch paths.
+        try:
+            import flash_attn  # noqa: F401
+        except ImportError:
+            import sys as _sys
+            _sys.modules.setdefault("flash_attn", None)
+            _sys.modules.setdefault("flash_attn.flash_attn_interface", None)
+
         model_kwargs = {"torch_dtype": torch_dtype,
                         "trust_remote_code": trust_remote_code,
                         "config": base_config}
