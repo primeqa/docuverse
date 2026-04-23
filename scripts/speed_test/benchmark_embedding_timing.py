@@ -136,12 +136,19 @@ class GPUEmbedder:
 
         torch_dtype = self.DTYPE_MAP.get(dtype, torch.bfloat16)
         print(f"  Using dtype: {dtype}")
+        # Disable flags that cause CUDA index-OOB or xformers deps for ALL attempts.
+        # unpad_inputs=True (GteModel/Snowflake) triggers NMS-style sequence packing
+        # that fires a device-side assert on first forward pass, which poisons the CUDA
+        # context for every subsequent attempt in the same process.
+        base_config = AutoConfig.from_pretrained(model_name, trust_remote_code=trust_remote_code)
+        for _flag in ("use_memory_efficient_attention", "unpad_inputs"):
+            if hasattr(base_config, _flag):
+                setattr(base_config, _flag, False)
+
         model_kwargs = {"torch_dtype": torch_dtype,
-                        "trust_remote_code": trust_remote_code}
+                        "trust_remote_code": trust_remote_code,
+                        "config": base_config}
         # Try attention implementations in order: flash_attention_2 → default → eager
-        # The "eager" fallback also patches the model config to disable
-        # use_memory_efficient_attention, which some remote-code models
-        # (e.g. Snowflake/GTE) set to require xformers.
         attn_attempts = [
             ("flash_attention_2", {"attn_implementation": "flash_attention_2"}),
             ("default", {}),
@@ -150,27 +157,24 @@ class GPUEmbedder:
         last_exc = None
         for attn_label, attn_kwargs in attn_attempts:
             try:
-                extra_kwargs = {}
-                if attn_label == "eager":
-                    # Load config and disable flags that force xformers / sdpa
-                    config = AutoConfig.from_pretrained(
-                        model_name, trust_remote_code=trust_remote_code
-                    )
-                    for flag in ("use_memory_efficient_attention",
-                                 "unpad_inputs"):
-                        if hasattr(config, flag):
-                            setattr(config, flag, False)
-                    extra_kwargs["config"] = config
                 self.model = AutoModel.from_pretrained(
-                    model_name, **attn_kwargs, **extra_kwargs, **model_kwargs
+                    model_name, **attn_kwargs, **model_kwargs
                 ).to(self.device)
                 # Validate with a test forward pass — some attention implementations
                 # (e.g. flash_attention_2) load successfully but fail at inference time.
+                # Use a real tokenized string: all-zero token IDs can trigger CUDA
+                # index-out-of-bounds in models with custom gather/position logic
+                # (e.g. GteModel / Snowflake Arctic Embed).
                 self.model.eval()
                 with torch.no_grad():
-                    test_ids = torch.zeros(1, 4, dtype=torch.long, device=self.device)
-                    test_mask = torch.ones(1, 4, dtype=torch.long, device=self.device)
-                    self.model(input_ids=test_ids, attention_mask=test_mask)
+                    test_inputs = self.tokenizer(
+                        ["test"],
+                        return_tensors="pt",
+                        padding=True,
+                        truncation=True,
+                        max_length=16,
+                    ).to(self.device)
+                    self.model(**test_inputs)
                 print(f"  Using attention: {attn_label}")
                 break
             except (ValueError, ImportError, OSError) as e:
