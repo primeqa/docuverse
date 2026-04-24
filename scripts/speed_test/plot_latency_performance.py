@@ -212,6 +212,9 @@ def main():
     point_coords = []
     other_idx = 0
 
+    # Tiny rightward nudge so labels start right next to their dot
+    x_off = (x_vals.max() - x_vals.min()) * 0.008 or 0.1
+
     for i, model in enumerate(models):
         is_ibm = "ibm-granite" in model.lower() or "granite" in model.lower().split("/")[0]
         short = model.split("/")[-1]
@@ -241,10 +244,10 @@ def main():
         txt = ax.annotate(
             label_text,
             xy=(x_vals[i], performances[i]),
-            xytext=(x_vals[i], performances[i]),
+            xytext=(x_vals[i] + x_off, performances[i]),
             fontsize=fs - 3, fontfamily=FONT_FAMILY,
             fontweight="semibold", color=color,
-            ha="left", va="bottom", zorder=6,
+            ha="left", va="center", zorder=6,
             path_effects=[
                 pe.withStroke(linewidth=2.5, foreground=pal["halo"]),
             ],
@@ -252,33 +255,36 @@ def main():
         texts.append(txt)
         point_coords.append((x_vals[i], performances[i]))
 
-    # Smart label repulsion
+    # Gentle label repulsion — keep labels close, only push on true overlap
     adjust_text(
         texts, ax=ax,
         arrowprops=dict(arrowstyle="-", color="none", lw=0, shrinkA=0, shrinkB=0),
-        expand=(2.0, 2.2),
-        force_text=(1.0, 1.2),
-        force_static=(0.4, 0.4),
+        expand=(1.1, 1.3),
+        force_text=(0.3, 0.5),
+        force_static=(0.1, 0.2),
         ensure_inside_axes=True,
     )
 
-    # Orthogonal connector lines
+    # Connectors — only when a label was pushed vertically away from its dot
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
     inv = ax.transData.inverted()
-    x_range = x_vals.max() - x_vals.min()
-    y_range = performances.max() - performances.min()
 
     for txt, (px, py) in zip(texts, point_coords):
         bbox = txt.get_window_extent(renderer=renderer)
-        cx_disp = (bbox.x0 + bbox.x1) / 2
-        cy_disp = (bbox.y0 + bbox.y1) / 2
-        tx, ty = inv.transform((cx_disp, cy_disp))
+        corners = inv.transform([(bbox.x0, bbox.y0), (bbox.x1, bbox.y1)])
+        x0d, x1d = min(corners[:, 0]), max(corners[:, 0])
+        y0d, y1d = min(corners[:, 1]), max(corners[:, 1])
+        label_cy = (y0d + y1d) / 2
+        label_h = y1d - y0d
 
-        dx = abs(tx - px) / x_range
-        dy = abs(ty - py) / y_range
-        if dx > 0.02 or dy > 0.02:
-            _draw_orthogonal_connector(ax, tx, ty, px, py, pal["connector"])
+        # Skip if the dot's Y is still within half a label-height of the label center
+        if abs(label_cy - py) <= label_h * 0.5:
+            continue
+
+        tx = float(np.clip(px, x0d, x1d))
+        ty = float(np.clip(py, y0d, y1d))
+        _draw_orthogonal_connector(ax, tx, ty, px, py, pal["connector"])
 
     # -- Axes labels & title ------------------------------------------------
     ax.set_xlabel(x_label, fontsize=fs + 1, fontweight="medium",
@@ -321,7 +327,7 @@ def main():
     )
     leg.get_frame().set_linewidth(0.5)
 
-    # -- "Better" direction arrows (upper-left corner) ----------------------
+    # -- "Better" direction arrows — placed in the upper corner with fewer dots
     ac = pal["arrow"]
     text_kw = dict(
         fontsize=fs - 3, fontfamily=FONT_FAMILY, fontweight="medium",
@@ -335,21 +341,35 @@ def main():
         zorder=10,
     )
 
-    ax.annotate("", xy=(0.04, 0.97), xytext=(0.04, 0.85),
-                xycoords="axes fraction", textcoords="axes fraction", **ann_kw)
-    ax.text(0.065, 0.91, "Better\nperformance", transform=ax.transAxes,
-            ha="left", va="center", **text_kw)
+    # Convert data points to axes fraction to pick a free corner
+    xlim, ylim = ax.get_xlim(), ax.get_ylim()
+    xf = (x_vals - xlim[0]) / (xlim[1] - xlim[0])
+    yf = (performances - ylim[0]) / (ylim[1] - ylim[0])
+    # Arrow block occupies roughly x<0.28, y>0.70 in axes fraction
+    use_right = bool(np.any((xf < 0.28) & (yf > 0.70)))
 
-    if args.throughput:
-        ax.annotate("", xy=(0.16, 0.82), xytext=(0.04, 0.82),
-                    xycoords="axes fraction", textcoords="axes fraction", **ann_kw)
-        ax.text(0.10, 0.785, "Higher throughput", transform=ax.transAxes,
-                ha="center", va="top", **text_kw)
+    if use_right:
+        ann_px = 0.96
+        perf_txt_x, perf_txt_ha = 0.935, "right"
+        # throughput arrow → right; latency arrow → left
+        h_tail, h_head = (0.84, 0.96) if args.throughput else (0.96, 0.84)
+        h_txt_x = 0.90
     else:
-        ax.annotate("", xy=(0.04, 0.82), xytext=(0.16, 0.82),
-                    xycoords="axes fraction", textcoords="axes fraction", **ann_kw)
-        ax.text(0.10, 0.785, "Lower latency", transform=ax.transAxes,
-                ha="center", va="top", **text_kw)
+        ann_px = 0.04
+        perf_txt_x, perf_txt_ha = 0.065, "left"
+        h_tail, h_head = (0.04, 0.16) if args.throughput else (0.16, 0.04)
+        h_txt_x = 0.10
+
+    ax.annotate("", xy=(ann_px, 0.97), xytext=(ann_px, 0.85),
+                xycoords="axes fraction", textcoords="axes fraction", **ann_kw)
+    ax.text(perf_txt_x, 0.91, "Better\nperformance", transform=ax.transAxes,
+            ha=perf_txt_ha, va="center", **text_kw)
+
+    h_label = "Higher throughput" if args.throughput else "Lower latency"
+    ax.annotate("", xy=(h_head, 0.82), xytext=(h_tail, 0.82),
+                xycoords="axes fraction", textcoords="axes fraction", **ann_kw)
+    ax.text(h_txt_x, 0.785, h_label, transform=ax.transAxes,
+            ha="center", va="top", **text_kw)
 
     # -- Save ---------------------------------------------------------------
     plt.tight_layout()
