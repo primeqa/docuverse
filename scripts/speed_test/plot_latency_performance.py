@@ -123,7 +123,12 @@ def main():
     parser.add_argument("markdown_file", nargs="?",
                         default=str(Path(__file__).parent / "new-latency.md"))
     parser.add_argument("--output", "-o", default=None,
-                        help="Output file (default: save as .png next to input)")
+                        help="Output file (default: save as .png next to input). "
+                             "Format is inferred from extension (.svg, .pdf, .png).")
+    parser.add_argument("--format", "-f", default=None,
+                        choices=["png", "svg", "pdf"],
+                        help="Output format when no --output is given (default: png). "
+                             "svg and pdf are vector formats editable in PowerPoint/Illustrator.")
     parser.add_argument("--throughput", "-t", action="store_true",
                         help="Plot throughput (samples/s) on x-axis instead of latency")
     parser.add_argument("--fontsize", "-fs", type=float, default=14,
@@ -306,13 +311,10 @@ def main():
         plt.Line2D([0], [0], marker="D", color="w", markeredgecolor=lm,
                    markerfacecolor="none", markersize=8, markeredgewidth=1.5,
                    label="Small (<150M, hatched)"),
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=lm,
-                   markersize=6, label="~100M params"),
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=lm,
-                   markersize=12, label="~300M params"),
     ]
+    legend_loc = "lower left" if args.throughput else "lower right"
     leg = ax.legend(
-        handles=legend_elements, loc="lower right", fontsize=fs - 3,
+        handles=legend_elements, loc=legend_loc, fontsize=fs - 3,
         frameon=True, framealpha=0.90, edgecolor=pal["legend_edge"],
         fancybox=True, borderpad=1.0, labelspacing=1.0,
         shadow=True,
@@ -353,12 +355,20 @@ def main():
     plt.tight_layout()
 
     if args.output:
-        out_path = args.output
+        out_path = Path(args.output)
     else:
+        fmt = args.format or "png"
         stem = Path(args.markdown_file).stem
-        out_path = str(Path(args.markdown_file).parent / f"{stem}_{x_tag}.png")
+        out_path = Path(args.markdown_file).parent / f"{stem}_{x_tag}.{fmt}"
 
-    fig.savefig(out_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+    fmt = out_path.suffix.lstrip(".").lower() or "png"
+    save_kw = dict(bbox_inches="tight", facecolor=fig.get_facecolor())
+    if fmt == "png":
+        save_kw["dpi"] = 180
+    elif fmt == "svg":
+        # Emit real <text> elements so PowerPoint preserves individual characters
+        plt.rcParams["svg.fonttype"] = "none"
+    fig.savefig(out_path, format=fmt, **save_kw)
     print(f"Saved plot to {out_path}")
     plt.show()
 
