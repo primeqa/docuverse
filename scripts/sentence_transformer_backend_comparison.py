@@ -279,7 +279,7 @@ def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_nump
                 normalize_embeddings=True
             )
         except Exception as e:
-            print(f"Embedding computation failed on batch {batch_no}: {e}. The text: {[t[:100]+" ..." for t in batch]}")
+            print(f"Embedding computation failed on batch {batch_no}: {e}. The text: {[t[:100]+' ...' for t in batch]}")
             raise e
 
     # Ensure embeddings are on CPU and in numpy format for comparison
