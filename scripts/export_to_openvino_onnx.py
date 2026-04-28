@@ -348,54 +348,90 @@ def main():
     try:
         if args.format == 'openvino':
             # Import OpenVINO-specific modules only when needed
-            from optimum.intel import OVWeightQuantizationConfig
+            from optimum.intel import OVModelForFeatureExtraction, OVWeightQuantizationConfig
             from sentence_transformers import export_static_quantized_openvino_model
+            from transformers import AutoTokenizer
+            import pathlib, shutil
 
-            print("Step 1: Loading model with OpenVINO backend (will trigger export)...")
+            print("Step 1: Exporting model to OpenVINO FP32 format...")
             print("This may take several minutes...")
             print()
 
-            # Load with OpenVINO backend - this will export the model
+            # Use absolute path so transformers never confuses a local directory
+            # with a HuggingFace model ID (which causes spurious image-processor lookups).
+            model_path = pathlib.Path(model_name)
+            model_abs = str(model_path.resolve()) if model_path.is_dir() else model_name
+
+            ov_model = OVModelForFeatureExtraction.from_pretrained(
+                model_abs,
+                export=True,
+                attn_implementation='eager',
+            )
+            output_path = pathlib.Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            ov_model.save_pretrained(output_dir)
+
+            # Copy tokenizer and sentence_transformers pipeline files to output_dir
+            AutoTokenizer.from_pretrained(model_abs).save_pretrained(output_dir)
+
+            # Fix tokenizer_config.json: some models (e.g. granite-multilingual) incorrectly
+            # set processor_class to a multimodal processor (e.g. Gemma3Processor), which
+            # causes AutoProcessor to try loading an image processor for a text-only model.
+            import json as _json
+            tok_cfg_path = output_path / "tokenizer_config.json"
+            if tok_cfg_path.exists():
+                tok_cfg = _json.loads(tok_cfg_path.read_text())
+                if tok_cfg.get("processor_class"):
+                    tok_cfg.pop("processor_class")
+                    tok_cfg_path.write_text(_json.dumps(tok_cfg, indent=2))
+
+            if model_path.is_dir():
+                for item in ['config.json', 'config_sentence_transformers.json',
+                             'modules.json', 'sentence_bert_config.json',
+                             'special_tokens_map.json', '1_Pooling', '2_Normalize']:
+                    src = model_path / item
+                    dst = output_path / item
+                    if src.exists():
+                        if src.is_dir():
+                            if dst.exists():
+                                shutil.rmtree(dst)
+                            shutil.copytree(src, dst)
+                        else:
+                            shutil.copy2(src, dst)
+
+            print(f"✓ OpenVINO model saved to {output_dir}!")
+
+            # Build quantization config
             quantization_config = None
             if args.quantization != 'none':
                 if args.quantization == 'int8':
-                    # INT8: per-channel quantization, ratio=1.0 and group_size=-1 are required
-                    # dataset=None is required to avoid calibration (weight-only quantization)
                     quantization_config = OVWeightQuantizationConfig(
                         bits=8,
                         sym=True,
                         dataset=None,
                     )
-                    # quantization_config = None
                 else:  # int4
-                    # INT4: can use group-wise quantization for better quality
-                    # dataset=None is required to avoid calibration (weight-only quantization)
                     quantization_config = OVWeightQuantizationConfig(
                         bits=4,
                         sym=True,
-                        group_size=128,  # Smaller groups = better quality
-                        ratio=0.8,  # Quantize 80% of layers
+                        group_size=128,
+                        ratio=0.8,
                         dataset=None,
                     )
 
-            model = SentenceTransformer(
-                model_name,
-                backend="openvino",
-                model_kwargs={
-                    'attn_implementation': 'eager',
-                    }
-                )
+            # Load from the clean output_dir (all files present) for quantization/validation
+            model = SentenceTransformer(output_dir, backend="openvino")
 
             if quantization_config is not None:
+                print(f"\nStep 2: Applying {args.quantization} quantization to {output_dir}...")
                 export_static_quantized_openvino_model(
                     model,
                     quantization_config=quantization_config,
                     model_name_or_path=output_dir,
                 )
+                print("✓ Quantization applied!")
+                model = SentenceTransformer(output_dir, backend="openvino")
 
-            print(f"Step 2: Saving to {output_dir}...")
-            model.save_pretrained(output_dir)
-            print("✓ Model saved!")
             print("✓ Model loaded and exported successfully!")
             print()
 

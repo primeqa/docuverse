@@ -118,6 +118,48 @@ def load_sentence_transformer_with_backend(model_name: str,
                 print(f"❌ Error loading model with Ollama backend: {e}")
                 return None
 
+        elif backend == "llama_cpp":
+            print(f"Loading model with llama.cpp backend...")
+            try:
+                import requests as _req
+                base_url = backend_kwargs.get('base_url', 'http://localhost:8080')
+
+                class LlamaCppSentenceTransformer:
+                    _dim = None
+                    def __init__(self, url: str, mdl_name: str):
+                        self._url = url.rstrip('/')
+                        self._model = mdl_name
+
+                    def encode(self, sentences, batch_size: int = 32, **kwargs) -> np.ndarray:
+                        if isinstance(sentences, str):
+                            sentences = [sentences]
+                        embeddings = []
+                        for start in range(0, len(sentences), batch_size):
+                            chunk = sentences[start:start + batch_size]
+                            resp = _req.post(
+                                f"{self._url}/v1/embeddings",
+                                json={"model": self._model, "input": chunk},
+                                timeout=120,
+                            )
+                            resp.raise_for_status()
+                            data = sorted(resp.json()["data"], key=lambda x: x["index"])
+                            embeddings.extend(e["embedding"] for e in data)
+                        return np.array(embeddings, dtype=np.float32)
+
+                    def get_sentence_embedding_dimension(self) -> int:
+                        if self._dim is None:
+                            self._dim = self.encode(["test"]).shape[1]
+                        return self._dim
+
+                model = LlamaCppSentenceTransformer(base_url, model_name)
+                model.get_sentence_embedding_dimension()  # probe early to catch connection errors
+                print(f"✓ Model loaded successfully with llama.cpp backend")
+                print(f"  Server: {base_url}")
+                print(f"  Embedding dimension: {model.get_sentence_embedding_dimension()}")
+            except Exception as e:
+                print(f"❌ Error loading model with llama.cpp backend: {e}")
+                return None
+
         elif backend == "vllm":
             print(f"Loading model with vLLM backend...")
             import requests
@@ -262,7 +304,7 @@ def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_nump
     return embeddings
 
 
-def read_sentences(file_path_or_string: str, max_text_length: int = None, field_path: str = None) -> List[str]:
+def read_sentences(file_path_or_string: str, max_text_length: int = None, field_path: str = None, num_samples: int = None) -> List[str]:
     """Read sentences from a file or direct string input.
 
     Supports:
@@ -290,7 +332,7 @@ def read_sentences(file_path_or_string: str, max_text_length: int = None, field_
             print(f"Reading JSONL file: {file_path}")
             if field_path:
                 print(f"  Using field path: {field_path}")
-            sentences = read_jsonl_file(file_path, field_path=field_path, verbose=True)
+            sentences = read_jsonl_file(file_path, field_path=field_path, max_samples=num_samples, verbose=True)
             print(f"✓ Loaded {len(sentences)} texts from JSONL")
         else:
             # Original logic for plain text files
@@ -309,6 +351,8 @@ def read_sentences(file_path_or_string: str, max_text_length: int = None, field_
                         text = line
 
                     sentences.append(text)
+                    if num_samples and len(sentences) >= num_samples:
+                        break
     else:
         # It's a direct string input
         print(f"Using direct string input")
@@ -416,7 +460,7 @@ Examples:
     # ... rest of the argument definitions ...
     parser.add_argument("--model", required=True, help="SentenceTransformer model name or path")
     parser.add_argument('--backends', nargs='+',
-                        choices=['pytorch', 'onnx', 'openvino', 'tensorrt', 'vllm', 'ollama'],
+                        choices=['pytorch', 'onnx', 'openvino', 'tensorrt', 'vllm', 'ollama', 'llama_cpp'],
                         default=['pytorch', 'onnx'],
                         help='Backends to compare')
     parser.add_argument("--input", required=True, help="Path to input file (text, JSONL, JSONL.bz2) or direct string to encode")
@@ -451,6 +495,12 @@ Examples:
     parser.add_argument("--ollama-model", "--ollama_model", dest="ollama_model",
                        type=str, default=None,
                        help="Ollama model name (if different from --model). E.g., 'nomic-embed-text' for Ollama vs HF model name")
+    parser.add_argument("--llamacpp-url", "--llamacpp_url", dest="llamacpp_url",
+                       type=str, default="http://localhost:8080",
+                       help="llama.cpp server URL (default: http://localhost:8080)")
+    parser.add_argument("--llamacpp-model", "--llamacpp_model", dest="llamacpp_model",
+                       type=str, default=None,
+                       help="Model name to pass to the llama.cpp server (if different from --model)")
     parser.add_argument("--output-file", "--output_file", dest="output_file",
                        type=str, default=None,
                        help="Path to save results (JSON format). If not specified, only prints to stdout")
@@ -510,6 +560,12 @@ Examples:
                 ollama_model_name, backend='ollama', device=args.device,
                 **model_kwargs
             )
+        elif backend == "llama_cpp":
+            llamacpp_model_name = args.llamacpp_model if args.llamacpp_model else args.model
+            models[backend] = load_sentence_transformer_with_backend(
+                llamacpp_model_name, backend='llama_cpp', device=args.device,
+                base_url=args.llamacpp_url,
+            )
         elif backend == "vllm":
             # Add any vLLM-specific parameters
             model_kwargs = {
@@ -519,12 +575,8 @@ Examples:
             models[backend] = load_sentence_transformer_with_backend(args.model, backend, model_kwargs)
 
     # Read sentences
-    sentences = read_sentences(args.input, args.max_text_length, args.field_path)
-    if args.num_samples and args.num_samples < len(sentences):
-        print(f"Using {args.num_samples} out of {len(sentences)} sentences")
-        sentences = sentences[:args.num_samples]
-    else:
-        print(f"Using all {len(sentences)} sentences")
+    sentences = read_sentences(args.input, args.max_text_length, args.field_path, args.num_samples)
+    print(f"Using {len(sentences)} sentences")
 
     # Calculate and display sentence length statistics
     lengths = [len(s) for s in sentences]
