@@ -10,7 +10,11 @@ from docuverse.utils.embeddings.ollama_embedding_function import OllamaSentenceT
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from typing import List, Tuple, LiteralString, Any
+if sys.version_info >= (3, 11):
+    from typing import List, Tuple, LiteralString, Any
+else:
+    from typing import List, Tuple, Any
+    from typing_extensions import LiteralString
 import time
 import torch
 from tqdm import tqdm

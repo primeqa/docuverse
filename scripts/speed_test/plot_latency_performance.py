@@ -13,6 +13,7 @@ import re
 import sys
 from pathlib import Path
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 import matplotlib.ticker as mticker
@@ -26,16 +27,11 @@ from adjustText import adjust_text
 SMALL_THRESHOLD = 150  # Models below this (in M params) are "small"
 FONT_FAMILY = "Montserrat"
 
-IBM_COLOR = "#0f62fe"        # IBM Design blue
-OTHER_COLORS = [             # Professional palette for non-IBM
-    "#da1e28",               # red
-    "#198038",               # green
-    "#8a3ffc",               # purple
-    "#ee5396",               # magenta
-    "#fa4d56",               # coral
-    "#007d79",               # teal
-    "#002d9c",               # ultramarine
-]
+IBM_COLOR = "#0f62fe"        # IBM Design blue (R2)
+IBM_COLOR_R1 = "#a6c8ff"     # Lighter IBM blue for older (R1) models
+OTHER_GRAY = "#cccccc"       # Light gray for non-IBM models (fill)
+OTHER_ALPHA = 0.60           # Non-IBM fill opacity
+R2_RING_SCALE = 2.2          # Outer-circle size multiplier for R2 models
 
 SHADOW_OFFSET = (1.5, -1.5)
 SHADOW_COLOR = "#00000022"
@@ -68,6 +64,10 @@ def _make_palette(style: str) -> dict:
         legend_marker = "#aaaaaa" if dark else "#555555",
         # Text halo (matches axes background)
         halo        = "#2b2b2b" if dark else "white",
+        # Model label text (lighter / more muted than data colors)
+        label_text  = "#bbbbbb" if dark else "#999999",
+        # R2 label text (high contrast)
+        label_r2    = "white" if dark else "black",
     )
 
 
@@ -210,43 +210,63 @@ def main():
     # -- Plot each model ----------------------------------------------------
     texts = []
     point_coords = []
-    other_idx = 0
 
     # Tiny rightward nudge so labels start right next to their dot
     x_off = (x_vals.max() - x_vals.min()) * 0.008 or 0.1
 
     for i, model in enumerate(models):
         is_ibm = "ibm-granite" in model.lower() or "granite" in model.lower().split("/")[0]
+        is_r2 = is_ibm and "r2" in model.lower()
         short = model.split("/")[-1]
         is_small = sizes[i] < SMALL_THRESHOLD
 
-        if is_ibm:
+        if is_r2:
             color = IBM_COLOR
+            alpha = 0.90
+        elif is_ibm:
+            color = IBM_COLOR_R1
+            alpha = 0.90
         else:
-            color = OTHER_COLORS[other_idx % len(OTHER_COLORS)]
-            other_idx += 1
+            color = OTHER_GRAY
+            alpha = OTHER_ALPHA
 
-        marker = "D" if is_small else "o"
-        hatch = "////" if is_small else None
+        # marker = "D" if is_small else "o"   # original: diamond for small
+        # hatch = "////" if is_small else None
+        marker = "o"
+        hatch = None
 
         sc = ax.scatter(
             x_vals[i], performances[i],
             s=marker_sizes[i],
-            facecolors=color if not is_small else "none",
+            facecolors=color,
             edgecolors=color,
             linewidths=2 if is_ibm else 1.5,
             marker=marker, zorder=5,
-            hatch=hatch, alpha=0.90,
+            hatch=hatch, alpha=alpha,
         )
         sc.set_path_effects(shadow_effect)
 
+        # Extra outer ring for R2 models
+        if is_r2:
+            ax.scatter(
+                x_vals[i], performances[i],
+                s=marker_sizes[i] * R2_RING_SCALE,
+                facecolors="none",
+                edgecolors=IBM_COLOR,
+                linewidths=1.5,
+                marker="o", zorder=4,
+                alpha=0.70,
+            )
+
         label_text = f"{short} ({sizes[i]}M)"
+        label_color = pal["label_r2"] if is_r2 else pal["label_text"]
+        label_weight = "bold" if is_ibm else "normal"
         txt = ax.annotate(
             label_text,
             xy=(x_vals[i], performances[i]),
             xytext=(x_vals[i] + x_off, performances[i]),
             fontsize=fs - 3, fontfamily=FONT_FAMILY,
-            fontweight="semibold", color=color,
+            fontweight=label_weight, color=label_color,
             ha="left", va="center", zorder=6,
             path_effects=[
                 pe.withStroke(linewidth=2.5, foreground=pal["halo"]),
@@ -255,13 +275,14 @@ def main():
         texts.append(txt)
         point_coords.append((x_vals[i], performances[i]))
 
-    # Gentle label repulsion — keep labels close, only push on true overlap
+    # Label repulsion — push labels clear of dots and each other
     adjust_text(
         texts, ax=ax,
         arrowprops=dict(arrowstyle="-", color="none", lw=0, shrinkA=0, shrinkB=0),
-        expand=(1.1, 1.3),
-        force_text=(0.3, 0.5),
-        force_static=(0.1, 0.2),
+        expand=(1.3, 1.6),
+        force_text=(0.6, 0.8),
+        force_static=(0.3, 0.5),
+        force_points=(0.5, 0.7),
         ensure_inside_axes=True,
     )
 
@@ -308,12 +329,15 @@ def main():
     # -- Legend -------------------------------------------------------------
     lm = pal["legend_marker"]
     legend_elements = [
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=IBM_COLOR_R1,
+                   markeredgecolor=IBM_COLOR_R1, markersize=10, markeredgewidth=1.5,
+                   label="IBM Granite (R1)"),
         plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=IBM_COLOR,
-                   markeredgecolor=IBM_COLOR, markersize=10, markeredgewidth=1.5,
-                   label="IBM Granite"),
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=lm,
-                   markeredgecolor=lm, markersize=10, markeredgewidth=1.5,
-                   label="Other models"),
+                   markeredgecolor=IBM_COLOR, markersize=8, markeredgewidth=1.5,
+                   label="IBM Granite R2  \u25cb"),  # ○ hints at outer ring
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=OTHER_GRAY,
+                   markeredgecolor=OTHER_GRAY, markersize=10, markeredgewidth=1.5,
+                   alpha=OTHER_ALPHA, label="Other models"),
         plt.Line2D([0], [0], marker="D", color="w", markeredgecolor=lm,
                    markerfacecolor="none", markersize=8, markeredgewidth=1.5,
                    label="Small (<150M, hatched)"),
@@ -327,52 +351,44 @@ def main():
     )
     leg.get_frame().set_linewidth(0.5)
 
-    # -- "Better" direction arrows — placed in the upper corner with fewer dots
-    ac = pal["arrow"]
-    text_kw = dict(
-        fontsize=fs - 3, fontfamily=FONT_FAMILY, fontweight="medium",
-        color=ac, zorder=10,
-    )
-    ann_kw = dict(
-        arrowprops=dict(
-            arrowstyle="->,head_width=0.25,head_length=0.18",
-            color=ac, lw=1.3,
-        ),
-        zorder=10,
-    )
-
-    # Convert data points to axes fraction to pick a free corner
-    xlim, ylim = ax.get_xlim(), ax.get_ylim()
-    xf = (x_vals - xlim[0]) / (xlim[1] - xlim[0])
-    yf = (performances - ylim[0]) / (ylim[1] - ylim[0])
-    # Arrow block occupies roughly x<0.28, y>0.70 in axes fraction
-    use_right = bool(np.any((xf < 0.28) & (yf > 0.70)))
-
-    if use_right:
-        ann_px = 0.96
-        perf_txt_x, perf_txt_ha = 0.935, "right"
-        # throughput arrow → right; latency arrow → left
-        h_tail, h_head = (0.84, 0.96) if args.throughput else (0.96, 0.84)
-        h_txt_x = 0.90
-    else:
-        ann_px = 0.04
-        perf_txt_x, perf_txt_ha = 0.065, "left"
-        h_tail, h_head = (0.04, 0.16) if args.throughput else (0.16, 0.04)
-        h_txt_x = 0.10
-
-    ax.annotate("", xy=(ann_px, 0.97), xytext=(ann_px, 0.85),
-                xycoords="axes fraction", textcoords="axes fraction", **ann_kw)
-    ax.text(perf_txt_x, 0.91, "Better\nperformance", transform=ax.transAxes,
-            ha=perf_txt_ha, va="center", **text_kw)
-
-    h_label = "Higher throughput" if args.throughput else "Lower latency"
-    ax.annotate("", xy=(h_head, 0.82), xytext=(h_tail, 0.82),
-                xycoords="axes fraction", textcoords="axes fraction", **ann_kw)
-    ax.text(h_txt_x, 0.785, h_label, transform=ax.transAxes,
-            ha="center", va="top", **text_kw)
-
     # -- Save ---------------------------------------------------------------
     plt.tight_layout()
+
+    # -- Gradient colour bars inside axes (better direction = dark blue) -----
+    GRAD_DARK = "#0f62fe"
+    GRAD_LIGHT = "#d0e2ff"
+    GRAD_ALPHA = 0.45
+    BAR_FRAC = 0.025           # bar thickness as fraction of axis range
+
+    xlim, ylim = ax.get_xlim(), ax.get_ylim()
+    x_span = xlim[1] - xlim[0]
+    y_span = ylim[1] - ylim[0]
+
+    # Horizontal bar (just above the bottom spine, inside the plot)
+    # Latency: left = better (dark) → right = worse (light)
+    # Throughput: left = worse (light) → right = better (dark)
+    h_cmap = mcolors.LinearSegmentedColormap.from_list(
+        "h_grad",
+        [GRAD_LIGHT, GRAD_DARK] if args.throughput else [GRAD_DARK, GRAD_LIGHT],
+    )
+    ax.imshow(
+        np.linspace(0, 1, 256).reshape(1, -1),
+        aspect="auto", cmap=h_cmap, alpha=GRAD_ALPHA,
+        extent=[xlim[0], xlim[1], ylim[0], ylim[0] + y_span * BAR_FRAC],
+        zorder=1, interpolation="bicubic",
+    )
+
+    # Vertical bar (just right of the left spine, inside the plot)
+    # Bottom = worse (light), top = better (dark)
+    v_cmap = mcolors.LinearSegmentedColormap.from_list(
+        "v_grad", [GRAD_LIGHT, GRAD_DARK],
+    )
+    ax.imshow(
+        np.linspace(0, 1, 256).reshape(-1, 1),
+        aspect="auto", cmap=v_cmap, alpha=GRAD_ALPHA, origin="lower",
+        extent=[xlim[0], xlim[0] + x_span * BAR_FRAC, ylim[0], ylim[1]],
+        zorder=1, interpolation="bicubic",
+    )
 
     if args.output:
         out_path = Path(args.output)

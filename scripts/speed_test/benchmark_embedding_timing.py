@@ -124,7 +124,8 @@ class GPUEmbedder:
     }
 
     def __init__(self, model_name: str, device: str = None, use_torch_compile: bool = False,
-                 dtype: str = "bf16", trust_remote_code: bool = False):
+                 dtype: str = "bf16", trust_remote_code: bool = False,
+                 attn_implementation: str = None):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -160,15 +161,34 @@ class GPUEmbedder:
         model_kwargs = {"torch_dtype": torch_dtype,
                         "trust_remote_code": trust_remote_code,
                         "config": base_config}
-        # Try attention implementations in order: flash_attention_2 → eager → default
-        # "eager" is tried before "default" because "default" defers to the
-        # model's custom code which may use xformers/unpad paths that trigger
-        # fatal CUDA assertions (e.g. GteModel/Snowflake) on some environments.
-        attn_attempts = [
+        # Build the list of attention implementations to try.
+        # If the user explicitly requested one, try that first; on failure
+        # print a red warning and fall back to the default sequence.
+        _ALL_ATTN_ATTEMPTS = [
             ("flash_attention_2", {"attn_implementation": "flash_attention_2"}),
             ("eager", {"attn_implementation": "eager"}),
             ("default", {}),
         ]
+        if attn_implementation is not None:
+            # Build kwargs for the requested implementation
+            if attn_implementation == "default":
+                requested = ("default", {})
+            else:
+                requested = (attn_implementation,
+                             {"attn_implementation": attn_implementation})
+            # Requested first, then the remaining defaults (excluding the
+            # requested one to avoid trying it twice).
+            attn_attempts = [requested] + [
+                (lbl, kw) for lbl, kw in _ALL_ATTN_ATTEMPTS
+                if lbl != attn_implementation
+            ]
+        else:
+            # Default order: flash_attention_2 → eager → default
+            # "eager" is tried before "default" because "default" defers to the
+            # model's custom code which may use xformers/unpad paths that trigger
+            # fatal CUDA assertions (e.g. GteModel/Snowflake) on some environments.
+            attn_attempts = list(_ALL_ATTN_ATTEMPTS)
+
         last_exc = None
         for attn_label, attn_kwargs in attn_attempts:
             try:
@@ -207,10 +227,19 @@ class GPUEmbedder:
                 break
             except (ValueError, ImportError, OSError) as e:
                 last_exc = e
-                print(f"  Attention '{attn_label}' failed ({type(e).__name__}): {e}")
+                if attn_implementation is not None and attn_label == attn_implementation:
+                    print(f"\033[91m\033[1m  Attention '{attn_label}' (requested via "
+                          f"--attn_implementation) failed ({type(e).__name__}): {e}\033[0m")
+                else:
+                    print(f"  Attention '{attn_label}' failed ({type(e).__name__}): {e}")
             except Exception as e:
                 last_exc = e
-                print(f"  Attention '{attn_label}' failed at inference ({type(e).__name__}): {e}")
+                if attn_implementation is not None and attn_label == attn_implementation:
+                    print(f"\033[91m\033[1m  Attention '{attn_label}' (requested via "
+                          f"--attn_implementation) failed at inference "
+                          f"({type(e).__name__}): {e}\033[0m")
+                else:
+                    print(f"  Attention '{attn_label}' failed at inference ({type(e).__name__}): {e}")
                 self.model = None
         else:
             raise RuntimeError(
@@ -882,6 +911,11 @@ def main():
     parser.add_argument("--fof", type=str, default=None,
                         help="Path to a file-of-files: one input file path per line, "
                              "expanded as if passed to --input_file")
+    parser.add_argument("--attn_implementation", type=str, default=None,
+                        choices=["flash_attention_2", "sdpa", "eager", "default"],
+                        help="Attention implementation to use for the GPU model. "
+                             "If the requested type fails, falls back to the default "
+                             "sequence (flash_attention_2 → eager → default)")
     parser.add_argument("--trust_remote_code", action="store_true",
                         help="Allow loading model code from the HuggingFace Hub repository "
                              "(required for some models with custom architectures)")
@@ -947,7 +981,8 @@ def main():
     if not args.skip_gpu:
         try:
             gpu_embedder = GPUEmbedder(args.local_model_name, args.device, args.torch_compile, args.dtype,
-                                       trust_remote_code=args.trust_remote_code)
+                                       trust_remote_code=args.trust_remote_code,
+                                       attn_implementation=args.attn_implementation)
             embedders.append(("GPU", gpu_embedder))
         except Exception as e:
             print(f"✗ Failed to initialize GPU embedder: {e}")
