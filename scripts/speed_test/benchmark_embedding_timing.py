@@ -136,15 +136,7 @@ class GPUEmbedder:
         )
 
         torch_dtype = self.DTYPE_MAP.get(dtype, torch.bfloat16)
-        print(f"  Using dtype: {dtype}")
-        # Disable flags that cause CUDA index-OOB or xformers deps for ALL attempts.
-        # unpad_inputs=True (GteModel/Snowflake) triggers NMS-style sequence packing
-        # that fires a device-side assert on first forward pass, which poisons the CUDA
-        # context for every subsequent attempt in the same process.
         base_config = AutoConfig.from_pretrained(model_name, trust_remote_code=trust_remote_code)
-        for _flag in ("use_memory_efficient_attention", "unpad_inputs"):
-            if hasattr(base_config, _flag):
-                setattr(base_config, _flag, False)
 
         # If flash_attn is installed but broken (e.g. ABI mismatch after a torch
         # upgrade), its ImportError propagates through module-level imports in
@@ -189,67 +181,94 @@ class GPUEmbedder:
             # fatal CUDA assertions (e.g. GteModel/Snowflake) on some environments.
             attn_attempts = list(_ALL_ATTN_ATTEMPTS)
 
+        # Two-pass loading strategy:
+        # Pass 1: try with original config intact (use_memory_efficient_attention
+        #          and unpad_inputs at their defaults — fast SDPA/unpadded path).
+        # Pass 2: if all Pass 1 attempts fail, disable use_memory_efficient_attention
+        #          and unpad_inputs then retry (safe fallback for environments where
+        #          these trigger xformers deps or CUDA assertion failures).
+        _safe_flags = {}
+        for _flag in ("use_memory_efficient_attention", "unpad_inputs"):
+            if hasattr(base_config, _flag) and getattr(base_config, _flag, False):
+                _safe_flags[_flag] = False
+        _passes = [("fast", base_config)]
+        if _safe_flags:
+            import copy
+            safe_config = copy.deepcopy(base_config)
+            for _flag, _val in _safe_flags.items():
+                setattr(safe_config, _flag, _val)
+            disabled_str = ", ".join(f"{k}=False" for k in _safe_flags)
+            _passes.append((f"safe ({disabled_str})", safe_config))
+
         last_exc = None
-        for attn_label, attn_kwargs in attn_attempts:
-            try:
-                self.model = AutoModel.from_pretrained(
-                    model_name, **attn_kwargs, **model_kwargs
-                )
-                # transformers ≥5.x meta-device loading corrupts non-persistent
-                # integer buffers (e.g. position_ids) with uninitialised memory.
-                # Re-initialise any position_ids buffers before moving to GPU.
-                for _name, _mod in self.model.named_modules():
-                    if hasattr(_mod, "position_ids") and isinstance(
-                        getattr(_mod, "position_ids"), torch.Tensor
-                    ):
-                        seq_len = _mod.position_ids.shape[-1]
-                        _mod.register_buffer(
-                            "position_ids",
-                            torch.arange(seq_len).unsqueeze(0),
-                            persistent=False,
-                        )
-                self.model = self.model.to(self.device)
-                # Validate with a test forward pass — some attention implementations
-                # (e.g. flash_attention_2) load successfully but fail at inference time.
-                # Use a real tokenized string: all-zero token IDs can trigger CUDA
-                # index-out-of-bounds in models with custom gather/position logic
-                # (e.g. GteModel / Snowflake Arctic Embed).
-                self.model.eval()
-                with torch.no_grad():
-                    test_inputs = self.tokenizer(
-                        ["test"],
-                        return_tensors="pt",
-                        padding=True,
-                        truncation=True,
-                        max_length=16,
-                    ).to(self.device)
-                    self.model(**test_inputs)
-                print(f"  Using attention: {attn_label}")
+        loaded = False
+        for pass_label, config in _passes:
+            model_kwargs["config"] = config
+            for attn_label, attn_kwargs in attn_attempts:
+                try:
+                    self.model = AutoModel.from_pretrained(
+                        model_name, **attn_kwargs, **model_kwargs
+                    )
+                    # transformers ≥5.x meta-device loading corrupts non-persistent
+                    # integer buffers (e.g. position_ids) with uninitialised memory.
+                    # Re-initialise any position_ids buffers before moving to GPU.
+                    for _name, _mod in self.model.named_modules():
+                        if hasattr(_mod, "position_ids") and isinstance(
+                            getattr(_mod, "position_ids"), torch.Tensor
+                        ):
+                            seq_len = _mod.position_ids.shape[-1]
+                            _mod.register_buffer(
+                                "position_ids",
+                                torch.arange(seq_len).unsqueeze(0),
+                                persistent=False,
+                            )
+                    self.model = self.model.to(self.device)
+                    # Validate with a test forward pass — some attention implementations
+                    # (e.g. flash_attention_2) load successfully but fail at inference time.
+                    # Use a real tokenized string: all-zero token IDs can trigger CUDA
+                    # index-out-of-bounds in models with custom gather/position logic
+                    # (e.g. GteModel / Snowflake Arctic Embed).
+                    self.model.eval()
+                    with torch.no_grad():
+                        test_inputs = self.tokenizer(
+                            ["test"],
+                            return_tensors="pt",
+                            padding=True,
+                            truncation=True,
+                            max_length=16,
+                        ).to(self.device)
+                        self.model(**test_inputs)
+                    loaded = True
+                    _used_attn = attn_label
+                    _used_pass = pass_label
+                    break
+                except (ValueError, ImportError, OSError) as e:
+                    last_exc = e
+                    if attn_implementation is not None and attn_label == attn_implementation:
+                        print(f"\033[91m\033[1m  Attention '{attn_label}' (requested via "
+                              f"--attn_implementation) failed ({type(e).__name__}): {e}\033[0m")
+                    else:
+                        print(f"  Attention '{attn_label}' failed ({type(e).__name__}): {e}")
+                except Exception as e:
+                    last_exc = e
+                    if attn_implementation is not None and attn_label == attn_implementation:
+                        print(f"\033[91m\033[1m  Attention '{attn_label}' (requested via "
+                              f"--attn_implementation) failed at inference "
+                              f"({type(e).__name__}): {e}\033[0m")
+                    else:
+                        print(f"  Attention '{attn_label}' failed at inference ({type(e).__name__}): {e}")
+                    self.model = None
+            if loaded:
                 break
-            except (ValueError, ImportError, OSError) as e:
-                last_exc = e
-                if attn_implementation is not None and attn_label == attn_implementation:
-                    print(f"\033[91m\033[1m  Attention '{attn_label}' (requested via "
-                          f"--attn_implementation) failed ({type(e).__name__}): {e}\033[0m")
-                else:
-                    print(f"  Attention '{attn_label}' failed ({type(e).__name__}): {e}")
-            except Exception as e:
-                last_exc = e
-                if attn_implementation is not None and attn_label == attn_implementation:
-                    print(f"\033[91m\033[1m  Attention '{attn_label}' (requested via "
-                          f"--attn_implementation) failed at inference "
-                          f"({type(e).__name__}): {e}\033[0m")
-                else:
-                    print(f"  Attention '{attn_label}' failed at inference ({type(e).__name__}): {e}")
-                self.model = None
-        else:
+            if len(_passes) > 1 and pass_label == _passes[0][0]:
+                print(f"  Retrying with {disabled_str}...")
+        if not loaded:
             raise RuntimeError(
                 f"Could not load model {model_name} with any attention implementation"
             ) from last_exc
 
         if use_torch_compile:
             self.model = torch.compile(self.model)
-            print(f"  Using torch.compile")
 
         # Retrieve the model's max sequence length from config
         self.max_position_embeddings = getattr(
@@ -265,6 +284,26 @@ class GPUEmbedder:
         self.max_seq_length = tok_max if tok_max is not None else self.max_position_embeddings
         # Effective max tokens for tokenization — can be overridden by set_max_num_tokens()
         self.max_num_tokens = self.max_seq_length
+
+        # Print all model configuration details
+        _active_config = self.model.config
+        print(f"  dtype: {dtype}")
+        print(f"  attn_implementation: {_used_attn} ({_used_pass})")
+        _mem_eff = getattr(_active_config, "use_memory_efficient_attention", None)
+        if _mem_eff is not None:
+            print(f"  use_memory_efficient_attention: {_mem_eff}")
+        _unpad = getattr(_active_config, "unpad_inputs", None)
+        if _unpad is not None:
+            print(f"  unpad_inputs: {_unpad}")
+        if use_torch_compile:
+            print(f"  torch_compile: True")
+        if device.startswith("cuda"):
+            _gpu_idx = torch.cuda.current_device()
+            _gpu_name = torch.cuda.get_device_name(_gpu_idx)
+            _gpu_props = torch.cuda.get_device_properties(_gpu_idx)
+            _gpu_mem = getattr(_gpu_props, "total_memory", None) or getattr(_gpu_props, "total_mem", 0)
+            _gpu_mem = _gpu_mem / (1024**3)
+            print(f"  gpu: {_gpu_name} ({_gpu_mem:.1f} GB)")
         print(f"✓ Initialized GPU embedder: {model_name} on {device}"
               f" (max_seq_length={self.max_seq_length}, "
               f"max_position_embeddings={self.max_position_embeddings})")
