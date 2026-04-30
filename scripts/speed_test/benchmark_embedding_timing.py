@@ -923,6 +923,9 @@ def main():
                         help="Maximum number of tokens per text (texts are truncated to this length)")
     parser.add_argument("--max_text_size", type=int, default=None,
                         help="[Deprecated: use --max_num_tokens] Maximum number of tokens per text")
+    parser.add_argument("--select_longest", type=int, default=None,
+                        help="Before applying --num_samples, keep only the N longest texts "
+                             "(by character length). Useful for stress-testing with long inputs.")
 
     args = parser.parse_args()
 
@@ -1021,6 +1024,9 @@ def main():
             warmup_texts = load_texts_from_file(
                 first_path, field_path=args.field_path, max_samples=args.max_samples
             )
+            if args.select_longest is not None and len(warmup_texts) > args.select_longest:
+                warmup_texts.sort(key=len, reverse=True)
+                warmup_texts = warmup_texts[:args.select_longest]
             if args.num_samples is not None and len(warmup_texts) > args.num_samples:
                 random.seed(args.random_seed)
                 warmup_texts = random.sample(warmup_texts, args.num_samples)
@@ -1106,6 +1112,14 @@ def main():
             texts = generate_sample_texts(num_to_generate)
             print(f"  Generated {len(texts)} sample texts")
 
+        # Select longest texts if --select_longest is specified
+        if args.select_longest is not None and len(texts) > args.select_longest:
+            print(f"\nSelecting {args.select_longest} longest texts from {len(texts)} available texts (by character length)")
+            texts.sort(key=len, reverse=True)
+            texts = texts[:args.select_longest]
+            print(f"  Kept {len(texts)} longest texts "
+                  f"(min len={len(texts[-1])}, max len={len(texts[0])} chars)")
+
         # Random sampling if num_samples is specified and we have more texts than requested
         if args.num_samples is not None and len(texts) > args.num_samples:
             print(f"\nRandomly sampling {args.num_samples} texts from {len(texts)} available texts")
@@ -1151,6 +1165,14 @@ def main():
 
         if file_results:
             all_file_results[file_label] = file_results
+            # Print per-file summary immediately
+            print(f"\n  --- Results for '{file_label}' ---")
+            print(f"  {'Method':<8} {'Batch':<8} {'Throughput (spans/s)':<22} {'Avg Latency (ms)':<20}")
+            print(f"  {'-'*58}")
+            for r in file_results:
+                print(f"  {r['name']:<8} {r['batch_size']:<8} "
+                      f"{r['throughput']:<22.2f} {r['avg_latency_ms']:<20.2f}")
+            print(f"  {'-'*58}")
         else:
             print(f"\n✗ No benchmark results for {file_label}!")
 
