@@ -32,7 +32,7 @@ trust_remote_code="--trust_remote_code"
 output_file=""
 extra_args=()
 
-while [[ $# -gt 0 ]]; doadd
+while [[ $# -gt 0 ]]; do
     case "$1" in
         --local_model_name)   local_model="$2";    shift 2 ;;
         --field_path)         field_path="$2";     shift 2 ;;
