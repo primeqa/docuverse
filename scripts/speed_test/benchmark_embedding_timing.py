@@ -254,10 +254,19 @@ class GPUEmbedder:
         self.max_position_embeddings = getattr(
             self.model.config, "max_position_embeddings", None
         )
+        # Tokenizer-reported max sequence length (often the more accurate cap;
+        # e.g. sentence-transformers wrappers set this independently of
+        # max_position_embeddings).
+        tok_max = getattr(self.tokenizer, "model_max_length", None)
+        # Treat the sentinel HF value (very large int) as "unknown".
+        if tok_max is not None and tok_max > 10**6:
+            tok_max = None
+        self.max_seq_length = tok_max if tok_max is not None else self.max_position_embeddings
         # Effective max tokens for tokenization — can be overridden by set_max_num_tokens()
-        self.max_num_tokens = self.max_position_embeddings
+        self.max_num_tokens = self.max_seq_length
         print(f"✓ Initialized GPU embedder: {model_name} on {device}"
-              f" (max_position_embeddings={self.max_position_embeddings})")
+              f" (max_seq_length={self.max_seq_length}, "
+              f"max_position_embeddings={self.max_position_embeddings})")
 
     def set_max_num_tokens(self, max_num_tokens: int):
         """Set the effective max token length used during tokenization."""
@@ -994,13 +1003,13 @@ def main():
 
     gpu_embedder_obj = next((emb for name, emb in embedders if name == "GPU"), None)
 
-    # Resolve max_text_size: take min of user-provided value and model's max_position_embeddings
-    if gpu_embedder_obj is not None and gpu_embedder_obj.max_position_embeddings is not None:
-        model_max = gpu_embedder_obj.max_position_embeddings
+    # Resolve max_text_size: take min of user-provided value and model's max_seq_length
+    if gpu_embedder_obj is not None and gpu_embedder_obj.max_seq_length is not None:
+        model_max = gpu_embedder_obj.max_seq_length
         if args.max_num_tokens > model_max:
             print(f"\033[91m\033[1m"
                   f"  WARNING: --max_num_tokens={args.max_num_tokens} exceeds model's "
-                  f"max_position_embeddings={model_max}. "
+                  f"max_seq_length={model_max}. "
                   f"Clamping max_num_tokens to {model_max}."
                   f"\033[0m")
             args.max_num_tokens = model_max
