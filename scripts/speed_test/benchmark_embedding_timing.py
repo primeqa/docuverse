@@ -1034,22 +1034,36 @@ def main():
             warmup_texts = load_texts_from_file(
                 first_path, field_path=args.field_path, max_samples=args.max_samples
             )
+            # Cap to max_samples after array expansion
+            if args.max_samples is not None and len(warmup_texts) > args.max_samples:
+                if args.select_longest is not None:
+                    warmup_texts.sort(key=len, reverse=True)
+                warmup_texts = warmup_texts[:args.max_samples]
             if args.select_longest is not None and len(warmup_texts) > args.select_longest:
                 warmup_texts.sort(key=len, reverse=True)
                 warmup_texts = warmup_texts[:args.select_longest]
             if args.num_samples is not None and len(warmup_texts) > args.num_samples:
                 random.seed(args.random_seed)
                 warmup_texts = random.sample(warmup_texts, args.num_samples)
+            if args.select_longest is not None:
+                warmup_texts.sort(key=len, reverse=True)
             if gpu_embedder_obj is not None:
-                for i, t in enumerate(warmup_texts):
-                    toks = gpu_embedder_obj.tokenizer.tokenize(t)
-                    if len(toks) > args.max_num_tokens:
-                        token_ids = gpu_embedder_obj.tokenizer.convert_tokens_to_ids(
-                            toks[:args.max_num_tokens]
-                        )
-                        warmup_texts[i] = gpu_embedder_obj.tokenizer.decode(
-                            token_ids, skip_special_tokens=True
-                        )
+                _tok = gpu_embedder_obj.tokenizer
+                _orig_max = _tok.model_max_length
+                _tok.model_max_length = 10**7  # suppress length warning
+                _chunk = 4096
+                for cs in range(0, len(warmup_texts), _chunk):
+                    encoded = _tok(
+                        warmup_texts[cs:cs + _chunk],
+                        add_special_tokens=False, padding=False,
+                        truncation=True, max_length=args.max_num_tokens
+                    )
+                    for j, ids in enumerate(encoded['input_ids']):
+                        if len(ids) >= args.max_num_tokens:
+                            warmup_texts[cs + j] = _tok.decode(
+                                ids, skip_special_tokens=True
+                            )
+                _tok.model_max_length = _orig_max
             if warmup_texts:
                 for batch_size in batch_sizes:
                     for name, embedder in embedders:
@@ -1122,6 +1136,14 @@ def main():
             texts = generate_sample_texts(num_to_generate)
             print(f"  Generated {len(texts)} sample texts")
 
+        # Cap to max_samples after array expansion (max_samples limits lines
+        # read, but array field paths like 'docs[]' expand each line to many texts).
+        if args.max_samples is not None and len(texts) > args.max_samples:
+            if args.select_longest is not None:
+                texts.sort(key=len, reverse=True)
+            texts = texts[:args.max_samples]
+            print(f"  Capped to {args.max_samples} texts after array expansion")
+
         # Select longest texts if --select_longest is specified
         if args.select_longest is not None and len(texts) > args.select_longest:
             print(f"\nSelecting {args.select_longest} longest texts from {len(texts)} available texts (by character length)")
@@ -1138,22 +1160,32 @@ def main():
             texts = random.sample(texts, args.num_samples)
             print(f"  Sampled {len(texts)} texts")
 
+        # Sort by length for efficient batching (less padding waste) when select_longest is active
+        if args.select_longest is not None:
+            texts.sort(key=len, reverse=True)
+
         # Truncate texts that exceed max_text_size (requires GPU tokenizer)
         if gpu_embedder_obj is not None:
             truncated_count = 0
             token_lengths = []
-            for i, t in enumerate(texts):
-                toks = gpu_embedder_obj.tokenizer.tokenize(t)
-                token_lengths.append(len(toks))
-                if len(toks) > args.max_num_tokens:
-                    # Decode the first max_num_tokens tokens back to text
-                    token_ids = gpu_embedder_obj.tokenizer.convert_tokens_to_ids(
-                        toks[:args.max_num_tokens]
-                    )
-                    texts[i] = gpu_embedder_obj.tokenizer.decode(
-                        token_ids, skip_special_tokens=True
-                    )
-                    truncated_count += 1
+            _tok = gpu_embedder_obj.tokenizer
+            _orig_max = _tok.model_max_length
+            _tok.model_max_length = 10**7  # suppress length warning
+            _chunk = 4096
+            for cs in range(0, len(texts), _chunk):
+                chunk_texts = texts[cs:cs + _chunk]
+                encoded = _tok(
+                    chunk_texts, add_special_tokens=False,
+                    padding=False, truncation=False
+                )
+                for j, ids in enumerate(encoded['input_ids']):
+                    token_lengths.append(len(ids))
+                    if len(ids) > args.max_num_tokens:
+                        texts[cs + j] = _tok.decode(
+                            ids[:args.max_num_tokens], skip_special_tokens=True
+                        )
+                        truncated_count += 1
+            _tok.model_max_length = _orig_max
             if truncated_count > 0:
                 print(f"  Truncated {truncated_count} texts to {args.max_num_tokens} tokens.")
             if token_lengths:
