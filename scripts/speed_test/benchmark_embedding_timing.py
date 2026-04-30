@@ -202,9 +202,10 @@ class GPUEmbedder:
                     if hasattr(_mod, "position_ids") and isinstance(
                         getattr(_mod, "position_ids"), torch.Tensor
                     ):
+                        seq_len = _mod.position_ids.shape[-1]
                         _mod.register_buffer(
                             "position_ids",
-                            torch.arange(_mod.position_ids.shape[0]),
+                            torch.arange(seq_len).unsqueeze(0),
                             persistent=False,
                         )
                 self.model = self.model.to(self.device)
