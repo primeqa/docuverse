@@ -1117,8 +1117,10 @@ def main():
         # Truncate texts that exceed max_text_size (requires GPU tokenizer)
         if gpu_embedder_obj is not None:
             truncated_count = 0
+            token_lengths = []
             for i, t in enumerate(texts):
                 toks = gpu_embedder_obj.tokenizer.tokenize(t)
+                token_lengths.append(len(toks))
                 if len(toks) > args.max_num_tokens:
                     # Decode the first max_num_tokens tokens back to text
                     token_ids = gpu_embedder_obj.tokenizer.convert_tokens_to_ids(
@@ -1130,6 +1132,14 @@ def main():
                     truncated_count += 1
             if truncated_count > 0:
                 print(f"  Truncated {truncated_count} texts to {args.max_num_tokens} tokens.")
+            if token_lengths:
+                effective_lengths = [min(l, args.max_num_tokens) for l in token_lengths]
+                print(f"  Tokens/doc (pre-truncation):  mean={np.mean(token_lengths):.2f}, "
+                      f"std={np.std(token_lengths):.2f}, min={np.min(token_lengths)}, "
+                      f"max={np.max(token_lengths)}")
+                print(f"  Tokens/doc (post-truncation): mean={np.mean(effective_lengths):.2f}, "
+                      f"std={np.std(effective_lengths):.2f}, min={np.min(effective_lengths)}, "
+                      f"max={np.max(effective_lengths)}")
 
         print(f"\nFinal dataset size: {len(texts)} texts")
 
