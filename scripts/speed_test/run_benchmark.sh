@@ -31,6 +31,7 @@ torch_compile="--torch_compile"
 trust_remote_code="--trust_remote_code"
 output_file=""
 extra_args=()
+output_dir="latency"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -47,6 +48,7 @@ while [[ $# -gt 0 ]]; do
         --no_torch_compile)   torch_compile="";               shift ;;
         --trust_remote_code)  trust_remote_code="--trust_remote_code"; shift ;;
         --no_trust_remote_code) trust_remote_code="";                  shift ;;
+        --output_dir)         output_dir="$2"; shift 2 ;;
         *)                    extra_args+=("$1");  shift ;;
     esac
 done
@@ -55,7 +57,12 @@ done
 if [[ -z "${output_file}" ]]; then
     model_slug="${local_model//\//_}"   # replace / with _
     model_slug="${model_slug//-/_}"     # replace - with _
-    output_file="latency/benchmark_${model_slug}.json"
+    output_file="${output_dir}/benchmark_${model_slug}.json"
+else
+    # Check if output_file is an absolute path
+    if [[ "${output_file}" != /* ]]; then
+        output_file="${output_dir}/${output_file}"
+    fi
 fi
 
 # ── assemble and run ──────────────────────────────────────────────────────────
