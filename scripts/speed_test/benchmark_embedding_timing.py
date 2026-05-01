@@ -1193,6 +1193,7 @@ def main():
 
     # Iterate over input files
     all_file_results = {}  # file_label -> list of result dicts
+    file_token_stats = {}  # file_label -> token count stats post-filter
 
     for file_idx, (file_label, file_path) in enumerate(input_sources):
         if multiple_files:
@@ -1276,6 +1277,15 @@ def main():
                 print(f"  Tokens/doc (post-truncation): mean={np.mean(effective_lengths):.2f}, "
                       f"std={np.std(effective_lengths):.2f}, min={np.min(effective_lengths)}, "
                       f"max={np.max(effective_lengths)}")
+                file_token_stats[file_label] = {
+                    "num_docs": len(effective_lengths),
+                    "total_tokens": int(np.sum(effective_lengths)),
+                    "avg_tokens": float(np.mean(effective_lengths)),
+                    "std_tokens": float(np.std(effective_lengths)),
+                    "min_tokens": int(np.min(effective_lengths)),
+                    "max_tokens": int(np.max(effective_lengths)),
+                    "truncated_count": truncated_count,
+                }
 
         print(f"\nFinal dataset size: {len(texts)} texts")
 
@@ -1347,6 +1357,7 @@ def main():
             "gpu_info": gpu_info,
             "model_config": model_config,
             "results": all_file_results,
+            "token_stats": file_token_stats,
             "output": captured_output.getvalue(),
         }
         with open(args.output_file, "w") as f:

@@ -3,7 +3,7 @@ fof: benchmark/miracl/en.fof
 max_num_tokens: 512
 field_path: 'text'
 max_samples: 32768
-batch_sizes: 512
+batch_sizes: 1024
 output_dir: en-latency-miracle-fixed2
 models:
   - intfloat/e5-base-v2

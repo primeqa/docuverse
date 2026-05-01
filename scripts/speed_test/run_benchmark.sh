@@ -33,6 +33,7 @@ skip_api=true
 torch_compile=true
 trust_remote_code=true
 dry_run=false
+force=false
 
 # Pre-pass: load YAML defaults if --config provided (CLI flags below override)
 config_file=$(find_config_arg "$@")
@@ -63,6 +64,7 @@ while [[ $# -gt 0 ]]; do
         --trust_remote_code)    trust_remote_code=true; shift ;;
         --no_trust_remote_code) trust_remote_code=false; shift ;;
         --dry-run)              dry_run=true;           shift ;;
+        --force)                force=true;             shift ;;
         *)                      extra_args+=("$1");     shift ;;
     esac
 done
@@ -107,6 +109,10 @@ _run_one() {
     [[ "$trust_remote_code" == "true" ]] && cmd+=("--trust_remote_code")
     [[ ${#extra_args[@]} -gt 0 ]]        && cmd+=("${extra_args[@]}")
 
+    if [[ "$force" != "true" && -f "$out_file" ]]; then
+        echo "Skipping: ${out_file} already exists (use --force to re-run)"
+        return 0
+    fi
     echo "Running: ${cmd[*]}"
     echo "Output : ${out_file}"
     echo ""
