@@ -8,6 +8,7 @@ conda_env=docu
 max_num_tokens=512
 fof=benchmark/miracl/miracle.fof
 field_path=text
+
 batch_sizes=1024
 max_samples=32768  # The max number of samples to run
 output_dir="latency"
@@ -77,7 +78,7 @@ conda activate ${conda_env}
 cd /u/raduf/sandbox2/docuverse
 ./scripts/speed_test/run_benchmark.sh \
 --local_model_name ${MODEL} \
---field_path ${field_path} \
+--field_path '${field_path}' \
 --max_num_tokens ${max_num_tokens} \
 --batch_sizes ${batch_sizes} \
 --max_samples ${max_samples} \
