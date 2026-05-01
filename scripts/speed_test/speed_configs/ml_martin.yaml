@@ -1,0 +1,20 @@
+conda_env: docu5
+fof: benchmark/martin_miracl/en.fof
+max_num_tokens: 512
+field_path: 'negatives.docs[]'
+max_samples: 32768
+batch_sizes: 512
+output_dir: en-lantency-martin-fixed2
+models:
+  - ibm-granite/granite-embedding-278m-multilingual
+  - ibm-granite/granite-embedding-107m-multilingual
+  - ibm-granite/granite-embedding-97m-multilingual-r2
+  - ibm-granite/granite-embedding-311m-multilingual-r2
+  - microsoft/harrier-oss-v1-270m
+  - google/embeddinggemma-300m
+  - jinaai/jina-embeddings-v5-text-nano
+  - Alibaba-NLP/gte-multilingual-base
+  - intfloat/multilingual-e5-base
+  - intfloat/multilingual-e5-small
+  - Snowflake/snowflake-arctic-embed-m-v2.0
+  - codefuse-ai/F2LLM-v2-80M

@@ -39,6 +39,7 @@ Usage:
 """
 
 import argparse
+import datetime
 import io
 import json
 import time
@@ -270,11 +271,44 @@ class GPUEmbedder:
             ) from last_exc
 
         if use_torch_compile:
-            # Suppress verbose torch._dynamo warnings (graph breaks,
-            # recompilation hints) that fire during compile and first inference.
             import logging
-            logging.getLogger("torch._dynamo").setLevel(logging.ERROR)
-            logging.getLogger("torch._inductor").setLevel(logging.ERROR)
+            # Remove TORCH_LOGS before calling set_logs — if the env var enables
+            # graph_code it takes priority and overrides our kwarg settings.
+            os.environ.pop("TORCH_LOGS", None)
+            # Artifact logging in torch._logging uses per-artifact child loggers
+            # (e.g. torch._dynamo.output_graph.graph_code) with their own setLevel
+            # calls.  Setting the parent logger alone is not enough; also set the
+            # root "torch" logger and disable propagation on the key subtrees.
+            for _lg_name in (
+                "torch",
+                "torch._dynamo",
+                "torch._inductor",
+                "torch.fx",
+                "torch.fx.experimental",
+                "torch._logging",
+            ):
+                _lg = logging.getLogger(_lg_name)
+                _lg.setLevel(logging.ERROR)
+            # Call set_logs per-kwarg so one unknown arg doesn't silently kill all.
+            try:
+                import torch._logging as _tl
+                for _k, _v in [
+                    ("graph", False),
+                    ("graph_code", False),
+                    ("graph_breaks", False),
+                    ("recompiles", False),
+                ]:
+                    try:
+                        _tl.set_logs(**{_k: _v})
+                    except TypeError:
+                        pass
+            except ImportError:
+                pass
+            # Older torch uses a config flag instead of the artifact system.
+            try:
+                torch._dynamo.config.output_code = False
+            except AttributeError:
+                pass
             self.model = torch.compile(self.model)
 
         # Retrieve the model's max sequence length from config
@@ -304,13 +338,25 @@ class GPUEmbedder:
         print(f"  unpad_inputs: {_unpad}")
         if use_torch_compile:
             print(f"  torch_compile: True")
+        self.gpu_info = None
         if device.startswith("cuda"):
             _gpu_idx = torch.cuda.current_device()
             _gpu_name = torch.cuda.get_device_name(_gpu_idx)
             _gpu_props = torch.cuda.get_device_properties(_gpu_idx)
             _gpu_mem = getattr(_gpu_props, "total_memory", None) or getattr(_gpu_props, "total_mem", 0)
-            _gpu_mem = _gpu_mem / (1024**3)
-            print(f"  gpu: {_gpu_name} ({_gpu_mem:.1f} GB)")
+            _gpu_mem_gb = _gpu_mem / (1024**3)
+            print(f"  gpu: {_gpu_name} ({_gpu_mem_gb:.1f} GB)")
+            self.gpu_info = {
+                "name": _gpu_name,
+                "index": _gpu_idx,
+                "total_memory_bytes": int(_gpu_mem),
+                "total_memory_gb": round(_gpu_mem_gb, 3),
+                "capability": f"{_gpu_props.major}.{_gpu_props.minor}",
+                "cuda_version": torch.version.cuda,
+                "torch_version": torch.__version__,
+            }
+        else:
+            self.gpu_info = {"name": "cpu", "torch_version": torch.__version__}
         print(f"✓ Initialized GPU embedder: {model_name} on {device}"
               f" (max_seq_length={self.max_seq_length}, "
               f"max_position_embeddings={self.max_position_embeddings})")
@@ -1294,7 +1340,24 @@ def main():
     if args.output_file:
         sys.stdout = sys.__stdout__
         prepare_for_save_and_backup(args.output_file)
+
+        model_config = None
+        gpu_info = None
+        if gpu_embedder_obj is not None:
+            try:
+                model_config = gpu_embedder_obj.model.config.to_dict()
+            except Exception as e:
+                model_config = {"error": f"could not serialize config: {e}"}
+            gpu_info = gpu_embedder_obj.gpu_info
+
+        now = datetime.datetime.now().astimezone()
         output_data = {
+            "run_date": now.isoformat(),
+            "run_date_utc": now.astimezone(datetime.timezone.utc).isoformat(),
+            "argv": list(sys.argv),
+            "args": vars(args),
+            "gpu_info": gpu_info,
+            "model_config": model_config,
             "results": all_file_results,
             "output": captured_output.getvalue(),
         }
