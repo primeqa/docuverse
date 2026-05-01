@@ -94,8 +94,9 @@ def main():
     )
     parser.add_argument(
         "--models-file", "-m",
-        default="new_models.dat",
-        help="File listing model names in desired output order (default: new_models.dat)",
+        default=None,
+        help="File listing model names in desired output order. "
+             "If omitted, looks for models.dat in --json-dir.",
     )
     parser.add_argument(
         "--json-dir", "-d",
@@ -111,11 +112,21 @@ def main():
 
     json_dir = Path(args.json_dir)
 
+    # Resolve which models file to use: explicit > json_dir/models.dat > none
+    models_file: Path | None = None
+    if not args.no_models_file:
+        if args.models_file is not None:
+            models_file = Path(args.models_file)
+        else:
+            candidate = json_dir / "models.dat"
+            if candidate.exists():
+                models_file = candidate
+
     # Build the ordered list of (label, path) pairs to process
     entries: list[tuple[str, Path]] = []
 
-    if args.no_models_file or (not Path(args.models_file).exists() and not args.json_files):
-        # Just use whatever files were given
+    if models_file is None:
+        # No models file: use explicit files in argument order
         if not args.json_files:
             parser.error("No JSON files given and no models file found. "
                          "Provide JSON files or a --models-file.")
@@ -123,8 +134,8 @@ def main():
             path = Path(p)
             entries.append((path.stem, path))
 
-    elif Path(args.models_file).exists():
-        models = load_models_file(Path(args.models_file))
+    elif models_file.exists():
+        models = load_models_file(models_file)
         json_lookup: dict[str, Path] = {}
 
         # Index explicit files by stem
@@ -145,12 +156,11 @@ def main():
                       file=sys.stderr)
 
     else:
-        # Models file not found; fall back to explicit files
+        # Explicit --models-file given but not found
         if not args.json_files:
-            parser.error(f"Models file '{args.models_file}' not found and no JSON files given.")
-        if not args.no_models_file:
-            print(f"WARNING: models file '{args.models_file}' not found; "
-                  "printing in argument order.", file=sys.stderr)
+            parser.error(f"Models file '{models_file}' not found and no JSON files given.")
+        print(f"WARNING: models file '{models_file}' not found; "
+              "printing in argument order.", file=sys.stderr)
         for p in args.json_files:
             path = Path(p)
             entries.append((path.stem, path))

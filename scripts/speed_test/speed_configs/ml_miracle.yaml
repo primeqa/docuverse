@@ -6,8 +6,8 @@ max_samples: 32768
 batch_sizes: 512
 output_dir: en-latency-miracle-fixed2
 models:
-  - ibm-granite/granite-embedding-278m-multilingual
-  - ibm-granite/granite-embedding-107m-multilingual
+  - ibm-granite/granite-embedding-278m-multilingualjson
+  - ibm-granite/granite-embedding-107m-multilinguals
   - ibm-granite/granite-embedding-97m-multilingual-r2
   - ibm-granite/granite-embedding-311m-multilingual-r2
   - microsoft/harrier-oss-v1-270m
