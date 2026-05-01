@@ -151,8 +151,7 @@ class GPUEmbedder:
             _sys.modules.setdefault("flash_attn.flash_attn_interface", None)
 
         model_kwargs = {"torch_dtype": torch_dtype,
-                        "trust_remote_code": trust_remote_code,
-                        "config": base_config}
+                        "trust_remote_code": trust_remote_code}
         # Build the list of attention implementations to try.
         # If the user explicitly requested one, try that first; on failure
         # print a red warning and fall back to the default sequence.
@@ -182,16 +181,17 @@ class GPUEmbedder:
             attn_attempts = list(_ALL_ATTN_ATTEMPTS)
 
         # Two-pass loading strategy:
-        # Pass 1: try with original config intact (use_memory_efficient_attention
-        #          and unpad_inputs at their defaults — fast SDPA/unpadded path).
-        # Pass 2: if all Pass 1 attempts fail, disable use_memory_efficient_attention
-        #          and unpad_inputs then retry (safe fallback for environments where
-        #          these trigger xformers deps or CUDA assertion failures).
+        # Pass 1 (fast): no explicit config — let from_pretrained load and
+        #   initialize the model's own config class (preserves model-specific
+        #   optimizations like unpad_inputs, use_memory_efficient_attention).
+        # Pass 2 (safe): only if Pass 1 fails entirely — pass an explicit config
+        #   with use_memory_efficient_attention and unpad_inputs disabled (handles
+        #   environments where these trigger xformers deps or CUDA assertions).
         _safe_flags = {}
         for _flag in ("use_memory_efficient_attention", "unpad_inputs"):
             if hasattr(base_config, _flag) and getattr(base_config, _flag, False):
                 _safe_flags[_flag] = False
-        _passes = [("fast", base_config)]
+        _passes = [("fast", None)]  # None = don't override config
         if _safe_flags:
             import copy
             safe_config = copy.deepcopy(base_config)
@@ -203,11 +203,13 @@ class GPUEmbedder:
         last_exc = None
         loaded = False
         for pass_label, config in _passes:
-            model_kwargs["config"] = config
+            _pass_kwargs = dict(model_kwargs)
+            if config is not None:
+                _pass_kwargs["config"] = config
             for attn_label, attn_kwargs in attn_attempts:
                 try:
                     self.model = AutoModel.from_pretrained(
-                        model_name, **attn_kwargs, **model_kwargs
+                        model_name, **attn_kwargs, **_pass_kwargs
                     )
                     # transformers ≥5.x meta-device loading corrupts non-persistent
                     # integer buffers (e.g. position_ids) with uninitialised memory.
@@ -268,6 +270,11 @@ class GPUEmbedder:
             ) from last_exc
 
         if use_torch_compile:
+            # Suppress verbose torch._dynamo warnings (graph breaks,
+            # recompilation hints) that fire during compile and first inference.
+            import logging
+            logging.getLogger("torch._dynamo").setLevel(logging.ERROR)
+            logging.getLogger("torch._inductor").setLevel(logging.ERROR)
             self.model = torch.compile(self.model)
 
         # Retrieve the model's max sequence length from config
@@ -292,9 +299,9 @@ class GPUEmbedder:
         _mem_eff = getattr(_active_config, "use_memory_efficient_attention", None)
         if _mem_eff is not None:
             print(f"  use_memory_efficient_attention: {_mem_eff}")
+        # Read unpad_inputs from the actual loaded model's config (not base_config)
         _unpad = getattr(_active_config, "unpad_inputs", None)
-        if _unpad is not None:
-            print(f"  unpad_inputs: {_unpad}")
+        print(f"  unpad_inputs: {_unpad}")
         if use_torch_compile:
             print(f"  torch_compile: True")
         if device.startswith("cuda"):
