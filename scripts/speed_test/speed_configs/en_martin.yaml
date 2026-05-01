@@ -4,7 +4,7 @@ max_num_tokens: 512
 field_path: 'text'
 max_samples: 32768
 batch_sizes: 512
-output_dir: en-lantency-martin-fixed2
+output_dir: en-latency-martin-fixed2
 models:
   - intfloat/e5-base-v2
   - BAAI/bge-base-en-v1.5
