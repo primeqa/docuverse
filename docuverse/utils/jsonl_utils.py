@@ -158,8 +158,11 @@ def read_jsonl_file(
 
     try:
         for i, line in enumerate(file_handle):
-            # Check max_samples limit
-            if max_samples is not None and i >= max_samples:
+            # Stop as soon as we have collected enough texts.
+            # Checking on texts (not lines) means array field paths like
+            # "docs[].text" don't overshoot: we stop reading mid-file rather
+            # than reading max_samples lines and discarding the surplus later.
+            if max_samples is not None and len(texts) >= max_samples:
                 break
 
             line = line.strip()
@@ -214,12 +217,11 @@ def read_jsonl_file(
 
                 # Handle result - could be a string or list (from array wildcard)
                 if isinstance(result, list):
-                    # Array wildcard was used - add all items
+                    # Array wildcard was used - add all items, stopping at limit
                     for item in result:
-                        if isinstance(item, str):
-                            texts.append(item)
-                        else:
-                            texts.append(str(item))
+                        if max_samples is not None and len(texts) >= max_samples:
+                            break
+                        texts.append(item if isinstance(item, str) else str(item))
                 elif isinstance(result, str):
                     texts.append(result)
                 else:

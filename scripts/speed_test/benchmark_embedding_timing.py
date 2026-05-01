@@ -1126,11 +1126,6 @@ def main():
             warmup_texts = load_texts_from_file(
                 first_path, field_path=args.field_path, max_samples=args.max_samples
             )
-            # Cap to max_samples after array expansion
-            if args.max_samples is not None and len(warmup_texts) > args.max_samples:
-                if args.select_longest is not None:
-                    warmup_texts.sort(key=len, reverse=True)
-                warmup_texts = warmup_texts[:args.max_samples]
             if args.select_longest is not None and len(warmup_texts) > args.select_longest:
                 warmup_texts.sort(key=len, reverse=True)
                 warmup_texts = warmup_texts[:args.select_longest]
@@ -1228,13 +1223,6 @@ def main():
             texts = generate_sample_texts(num_to_generate)
             print(f"  Generated {len(texts)} sample texts")
 
-        # Cap to max_samples after array expansion (max_samples limits lines
-        # read, but array field paths like 'docs[]' expand each line to many texts).
-        if args.max_samples is not None and len(texts) > args.max_samples:
-            if args.select_longest is not None:
-                texts.sort(key=len, reverse=True)
-            texts = texts[:args.max_samples]
-            print(f"  Capped to {args.max_samples} texts after array expansion")
 
         # Select longest texts if --select_longest is specified
         if args.select_longest is not None and len(texts) > args.select_longest:
