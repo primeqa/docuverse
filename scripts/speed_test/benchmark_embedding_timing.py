@@ -212,6 +212,8 @@ class GPUEmbedder:
                     self.model = AutoModel.from_pretrained(
                         model_name, **attn_kwargs, **_pass_kwargs
                     )
+                    if not hasattr(type(model), 'config_class'):
+                        type(model).config_class = AutoConfig
                     # transformers ≥5.x meta-device loading corrupts non-persistent
                     # integer buffers (e.g. position_ids) with uninitialised memory.
                     # Re-initialise any position_ids buffers before moving to GPU.
