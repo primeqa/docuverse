@@ -271,8 +271,13 @@ def _get_model_and_file_names(model_path: str, kwargs: dict[str, str]) -> Litera
     return model_path
 
 
-def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_numpy: bool=True, batch_no=-1) -> np.ndarray:
-    """Generate embeddings using SentenceTransformer (works with all backends)."""
+def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_numpy: bool=True, batch_no=-1):
+    """Generate embeddings using SentenceTransformer (works with all backends).
+
+    Returns:
+        np.ndarray of embeddings, or None if the batch failed (connection error,
+        tokenization length issue, etc.)
+    """
     embeddings = None
     with torch.no_grad():
         try:
@@ -282,9 +287,37 @@ def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_nump
                 convert_to_numpy=convert_to_numpy,
                 normalize_embeddings=True
             )
+        except (ConnectionError, ConnectionRefusedError, ConnectionResetError, OSError) as e:
+            print(f"\n[WARN] Connection error on batch {batch_no}, skipping: {e}")
+            return None
+        except (RuntimeError, ValueError) as e:
+            err_msg = str(e).lower()
+            # Catch tokenization/sequence length errors gracefully
+            if any(kw in err_msg for kw in ('token', 'sequence length', 'too long', 'exceeds',
+                                             'max length', 'overflow', 'truncat')):
+                print(f"\n[WARN] Tokenization/length error on batch {batch_no}, skipping: {e}")
+                return None
+            # Catch CUDA OOM errors
+            if 'out of memory' in err_msg or 'cuda' in err_msg:
+                print(f"\n[WARN] CUDA/memory error on batch {batch_no}, skipping: {e}")
+                torch.cuda.empty_cache()
+                return None
+            print(f"\n[ERROR] Embedding computation failed on batch {batch_no}: {e}. "
+                  f"Texts: {[t[:100]+' ...' for t in batch]}")
+            return None
         except Exception as e:
-            print(f"Embedding computation failed on batch {batch_no}: {e}. The text: {[t[:100]+' ...' for t in batch]}")
-            raise e
+            # Catch-all: check if it looks like a connection or length issue
+            err_msg = str(e).lower()
+            if any(kw in err_msg for kw in ('connection', 'timeout', 'refused', 'reset',
+                                             'token', 'too long', 'max length', 'status 4')):
+                print(f"\n[WARN] Error on batch {batch_no}, skipping: {e}")
+                return None
+            print(f"\n[ERROR] Unexpected error on batch {batch_no}: {e}. "
+                  f"Texts: {[t[:100]+' ...' for t in batch]}")
+            return None
+
+    if embeddings is None:
+        return None
 
     # Ensure embeddings are on CPU and in numpy format for comparison
     if isinstance(embeddings, torch.Tensor):
@@ -459,6 +492,12 @@ Examples:
 
   # Save results including embeddings (warning: creates large files)
   python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --input data.txt --output-file results_with_embeddings.json --save-embeddings
+
+  # Multiple input files (num-samples applied per file)
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --input data1.jsonl data2.jsonl data3.txt --num-samples 100
+
+  # File-of-files input (one file path per line)
+  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --fof file_list.txt --num-samples 50
         """
     )
     # ... rest of the argument definitions ...
@@ -467,7 +506,12 @@ Examples:
                         choices=['pytorch', 'onnx', 'openvino', 'tensorrt', 'vllm', 'ollama', 'llama_cpp'],
                         default=['pytorch', 'onnx'],
                         help='Backends to compare')
-    parser.add_argument("--input", required=True, help="Path to input file (text, JSONL, JSONL.bz2) or direct string to encode")
+    parser.add_argument("--input", nargs='+', default=None,
+                       help="Path(s) to input file(s) (text, JSONL, JSONL.bz2) or direct string to encode. "
+                            "When multiple files are given, --num-samples applies per file.")
+    parser.add_argument("--fof", "--file-of-files", dest="fof", type=str, default=None,
+                       help="Path to a file-of-files (one input file path per line). "
+                            "Alternative to --input with multiple files. --num-samples applies per file.")
     parser.add_argument("--field-path", "--field_path", dest="field_path",
                        type=str, default=None,
                        help="Dot-separated path to text field in JSONL (e.g., 'document.text', 'documents[*].text'). "
@@ -514,8 +558,15 @@ Examples:
     parser.add_argument("--save-embeddings", "--save_embeddings", dest="save_embeddings",
                        action="store_true",
                        help="Include embeddings in the JSON output (warning: can create large files)")
+    parser.add_argument("--print-worst", "--print_worst", dest="print_worst",
+                       type=int, default=0,
+                       help="Print the N worst matching examples (lowest cosine similarity) per backend pair (default: 0 = off)")
 
     args = parser.parse_args()
+
+    # Validate that at least one input source is provided
+    if not args.input and not args.fof:
+        parser.error("At least one of --input or --fof is required")
 
     # Set PyTorch thread count if specified
     if args.num_threads is not None:
@@ -578,9 +629,26 @@ Examples:
             }
             models[backend] = load_sentence_transformer_with_backend(args.model, backend, model_kwargs)
 
-    # Read sentences
-    sentences = read_sentences(args.input, args.max_text_length, args.field_path, args.num_samples)
-    print(f"Using {len(sentences)} sentences")
+    # Collect input file list from --input and/or --fof
+    input_files = []
+    if args.input:
+        input_files.extend(args.input)
+    if args.fof:
+        print(f"Reading file-of-files: {args.fof}")
+        with open(args.fof, 'r') as fof:
+            for line in fof:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    input_files.append(line)
+        print(f"  Found {len(input_files) - (len(args.input) if args.input else 0)} files from --fof")
+
+    # Read sentences from all input sources (num_samples applies per file)
+    sentences = []
+    for input_source in input_files:
+        file_sentences = read_sentences(input_source, args.max_text_length, args.field_path, args.num_samples)
+        print(f"  {input_source}: {len(file_sentences)} sentences")
+        sentences.extend(file_sentences)
+    print(f"Using {len(sentences)} sentences total (from {len(input_files)} source(s))")
 
     # Calculate and display sentence length statistics
     lengths = [len(s) for s in sentences]
@@ -620,19 +688,32 @@ Examples:
     scores = {}
     min_vals = {}
     arg_min_vals = {}
+    skipped_batches = 0
     for i, batch in enumerate(tqdm(batches)):
-        batch_embeddings = [[] for _ in args.backends]
+        batch_embeddings = [None for _ in args.backends]
+        batch_failed = False
 
         # Generate embeddings for each backend
         for i1, backend in enumerate(args.backends):
             start_time = time.time()
             embeddings = get_embeddings(models[backend], batch, convert_to_numpy=False, batch_no=i)
             backend_times[backend] += time.time() - start_time
+
+            if embeddings is None:
+                batch_failed = True
+                break
+
             batch_embeddings[i1] = embeddings
 
-            # Store embeddings if requested
-            if args.save_embeddings:
-                # Convert to numpy if needed
+        # Skip entire batch if any backend failed
+        if batch_failed:
+            skipped_batches += 1
+            continue
+
+        # Store embeddings if requested
+        if args.save_embeddings:
+            for i1, backend in enumerate(args.backends):
+                embeddings = batch_embeddings[i1]
                 if isinstance(embeddings, list):
                     embeddings_np = np.array(embeddings)
                 elif hasattr(embeddings, 'cpu'):  # torch tensor
@@ -661,6 +742,9 @@ Examples:
                 gc.collect()
                 print(f"GC triggered at batch {i}, memory: {current_memory:.1f}MB")
 
+    if skipped_batches > 0:
+        print(f"\n[WARN] Skipped {skipped_batches}/{len(batches)} batches due to errors")
+
     # Normalize the results:
     # for k in scores.keys():
     #     scores[k] /= num_sentences
@@ -682,7 +766,7 @@ Examples:
             'batch_size': args.batch_size,
             'device': args.device,
             'precision': args.precision,
-            'input_file': args.input,
+            'input_files': input_files,
             'field_path': args.field_path if hasattr(args, 'field_path') else None,
             'save_embeddings': args.save_embeddings,
         },
@@ -755,6 +839,22 @@ Examples:
                     print(f"  Cosine Similarity: {cosine_sim:.6f}")
         print("\n"+ "=" * 70)
         print(f"The min cosine is realized for \n {sentences[arg_min][:300]} ...")
+
+        # Print worst matching examples if requested
+        if args.print_worst > 0:
+            print("\n" + "=" * 70)
+            print(f"WORST MATCHING EXAMPLES (top {args.print_worst} lowest cosine similarity)")
+            print("=" * 70)
+            for key, score_lists in scores.items():
+                cosine_scores = np.array(score_lists[0])
+                n = min(args.print_worst, len(cosine_scores))
+                worst_indices = np.argsort(cosine_scores)[:n]
+                print(f"\n{key.upper()}:")
+                print("-" * 70)
+                for rank, idx in enumerate(worst_indices, 1):
+                    print(f"  #{rank} (cosine={cosine_scores[idx]:.6f}, idx={idx}):")
+                    print(f"    {sentences[idx][:200]}{'...' if len(sentences[idx]) > 200 else ''}")
+                    print()
 
     # Save results to JSON if output file specified
     if args.output_file:
