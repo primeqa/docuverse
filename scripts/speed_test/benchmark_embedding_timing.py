@@ -258,6 +258,18 @@ class GPUEmbedder:
                               f"--attn_implementation) failed ({type(e).__name__}): {e}\033[0m")
                     else:
                         print(f"  Attention '{attn_label}' failed ({type(e).__name__}): {e}")
+                    # After a failed from_pretrained, the model class may have been
+                    # registered locally without config_class (e.g. Jina V5).  Patch
+                    # it now so subsequent from_pretrained calls don't crash in
+                    # auto_factory's has_local_code branch.
+                    if trust_remote_code:
+                        try:
+                            _cfg_type = type(base_config)
+                            _model_cls = AutoModel._model_mapping[_cfg_type]
+                            if not hasattr(_model_cls, 'config_class'):
+                                _model_cls.config_class = _cfg_type
+                        except (KeyError, TypeError, AttributeError):
+                            pass
                 except Exception as e:
                     last_exc = e
                     if attn_implementation is not None and attn_label == attn_implementation:
@@ -266,6 +278,15 @@ class GPUEmbedder:
                               f"({type(e).__name__}): {e}\033[0m")
                     else:
                         print(f"  Attention '{attn_label}' failed at inference ({type(e).__name__}): {e}")
+                    # Same config_class patch for inference failures
+                    if trust_remote_code:
+                        try:
+                            _cfg_type = type(base_config)
+                            _model_cls = AutoModel._model_mapping[_cfg_type]
+                            if not hasattr(_model_cls, 'config_class'):
+                                _model_cls.config_class = _cfg_type
+                        except (KeyError, TypeError, AttributeError):
+                            pass
                     self.model = None
             if loaded:
                 break
