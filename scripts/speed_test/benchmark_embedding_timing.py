@@ -268,6 +268,38 @@ class GPUEmbedder:
             if len(_passes) > 1 and pass_label == _passes[0][0]:
                 print(f"  Retrying with {disabled_str}...")
         if not loaded:
+            # Last resort: load with no attention kwargs and skip the validation
+            # forward pass.  Some models (e.g. Jina V5) fail the test inference
+            # due to missing attributes but work fine for actual embedding.
+            print(f"  All attention attempts failed — trying bare load (no validation pass)...")
+            try:
+                self.model = AutoModel.from_pretrained(
+                    model_name, **model_kwargs
+                )
+                if not hasattr(type(self.model), 'config_class'):
+                    type(self.model).config_class = AutoConfig
+                for _name, _mod in self.model.named_modules():
+                    if hasattr(_mod, "position_ids") and isinstance(
+                        getattr(_mod, "position_ids"), torch.Tensor
+                    ):
+                        seq_len = _mod.position_ids.shape[-1]
+                        _mod.register_buffer(
+                            "position_ids",
+                            torch.arange(seq_len).unsqueeze(0),
+                            persistent=False,
+                        )
+                self.model = self.model.to(self.device)
+                self.model.eval()
+                loaded = True
+                _used_attn = "none (bare load, no validation)"
+                _used_pass = "fallback"
+                print(f"  \033[93mWARNING: Model loaded without attention validation — "
+                      f"inference errors may occur at runtime.\033[0m")
+            except Exception as e:
+                last_exc = e
+                print(f"  Bare load also failed ({type(e).__name__}): {e}")
+
+        if not loaded:
             raise RuntimeError(
                 f"Could not load model {model_name} with any attention implementation"
             ) from last_exc
