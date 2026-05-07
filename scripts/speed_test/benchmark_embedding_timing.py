@@ -397,6 +397,99 @@ class GPUEmbedder:
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
 
+class CollatorGPUEmbedder(GPUEmbedder):
+    """GPU embedder using DataCollatorWithFlattening for variable-length sequences.
+
+    Instead of padding all sequences to the longest in the batch, this approach
+    tokenizes each sentence individually (no padding), then uses
+    DataCollatorWithFlattening to pack them into a single flattened sequence with
+    appropriate position_ids and flash attention kwargs. This eliminates padding
+    overhead and leverages flash attention's variable-length support.
+
+    Drop-in replacement for GPUEmbedder — same constructor args and interface.
+    Requires flash_attn to be installed and a model that supports flash_attention_2.
+    """
+
+    def __init__(self, model_name: str, device: str = None, use_torch_compile: bool = False,
+                 dtype: str = "bf16", trust_remote_code: bool = False,
+                 attn_implementation: str = None):
+        # Force flash_attention_2 for the collator path — it's required for
+        # DataCollatorWithFlattening to produce correct results.
+        if attn_implementation is None:
+            attn_implementation = "flash_attention_2"
+        super().__init__(
+            model_name=model_name,
+            device=device,
+            use_torch_compile=use_torch_compile,
+            dtype=dtype,
+            trust_remote_code=trust_remote_code,
+            attn_implementation=attn_implementation,
+        )
+        from transformers import DataCollatorWithFlattening
+        self.collator = DataCollatorWithFlattening(return_flash_attn_kwargs=True)
+        print(f"  collator: DataCollatorWithFlattening (flash_attn variable-length packing)")
+
+    def tokenize(self, texts: List[str], max_length: int = None):
+        """Tokenize each sentence individually without padding.
+
+        Returns a dict with 'encoded' (list of per-sentence token dicts) and
+        'lengths' (token count per sentence), which encode() consumes.
+        """
+        if max_length is None:
+            max_length = self.max_num_tokens or self.max_position_embeddings or 512
+        encoded = [
+            self.tokenizer(
+                text,
+                return_attention_mask=False,
+                truncation=True,
+                max_length=max_length,
+            )
+            for text in texts
+        ]
+        lengths = [len(e["input_ids"]) for e in encoded]
+        return {"encoded": encoded, "lengths": lengths}
+
+    def encode(self, inputs) -> np.ndarray:
+        """Run inference using DataCollatorWithFlattening.
+
+        Takes the output of tokenize() — a dict with 'encoded' and 'lengths'.
+        Flattens all sequences into one, runs a single forward pass, then splits
+        the hidden states back by sentence length and applies mean pooling.
+        """
+        encoded = inputs["encoded"]
+        lengths = inputs["lengths"]
+
+        # Collator expects list of dicts with 'input_ids' as lists (not tensors)
+        batch = self.collator([{"input_ids": e["input_ids"]} for e in encoded])
+        batch = {
+            k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+            for k, v in batch.items()
+        }
+
+        with torch.no_grad():
+            outputs = self.model(**batch)
+
+        # outputs.last_hidden_state is [1, total_tokens, hidden_dim]
+        hidden = outputs.last_hidden_state.squeeze(0)  # [total_tokens, hidden_dim]
+
+        # Split back into per-sentence embeddings and mean-pool
+        embeddings = []
+        offset = 0
+        for length in lengths:
+            sentence_hidden = hidden[offset:offset + length]
+            embeddings.append(sentence_hidden.mean(dim=0))
+            offset += length
+
+        embeddings = torch.stack(embeddings)
+        embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+        return embeddings.cpu().numpy()
+
+    def embed(self, texts: List[str]) -> np.ndarray:
+        """Tokenize + encode in one call."""
+        inputs = self.tokenize(texts)
+        return self.encode(inputs)
+
+
 # The read_jsonl_file and get_nested_field functions have been moved to jsonl_utils.py
 # They are imported at the top of this file
 
@@ -1028,6 +1121,10 @@ def main():
     parser.add_argument("--select_longest", type=int, default=None,
                         help="Before applying --num_samples, keep only the N longest texts "
                              "(by character length). Useful for stress-testing with long inputs.")
+    parser.add_argument("--use_collator", action="store_true",
+                        help="Use CollatorGPUEmbedder (DataCollatorWithFlattening + flash attention) "
+                             "instead of standard padded GPUEmbedder. Eliminates padding overhead "
+                             "for variable-length inputs. Requires flash_attn.")
 
     args = parser.parse_args()
 
@@ -1085,10 +1182,12 @@ def main():
 
     if not args.skip_gpu:
         try:
-            gpu_embedder = GPUEmbedder(args.local_model_name, args.device, args.torch_compile, args.dtype,
-                                       trust_remote_code=args.trust_remote_code,
-                                       attn_implementation=args.attn_implementation)
-            embedders.append(("GPU", gpu_embedder))
+            EmbedderClass = CollatorGPUEmbedder if args.use_collator else GPUEmbedder
+            gpu_label = "GPU(collator)" if args.use_collator else "GPU"
+            gpu_embedder = EmbedderClass(args.local_model_name, args.device, args.torch_compile, args.dtype,
+                                          trust_remote_code=args.trust_remote_code,
+                                          attn_implementation=args.attn_implementation)
+            embedders.append((gpu_label, gpu_embedder))
         except Exception as e:
             print(f"✗ Failed to initialize GPU embedder: {e}")
             print("  Skipping GPU benchmarking")
@@ -1097,7 +1196,7 @@ def main():
         print("\n✗ No embedders available for benchmarking!")
         return
 
-    gpu_embedder_obj = next((emb for name, emb in embedders if name == "GPU"), None)
+    gpu_embedder_obj = next((emb for name, emb in embedders if "GPU" in name), None)
 
     # Resolve max_text_size: take min of user-provided value and model's max_seq_length
     if gpu_embedder_obj is not None and gpu_embedder_obj.max_seq_length is not None:

@@ -4,6 +4,9 @@ Extract average throughput and latency from benchmark JSON files produced by
 benchmark_embedding_timing.py, printing results in the order given by a models file.
 
 Usage:
+    # Use a config file (reads models and output_dir from YAML):
+    python extract_benchmark_stats.py --config speed_configs/ml_miracle.5.8.0.yaml
+
     # Use a models file to define order, look for JSONs in a directory:
     python extract_benchmark_stats.py --models-file new_models.dat --json-dir latency-bv/
 
@@ -19,6 +22,8 @@ import json
 import re
 import sys
 from pathlib import Path
+
+import yaml
 
 
 def model_to_filename(model_name: str) -> str:
@@ -104,20 +109,39 @@ def main():
         help="Directory to search for JSON files when model names are used (default: .)",
     )
     parser.add_argument(
+        "--config", "-c",
+        default=None,
+        help="YAML config file (e.g. speed_configs/ml_miracle.5.8.0.yaml). "
+             "Reads 'models' list and uses 'output_dir' as json-dir.",
+    )
+    parser.add_argument(
         "--no-models-file",
         action="store_true",
         help="Ignore models file; print files in the order given on the command line",
     )
     args = parser.parse_args()
 
+    # If --config is given, load models and output_dir from the YAML file
+    config_models: list[str] | None = None
+    if args.config is not None:
+        config_path = Path(args.config)
+        if not config_path.exists():
+            parser.error(f"Config file '{config_path}' not found.")
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        if "models" in cfg:
+            config_models = [m for m in cfg["models"] if m]
+        if "output_dir" in cfg and args.json_dir == ".":
+            args.json_dir = cfg["output_dir"]
+
     json_dir = Path(args.json_dir)
 
-    # Resolve which models file to use: explicit > json_dir/models.dat > none
+    # Resolve which models file to use: config > explicit > json_dir/models.dat > none
     models_file: Path | None = None
     if not args.no_models_file:
         if args.models_file is not None:
             models_file = Path(args.models_file)
-        else:
+        elif config_models is None:
             candidate = json_dir / "models.dat"
             if candidate.exists():
                 models_file = candidate
@@ -125,7 +149,24 @@ def main():
     # Build the ordered list of (label, path) pairs to process
     entries: list[tuple[str, Path]] = []
 
-    if models_file is None:
+    if config_models is not None and models_file is None:
+        # Models come from the config file
+        json_lookup: dict[str, Path] = {}
+        for p in args.json_files:
+            path = Path(p)
+            json_lookup[path.stem] = path
+        for p in json_dir.glob("benchmark_*.json"):
+            json_lookup.setdefault(p.stem, p)
+
+        for model in config_models:
+            stem = model_to_filename(model)
+            if stem in json_lookup:
+                entries.append((model, json_lookup[stem]))
+            else:
+                print(f"WARNING: no JSON found for model '{model}' (expected {stem}.json)",
+                      file=sys.stderr)
+
+    elif models_file is None:
         # No models file: use explicit files in argument order
         if not args.json_files:
             parser.error("No JSON files given and no models file found. "
