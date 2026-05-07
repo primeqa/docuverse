@@ -5,7 +5,7 @@ field_path: 'text'
 max_samples: 32768
 batch_sizes: 512
 use_collator: True
-output_dir: ml-latency-miracle-fixed2-5.8.0
+output_dir: ml-latency-miracle-fixed2-5.8.0-collated
 models:
   - ibm-granite/granite-embedding-97m-multilingual-r2
   - ibm-granite/granite-embedding-311m-multilingual-r2
