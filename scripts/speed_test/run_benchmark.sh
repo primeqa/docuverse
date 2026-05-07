@@ -14,6 +14,7 @@
 # are applied for any flag not supplied on the command line or in --config YAML.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_ORIG_ARGS="$*"
 source "${SCRIPT_DIR}/_yaml_config.sh"
 BENCHMARK_PY="${SCRIPT_DIR}/benchmark_embedding_timing.py"
 
@@ -68,6 +69,9 @@ while [[ $# -gt 0 ]]; do
         *)                      extra_args+=("$1");     shift ;;
     esac
 done
+
+# ── log invocation to run_cmmds ───────────────────────────────────────────────
+echo "$(date '+%Y-%m-%d %H:%M:%S') | user=$(whoami) | ${BASH_SOURCE[0]} ${_ORIG_ARGS}" >> "${SCRIPT_DIR}/run_cmmds"
 
 # ── collect model list ────────────────────────────────────────────────────────
 # Priority: --models_file CLI > "models:" array from YAML > single --local_model_name
