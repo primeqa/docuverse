@@ -273,6 +273,7 @@ class GPUEmbedder:
             # due to missing attributes but work fine for actual embedding.
             print(f"  All attention attempts failed — trying bare load (no validation pass)...")
             try:
+                print(f"model_kwargs is {model_kwargs}")
                 self.model = AutoModel.from_pretrained(
                     model_name, **model_kwargs
                 )
