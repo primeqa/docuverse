@@ -212,8 +212,12 @@ class GPUEmbedder:
                     self.model = AutoModel.from_pretrained(
                         model_name, **attn_kwargs, **_pass_kwargs
                     )
-                    if not hasattr(type(model), 'config_class'):
-                        type(model).config_class = AutoConfig
+                    # Patch missing config_class immediately — custom models
+                    # (e.g. Jina V5) omit it, and transformers' auto_factory
+                    # checks it on subsequent from_pretrained calls once the
+                    # class is registered locally.
+                    if not hasattr(type(self.model), 'config_class'):
+                        type(self.model).config_class = type(self.model.config)
                     # transformers ≥5.x meta-device loading corrupts non-persistent
                     # integer buffers (e.g. position_ids) with uninitialised memory.
                     # Re-initialise any position_ids buffers before moving to GPU.
@@ -247,7 +251,7 @@ class GPUEmbedder:
                     _used_attn = attn_label
                     _used_pass = pass_label
                     break
-                except (ValueError, ImportError, OSError) as e:
+                except (ValueError, ImportError, OSError, AttributeError) as e:
                     last_exc = e
                     if attn_implementation is not None and attn_label == attn_implementation:
                         print(f"\033[91m\033[1m  Attention '{attn_label}' (requested via "
@@ -275,7 +279,7 @@ class GPUEmbedder:
             try:
                 print(f"model_kwargs is {model_kwargs}")
                 self.model = AutoModel.from_pretrained(
-                    model_name, **model_kwargs
+                    model_name, trust_remote_code=True
                 )
                 if not hasattr(type(self.model), 'config_class'):
                     type(self.model).config_class = AutoConfig
