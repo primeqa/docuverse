@@ -542,7 +542,7 @@ class CollatorGPUEmbedder(GPUEmbedder):
 
         embeddings = torch.stack(embeddings)
         embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-        return embeddings.cpu().numpy()
+        return embeddings.float().cpu().numpy()
 
     def embed(self, texts: List[str]) -> np.ndarray:
         """Tokenize + encode in one call."""
