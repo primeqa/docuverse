@@ -490,23 +490,23 @@ class CollatorGPUEmbedder(GPUEmbedder):
         print(f"  collator: DataCollatorWithFlattening (flash_attn variable-length packing)")
 
     def tokenize(self, texts: List[str], max_length: int = None):
-        """Tokenize each sentence individually without padding.
+        """Tokenize all sentences in a single batched call without padding.
 
         Returns a dict with 'encoded' (list of per-sentence token dicts) and
         'lengths' (token count per sentence), which encode() consumes.
         """
         if max_length is None:
             max_length = self.max_num_tokens or self.max_position_embeddings or 512
-        encoded = [
-            self.tokenizer(
-                text,
-                return_attention_mask=False,
-                truncation=True,
-                max_length=max_length,
-            )
-            for text in texts
-        ]
-        lengths = [len(e["input_ids"]) for e in encoded]
+        batch_encoded = self.tokenizer(
+            texts,
+            return_attention_mask=False,
+            truncation=True,
+            max_length=max_length,
+            padding=False,
+        )
+        # Split batch result into per-text dicts for the collator
+        encoded = [{"input_ids": ids} for ids in batch_encoded["input_ids"]]
+        lengths = [len(ids) for ids in batch_encoded["input_ids"]]
         return {"encoded": encoded, "lengths": lengths}
 
     def encode(self, inputs) -> np.ndarray:
@@ -662,11 +662,15 @@ def benchmark_embedder(embedder, texts: List[str], batch_size: int, name: str) -
     if has_split and tokenize_timings:
         total_tokenize = sum(tokenize_timings)
         total_encode = sum(encode_timings)
+        tokenize_throughput = len(texts) / total_tokenize if total_tokenize > 0 else 0
+        encode_throughput = len(texts) / total_encode if total_encode > 0 else 0
         result.update({
             "tokenize_time": total_tokenize,
             "encode_time": total_encode,
             "tokenize_pct": total_tokenize / total_time * 100,
             "encode_pct": total_encode / total_time * 100,
+            "tokenize_throughput": tokenize_throughput,
+            "encode_throughput": encode_throughput,
             "avg_tokenize_batch": np.mean(tokenize_timings),
             "avg_encode_batch": np.mean(encode_timings),
         })
@@ -744,39 +748,47 @@ def print_results(all_file_results: dict):
                       f"{np.mean(throughputs):<22.2f} {np.std(throughputs):<18.2f} "
                       f"{np.mean(latencies):<20.2f} {np.std(latencies):<18.2f}")
 
-    # Timing breakdown (tokenization vs inference)
+    # Timing breakdown (tokenization vs inference vs total)
     has_breakdown = any("tokenize_time" in r for r in all_results)
     if has_breakdown:
-        print("\n" + "=" * 120)
-        print("TIMING BREAKDOWN (Tokenization vs Inference)")
-        print("=" * 120)
+        print("\n" + "=" * 140)
+        print("THROUGHPUT BREAKDOWN (Tokenization vs Inference vs Total)")
+        print("=" * 140)
 
         for batch_size in batch_sizes:
-            print(f"\n{'Batch Size: ' + str(batch_size):^120}")
-            print("-" * 120)
+            print(f"\n{'Batch Size: ' + str(batch_size):^140}")
+            print("-" * 140)
 
             if multiple_files:
-                print(f"{'File':<30} {'Method':<10} {'Tokenize (s)':<15} {'Inference (s)':<15} "
-                      f"{'Tok %':<10} {'Inf %':<10} {'Avg Tok/bat (ms)':<20} {'Avg Inf/bat (ms)':<20}")
+                print(f"{'File':<25} {'Method':<10} "
+                      f"{'Tok (s)':<10} {'Inf (s)':<10} {'Total (s)':<10} "
+                      f"{'Tok spd (sp/s)':<15} {'Inf spd (sp/s)':<15} {'Total spd (sp/s)':<16} "
+                      f"{'Tok %':<8} {'Inf %':<8} "
+                      f"{'Avg Tok/bat (ms)':<18} {'Avg Inf/bat (ms)':<18}")
             else:
-                print(f"{'Method':<15} {'Tokenize (s)':<15} {'Inference (s)':<15} "
-                      f"{'Tok %':<10} {'Inf %':<10} {'Avg Tok/bat (ms)':<20} {'Avg Inf/bat (ms)':<20}")
-            print("-" * 120)
+                print(f"{'Method':<15} "
+                      f"{'Tok (s)':<10} {'Inf (s)':<10} {'Total (s)':<10} "
+                      f"{'Tok spd (sp/s)':<15} {'Inf spd (sp/s)':<15} {'Total spd (sp/s)':<16} "
+                      f"{'Tok %':<8} {'Inf %':<8} "
+                      f"{'Avg Tok/bat (ms)':<18} {'Avg Inf/bat (ms)':<18}")
+            print("-" * 140)
 
             for file_label in file_labels:
                 file_results = [r for r in all_file_results[file_label]
                                 if r["batch_size"] == batch_size and "tokenize_time" in r]
                 for result in file_results:
                     if multiple_files:
-                        print(f"{file_label:<30} {result['name']:<10} "
-                              f"{result['tokenize_time']:<15.3f} {result['encode_time']:<15.3f} "
-                              f"{result['tokenize_pct']:<10.1f} {result['encode_pct']:<10.1f} "
-                              f"{result['avg_tokenize_batch']*1000:<20.2f} {result['avg_encode_batch']*1000:<20.2f}")
+                        print(f"{file_label:<25} {result['name']:<10} "
+                              f"{result['tokenize_time']:<10.3f} {result['encode_time']:<10.3f} {result['total_time']:<10.3f} "
+                              f"{result['tokenize_throughput']:<15.1f} {result['encode_throughput']:<15.1f} {result['throughput']:<16.1f} "
+                              f"{result['tokenize_pct']:<8.1f} {result['encode_pct']:<8.1f} "
+                              f"{result['avg_tokenize_batch']*1000:<18.2f} {result['avg_encode_batch']*1000:<18.2f}")
                     else:
                         print(f"{result['name']:<15} "
-                              f"{result['tokenize_time']:<15.3f} {result['encode_time']:<15.3f} "
-                              f"{result['tokenize_pct']:<10.1f} {result['encode_pct']:<10.1f} "
-                              f"{result['avg_tokenize_batch']*1000:<20.2f} {result['avg_encode_batch']*1000:<20.2f}")
+                              f"{result['tokenize_time']:<10.3f} {result['encode_time']:<10.3f} {result['total_time']:<10.3f} "
+                              f"{result['tokenize_throughput']:<15.1f} {result['encode_throughput']:<15.1f} {result['throughput']:<16.1f} "
+                              f"{result['tokenize_pct']:<8.1f} {result['encode_pct']:<8.1f} "
+                              f"{result['avg_tokenize_batch']*1000:<18.2f} {result['avg_encode_batch']*1000:<18.2f}")
 
     # Summary
     print("\n" + "=" * 120)
@@ -786,8 +798,18 @@ def print_results(all_file_results: dict):
         method_results = [r for r in all_results if r["name"] == method]
         avg_throughput = np.mean([r["throughput"] for r in method_results])
         avg_latency = np.mean([r["avg_latency_ms"] for r in method_results])
-        print(f"  {method}: Avg throughput = {avg_throughput:.2f} spans/s, "
-              f"Avg latency = {avg_latency:.2f} ms")
+        summary_line = (f"  {method}: Avg total throughput = {avg_throughput:.2f} spans/s, "
+                        f"Avg latency = {avg_latency:.2f} ms")
+        # Add per-phase throughput if available
+        method_with_breakdown = [r for r in method_results if "tokenize_throughput" in r]
+        if method_with_breakdown:
+            avg_tok_throughput = np.mean([r["tokenize_throughput"] for r in method_with_breakdown])
+            avg_enc_throughput = np.mean([r["encode_throughput"] for r in method_with_breakdown])
+            avg_tok_pct = np.mean([r["tokenize_pct"] for r in method_with_breakdown])
+            summary_line += (f"\n         Avg tokenize throughput = {avg_tok_throughput:.2f} spans/s, "
+                             f"Avg inference throughput = {avg_enc_throughput:.2f} spans/s "
+                             f"(tokenize = {avg_tok_pct:.1f}% of total time)")
+        print(summary_line)
 
     api_results = [r for r in all_results if "API" in r["name"]]
     gpu_results = [r for r in all_results if "GPU" in r["name"]]
