@@ -823,6 +823,7 @@ def print_results(all_file_results: dict):
 
 def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png'):
     """Create visualization plots from benchmark results."""
+    global api_results, gpu_results
     os.makedirs(output_dir, exist_ok=True)
 
     # Extract unique batch sizes and method names
