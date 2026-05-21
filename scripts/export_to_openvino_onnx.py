@@ -214,6 +214,75 @@ def cosine_similarity(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 
+def _prepare_openvino_source(model_id: str) -> str:
+    """Re-save the HF model locally with eager attention + fp32 so that
+    optimum-intel's OpenVINO exporter can JIT-trace it, while preserving
+    the SentenceTransformers scaffolding (modules.json, 1_Pooling/, etc.).
+
+    Why both pieces:
+
+    1. optimum-intel drops the ``attn_implementation`` and ``torch_dtype``
+       kwargs we pass to ``OVModelForFeatureExtraction.from_pretrained``, so
+       the underlying model loads with SDPA + the checkpoint's native bf16
+       weights. ModernBERT's SDPA path hits a mask-vs-query dtype mismatch
+       during ``torch.jit.trace`` and the export aborts. Baking eager+fp32
+       into a local copy fixes the export.
+
+    2. ``AutoModel.save_pretrained`` only writes config.json + safetensors +
+       tokenizer. Without ``modules.json`` and ``1_Pooling/config.json``,
+       SentenceTransformer falls back to mean pooling and silently disagrees
+       with the original model (which uses CLS for granite-embedding-r2).
+       Snapshotting the full repo first keeps the scaffolding in place.
+
+    Cached at ~/.cache/granite-switch/ov-source/<safe-model-id>/ so repeat
+    runs skip both the snapshot and the re-save.
+    """
+    import pathlib
+    import shutil
+    from transformers import AutoModel
+    from huggingface_hub import snapshot_download
+
+    cache_root = pathlib.Path.home() / ".cache" / "granite-switch" / "ov-source"
+    safe_id = model_id.replace("/", "__")
+    out_dir = cache_root / safe_id
+    sentinel = out_dir / ".prepared"
+    if sentinel.exists():
+        print(f"✓ Using cached pre-export at {out_dir}")
+        return str(out_dir)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Step 1: bring over the full repo (or local dir) so ST scaffolding files
+    # are present in out_dir.
+    src_path = pathlib.Path(model_id)
+    if src_path.is_dir():
+        print(f"Copying {src_path} -> {out_dir} (preserves ST scaffolding)")
+        for item in src_path.iterdir():
+            dst = out_dir / item.name
+            if item.is_dir():
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.copytree(item, dst)
+            else:
+                shutil.copy2(item, dst)
+    else:
+        print(f"Snapshotting {model_id} -> {out_dir} (preserves ST scaffolding)")
+        snapshot_download(repo_id=model_id, local_dir=str(out_dir))
+
+    # Step 2: overwrite the bare HF model parts (config.json + weights) with
+    # an eager+fp32 re-save. ST scaffolding files are untouched.
+    print(f"Re-saving model with attn=eager, torch_dtype=fp32")
+    model = AutoModel.from_pretrained(
+        model_id,
+        attn_implementation="eager",
+        torch_dtype=torch.float32,
+    )
+    model.save_pretrained(out_dir)
+
+    sentinel.touch()
+    return str(out_dir)
+
+
 def test_model_similarity(openvino_model, original_model, test_sentences, output_dir):
     """
     Test similarity between OpenVINO and original PyTorch models.
@@ -349,11 +418,26 @@ def main():
         if args.format == 'openvino':
             # Import OpenVINO-specific modules only when needed
             from optimum.intel import OVModelForFeatureExtraction, OVWeightQuantizationConfig
-            from sentence_transformers import export_static_quantized_openvino_model
             from transformers import AutoTokenizer
             import pathlib, shutil
 
-            print("Step 1: Exporting model to OpenVINO FP32 format...")
+            # Build the weight-only quantization config up front so we can pass
+            # it to the export call directly. This produces correctly-named
+            # files (openvino_model.bin/xml) and respects the requested bits.
+            # Doing it post-export via export_static_quantized_openvino_model
+            # is wrong for weight-only quant: that function does *static
+            # activation* quantization with hardcoded int8 output naming and
+            # ignores the bits field (so int4 silently became int8).
+            quantization_config = None
+            if args.quantization == 'int8':
+                quantization_config = OVWeightQuantizationConfig(bits=8, sym=True)
+            elif args.quantization == 'int4':
+                quantization_config = OVWeightQuantizationConfig(
+                    bits=4, sym=True, group_size=128, ratio=0.8,
+                )
+
+            label = f"INT{quantization_config.bits} weight-only" if quantization_config else "FP32"
+            print(f"Step 1: Exporting model to OpenVINO ({label})...")
             print("This may take several minutes...")
             print()
 
@@ -362,10 +446,25 @@ def main():
             model_path = pathlib.Path(model_name)
             model_abs = str(model_path.resolve()) if model_path.is_dir() else model_name
 
-            ov_model = OVModelForFeatureExtraction.from_pretrained(
-                model_abs,
+            # Pre-export with eager+fp32 baked in. optimum-intel drops the
+            # attn_implementation kwarg below, so without this step the trace
+            # fails on ModernBERT-based models with a mask/query dtype mismatch.
+            # Re-point model_path at the prepared dir so the scaffolding copy
+            # block below finds modules.json / 1_Pooling/ and the validation
+            # step uses the correct (CLS) pooling.
+            model_abs = _prepare_openvino_source(model_abs)
+            model_path = pathlib.Path(model_abs)
+
+            from_pretrained_kwargs = dict(
                 export=True,
                 attn_implementation='eager',
+            )
+            if quantization_config is not None:
+                from_pretrained_kwargs['quantization_config'] = quantization_config
+
+            ov_model = OVModelForFeatureExtraction.from_pretrained(
+                model_abs,
+                **from_pretrained_kwargs,
             )
             output_path = pathlib.Path(output_dir)
             output_path.mkdir(parents=True, exist_ok=True)
@@ -399,39 +498,10 @@ def main():
                         else:
                             shutil.copy2(src, dst)
 
-            print(f"✓ OpenVINO model saved to {output_dir}!")
+            print(f"✓ OpenVINO model ({label}) saved to {output_dir}!")
 
-            # Build quantization config
-            quantization_config = None
-            if args.quantization != 'none':
-                if args.quantization == 'int8':
-                    quantization_config = OVWeightQuantizationConfig(
-                        bits=8,
-                        sym=True,
-                        dataset=None,
-                    )
-                else:  # int4
-                    quantization_config = OVWeightQuantizationConfig(
-                        bits=4,
-                        sym=True,
-                        group_size=128,
-                        ratio=0.8,
-                        dataset=None,
-                    )
-
-            # Load from the clean output_dir (all files present) for quantization/validation
+            # Load from the clean output_dir (all files present) for validation.
             model = SentenceTransformer(output_dir, backend="openvino")
-
-            if quantization_config is not None:
-                print(f"\nStep 2: Applying {args.quantization} quantization to {output_dir}...")
-                export_static_quantized_openvino_model(
-                    model,
-                    quantization_config=quantization_config,
-                    model_name_or_path=output_dir,
-                )
-                print("✓ Quantization applied!")
-                model = SentenceTransformer(output_dir, backend="openvino")
-
             print("✓ Model loaded and exported successfully!")
             print()
 
