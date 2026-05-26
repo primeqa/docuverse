@@ -7,6 +7,7 @@ enabling export of ModernBERT-based models.
 
 import sys
 import os
+from docuverse.utils import save_command_line
 
 # Step 1: Set environment variables BEFORE any imports
 os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
@@ -376,6 +377,70 @@ def test_model_similarity(openvino_model, original_model, test_sentences, output
             pass
 
 
+def _copy_export_artifacts(src_dir, dst_dir, fmt):
+    """Copy only the format-specific export artifacts from src_dir to dst_dir,
+    overwriting if present. Leaves scaffolding (config.json, tokenizer*,
+    modules.json, 1_Pooling/, etc.) in dst_dir untouched so the HF cache stays
+    pristine apart from the new export bits.
+    """
+    import pathlib
+    import shutil
+    src = pathlib.Path(src_dir)
+    dst = pathlib.Path(dst_dir)
+    dst.mkdir(parents=True, exist_ok=True)
+
+    # Land artifacts under a format-named subdir of dst (e.g. "openvino/" or
+    # "onnx/"), mirroring the HF/sentence-transformers convention for
+    # pre-exported weights. This keeps the cache snapshot's root scaffolding
+    # (config.json, tokenizer*, modules.json, 1_Pooling/) untouched.
+    if fmt == 'openvino':
+        # SentenceTransformer's openvino backend stages the converted weights
+        # under <dir>/openvino/ (e.g. openvino_model_int8.{bin,xml}), and
+        # optimum-intel writes openvino_model.{bin,xml} at the staging root.
+        # Pass the subdir through wholesale and pick up the root-level
+        # siblings into the same dst/openvino/.
+        file_globs = [
+            'openvino_model.bin', 'openvino_model.xml',
+            'openvino_tokenizer.*', 'openvino_detokenizer.*',
+            'openvino_config.json', 'ov_config.json',
+        ]
+        sub_name = 'openvino'
+        copy_subdir_passthrough = (src / 'openvino').is_dir()
+    else:  # onnx
+        file_globs = ['*.onnx']
+        sub_name = 'onnx'
+        # The ONNX export already writes into src/onnx/ — pass that subdir
+        # through wholesale to dst/onnx/ rather than scanning root.
+        copy_subdir_passthrough = (src / 'onnx').is_dir()
+
+    dst_sub = dst / sub_name
+    copied = []
+
+    if copy_subdir_passthrough:
+        if dst_sub.exists():
+            shutil.rmtree(dst_sub)
+        shutil.copytree(src / sub_name, dst_sub)
+        copied.append(f"{sub_name}/ (whole subdir)")
+        # Also catch any root-level *.onnx siblings (e.g. quantized variants
+        # written next to the onnx/ dir).
+        for pat in file_globs:
+            for item in src.glob(pat):
+                if not item.is_file():
+                    continue
+                shutil.copy2(item, dst_sub / item.name)
+                copied.append(f"{sub_name}/{item.name}")
+        return copied
+
+    dst_sub.mkdir(parents=True, exist_ok=True)
+    for pat in file_globs:
+        for item in src.glob(pat):
+            if not item.is_file():
+                continue
+            shutil.copy2(item, dst_sub / item.name)
+            copied.append(f"{sub_name}/{item.name}")
+    return copied
+
+
 def main():
     parser = argparse.ArgumentParser(description='Export Granite model to OpenVINO or ONNX format')
     parser.add_argument('--model', type=str, default="ibm-granite/granite-embedding-small-english-r2",
@@ -388,6 +453,9 @@ def main():
                         help='Quantization mode (none, int8, or int4). For OpenVINO: int8/int4. For ONNX: int8 only (dynamic quantization)')
     parser.add_argument('--compare-with-original', action='store_true',
                         help='Compare exported model with original PyTorch model (slower)')
+    parser.add_argument('--inplace', action='store_true',
+                        help='Save export in the HF cache snapshot dir of the input model '
+                             '(or the local model dir if --model is a path). Overrides --output.')
     parser.add_argument("--onnx_config", type=str,
                         choices=["arm64", "avx2", "avx512", "avx512_vnni"],
                         default="avx2",
@@ -395,6 +463,7 @@ def main():
     # parser.add_argument('--loss-type', "--loss_type", dest="loss_type", type=str,
     #                     help='Loss type for the model (e.g., ForCausalLMLoss, CosineSimilarityLoss, etc.)')
     args = parser.parse_args()
+    save_command_line(sys.argv)
 
     print("=" * 70)
     print(f"GRANITE MODEL EXPORT TO {args.format.upper()}")
@@ -405,7 +474,23 @@ def main():
     from sentence_transformers import SentenceTransformer
 
     model_name = args.model
-    output_dir = args.output
+    inplace_target_dir = None
+    if args.inplace:
+        import pathlib
+        import tempfile
+        _mp = pathlib.Path(model_name)
+        if _mp.is_dir():
+            inplace_target_dir = str(_mp.resolve())
+        else:
+            from huggingface_hub import snapshot_download
+            inplace_target_dir = snapshot_download(repo_id=model_name)
+        output_dir = tempfile.mkdtemp(prefix='docuverse-export-')
+        print(f"--inplace: staging export in {output_dir}")
+        print(f"           will copy {args.format} artifacts to {inplace_target_dir}")
+        if args.output and args.output != parser.get_default('output'):
+            print(f"  (ignoring --output {args.output})")
+    else:
+        output_dir = args.output
 
     print(f"Model: {model_name}")
     print(f"Output: {output_dir}")
@@ -581,6 +666,15 @@ def main():
             #     print("   Skipping quantization...")
             #     print()
 
+        # If --inplace, copy only the format-specific artifacts into the HF
+        # cache dir (overwriting any prior export bits there). Validation still
+        # runs against the staged temp dir, which has the full scaffolding.
+        if inplace_target_dir is not None:
+            copied = _copy_export_artifacts(output_dir, inplace_target_dir, args.format)
+            print(f"\n✓ Copied {len(copied)} {args.format} artifact(s) to {inplace_target_dir}:")
+            for c in copied:
+                print(f"  - {c}")
+
         # Test the model with comprehensive validation
         step_num = 3 if args.format == 'openvino' else (4 if args.quantization == 'int8' else 3)
         print(f"Step {step_num}: Validating the exported model...")
@@ -597,16 +691,23 @@ def main():
         # Run comprehensive testing
         test_model_similarity(model, original_model, test_sentences, output_dir)
 
+        final_dir = inplace_target_dir if inplace_target_dir is not None else output_dir
+
         print(f"\n{'='*70}")
         print("✓ EXPORT COMPLETED SUCCESSFULLY")
         print(f"{'='*70}")
         print()
-        print(f"Model saved to: {output_dir}")
+        print(f"Model saved to: {final_dir}")
         print(f"\nYou can now use the model with:")
         if args.format == 'openvino':
-            print(f'  model = SentenceTransformer("{output_dir}", backend="openvino")')
+            print(f'  model = SentenceTransformer("{final_dir}", backend="openvino")')
         else:
-            print(f'  model = SentenceTransformer("{output_dir}", backend="onnx")')
+            print(f'  model = SentenceTransformer("{final_dir}", backend="onnx")')
+
+        # Clean up the inplace staging dir now that artifacts have been copied.
+        if inplace_target_dir is not None and output_dir != inplace_target_dir:
+            import shutil
+            shutil.rmtree(output_dir, ignore_errors=True)
 
         return 0
 

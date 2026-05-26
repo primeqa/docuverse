@@ -73,10 +73,24 @@ def load_sentence_transformer_with_backend(model_name: str,
                     'provider': 'CUDAExecutionProvider' if device == 'cuda' else 'CPUExecutionProvider'
                 }
             if model_path.endswith('.onnx'):
-                model_path = _get_model_and_file_names(model_path, onnx_kwargs)
-            # Use ONNX backend with SentenceTransformers
+                # Splits the path into (dir, file_name); when the user passes
+                # a relative file like "onnx/model_quint8_avx2.onnx", the dir
+                # is empty — fall back to model_name so the dir is the HF id
+                # (or the local checkpoint dir).
+                model_path = _get_model_and_file_names(model_path, onnx_kwargs) or model_name
+
+            load_path = model_name if os.path.exists(model_name) else model_path
+            # If load_path is still a HF id, see if the HF cache snapshot
+            # already contains converted ONNX weights and load from there to
+            # avoid SentenceTransformer triggering a fresh export.
+            if not os.path.isdir(load_path):
+                cached = _resolve_cached_export(load_path, 'onnx', onnx_kwargs.get('file_name'))
+                if cached is not None:
+                    print(f"  ✓ Using pre-converted ONNX weights from HF cache: {cached}")
+                    load_path = cached
+
             model = SentenceTransformer(
-                model_name if os.path.exists(model_name) else model_path,
+                load_path,
                 device=device,
                 backend='onnx',
                 model_kwargs=onnx_kwargs,
@@ -95,10 +109,22 @@ def load_sentence_transformer_with_backend(model_name: str,
 
             # Check if model_path points to an XML file
             if model_path and model_path.endswith('.xml'):
-                model_path = _get_model_and_file_names(model_path, openvino_kwargs)
+                # Splits into (dir, file_name); fall back to model_name when the
+                # user passes a relative path like "openvino/openvino_model.xml".
+                model_path = _get_model_and_file_names(model_path, openvino_kwargs) or model_name
+
+            load_path = model_name if os.path.exists(model_name) else model_path
+            # If load_path is still a HF id, see if the HF cache snapshot
+            # already contains converted OpenVINO weights and load from there
+            # to avoid a fresh export.
+            if not os.path.isdir(load_path):
+                cached = _resolve_cached_export(load_path, 'openvino', openvino_kwargs.get('file_name'))
+                if cached is not None:
+                    print(f"  ✓ Using pre-converted OpenVINO weights from HF cache: {cached}")
+                    load_path = cached
 
             model = SentenceTransformer(
-                model_name if os.path.exists(model_name) else model_path,
+                load_path,
                 backend='openvino',
                 model_kwargs=openvino_kwargs
             )
@@ -254,6 +280,50 @@ def compute_stats(vector: np.ndarray | list) -> Tuple[float, float, float, float
     arg_min = int(np.argmin(vector))
 
     return mean, median, std, min_val, arg_min
+
+
+def _resolve_cached_export(model_name: str, fmt: str, file_name: str | None = None):
+    """If model_name's HF cache snapshot already contains converted weights for
+    the given format, return the snapshot dir. Otherwise return None.
+
+    fmt: 'onnx' or 'openvino'.
+    file_name: optional relative path inside the snapshot (e.g.
+        'onnx/model_quint8_avx2.onnx'). When supplied, only that exact file is
+        checked; the standard layout fallbacks are skipped so we never
+        substitute a different artifact than the caller requested.
+
+    This lets us hand SentenceTransformer a local dir with the pre-converted
+    artifacts (typically populated by export_to_openvino_onnx.py --inplace),
+    which skips the export-on-load behavior.
+    """
+    import pathlib
+    if not model_name:
+        return None
+    if os.path.isdir(model_name):
+        snapshot = pathlib.Path(model_name)
+    else:
+        try:
+            from huggingface_hub import snapshot_download
+            snapshot = pathlib.Path(snapshot_download(repo_id=model_name))
+        except Exception as e:
+            print(f"  (could not locate HF cache for {model_name}: {e})")
+            return None
+    if file_name:
+        return str(snapshot) if (snapshot / file_name).exists() else None
+    if fmt == 'onnx':
+        if (snapshot / 'onnx' / 'model.onnx').exists():
+            return str(snapshot)
+        if any(snapshot.glob('*.onnx')):
+            return str(snapshot)
+    elif fmt == 'openvino':
+        # Prefer the conventional openvino/ subdir layout; fall back to root
+        # for older exports that wrote openvino_model.{xml,bin} at top level.
+        if (snapshot / 'openvino' / 'openvino_model.xml').exists() and \
+                (snapshot / 'openvino' / 'openvino_model.bin').exists():
+            return str(snapshot)
+        if (snapshot / 'openvino_model.xml').exists() and (snapshot / 'openvino_model.bin').exists():
+            return str(snapshot)
+    return None
 
 
 def _get_model_and_file_names(model_path: str, kwargs: dict[str, str]) -> LiteralString | str | bytes:
@@ -768,6 +838,7 @@ Examples:
             'precision': args.precision,
             'input_files': input_files,
             'field_path': args.field_path if hasattr(args, 'field_path') else None,
+            'max_text_length': args.max_text_length,
             'save_embeddings': args.save_embeddings,
         },
         'performance': {},
