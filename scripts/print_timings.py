@@ -17,7 +17,10 @@ from collections import defaultdict
 def _short_model(name):
     if not name:
         return '?'
-    return name.rsplit('/', 1)[-1]
+    short = os.path.basename(name.rstrip('/'))
+    if not short or set(short) <= {'.'}:
+        return name or '?'
+    return short
 
 
 def _short_date(ts):

@@ -555,6 +555,31 @@ def main():
             output_path.mkdir(parents=True, exist_ok=True)
             ov_model.save_pretrained(output_dir)
 
+            # optimum-intel always names the artifacts openvino_model.{bin,xml}
+            # at the save root, regardless of whether weight-only quant was
+            # applied. Move them into <output_dir>/openvino/ and tag the
+            # filename with the quant level so the layout matches the
+            # sentence-transformers convention AND the filename alone reveals
+            # whether the model is quantized.
+            quant_tag = f"_int{quantization_config.bits}" if quantization_config is not None else ""
+            ov_subdir = output_path / "openvino"
+            ov_subdir.mkdir(parents=True, exist_ok=True)
+            for ext in ("bin", "xml"):
+                src_f = output_path / f"openvino_model.{ext}"
+                if src_f.exists():
+                    dst_f = ov_subdir / f"openvino_model{quant_tag}.{ext}"
+                    if dst_f.exists():
+                        dst_f.unlink()
+                    src_f.rename(dst_f)
+            for cfg_name in ("openvino_config.json", "ov_config.json"):
+                src_f = output_path / cfg_name
+                if src_f.exists():
+                    dst_f = ov_subdir / cfg_name
+                    if dst_f.exists():
+                        dst_f.unlink()
+                    src_f.rename(dst_f)
+            ov_file_name = f"openvino/openvino_model{quant_tag}.xml"
+
             # Copy tokenizer and sentence_transformers pipeline files to output_dir
             AutoTokenizer.from_pretrained(model_abs).save_pretrained(output_dir)
 
@@ -586,7 +611,14 @@ def main():
             print(f"✓ OpenVINO model ({label}) saved to {output_dir}!")
 
             # Load from the clean output_dir (all files present) for validation.
-            model = SentenceTransformer(output_dir, backend="openvino")
+            # Pass file_name explicitly so optimum-intel picks up the
+            # quant-tagged artifact under openvino/ instead of looking for the
+            # default openvino_model.xml at root.
+            model = SentenceTransformer(
+                output_dir,
+                backend="openvino",
+                model_kwargs={"file_name": ov_file_name},
+            )
             print("✓ Model loaded and exported successfully!")
             print()
 
@@ -700,7 +732,10 @@ def main():
         print(f"Model saved to: {final_dir}")
         print(f"\nYou can now use the model with:")
         if args.format == 'openvino':
-            print(f'  model = SentenceTransformer("{final_dir}", backend="openvino")')
+            print(
+                f'  model = SentenceTransformer("{final_dir}", backend="openvino", '
+                f'model_kwargs={{"file_name": "{ov_file_name}"}})'
+            )
         else:
             print(f'  model = SentenceTransformer("{final_dir}", backend="onnx")')
 

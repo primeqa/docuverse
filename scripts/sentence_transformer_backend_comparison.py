@@ -304,10 +304,14 @@ def _default_output_name(args) -> str:
     unambiguous: pytorch uses --precision, onnx/openvino parse the quant tag
     from their respective path (or fall back to fp32 when no path is given).
     """
-    model_short = args.model.rsplit('/', 1)[-1]
+    # os.path.basename trims trailing slashes so e.g.
+    # "granite-embedding-278-ovino/" still yields the dir name.
+    model_short = os.path.basename(args.model.rstrip('/'))
     for noise in ('embedding-', 'embedding_'):
         model_short = model_short.replace(noise, '')
     model_short = model_short.replace('multilingual', 'multi')
+    if not model_short or set(model_short) <= {'.'}:
+        model_short = 'model'
 
     backend_short = {'pytorch': 'pt', 'openvino': 'ov', 'llama_cpp': 'llamacpp'}
     tokens = []
