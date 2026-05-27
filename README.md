@@ -64,6 +64,7 @@ from docuverse import SearchEngine
 
 engine = SearchEngine.from_preset(
     "milvus-dense",
+    model_name="ibm-granite/granite-embedding-small-english-r2",
     index_name="docuverse_quickstart",
     input_passages="examples/quickstart/passages.jsonl",
     input_queries="examples/quickstart/queries.jsonl",
