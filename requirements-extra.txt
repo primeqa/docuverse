@@ -1,5 +1,3 @@
-pyizumo[pos]~=2.0.2
-huggingface_hub[cli]
-pynvml
-scikit-learn~=1.3.0
-matplotlib~=3.7.0
+# DEPRECATED: see pyproject.toml `[project.optional-dependencies] extra`. Prefer:
+#   pip install -e .[extra]
+-e .[extra]

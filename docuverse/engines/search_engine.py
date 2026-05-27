@@ -47,6 +47,94 @@ class SearchEngine:
     def get_name():
         return SearchEngine.__name
 
+    # ------------------------------------------------------------------
+    # Factory classmethods (PR 2 — `from_preset` is the headline surface).
+    # All three converge on the existing ``__init__(config_or_path=...)``
+    # path, so behavior is identical once the dict is built.
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_preset(cls, name: str, **overrides) -> "SearchEngine":
+        """Build a ``SearchEngine`` from a named recipe.
+
+        Example::
+
+            engine = SearchEngine.from_preset(
+                "milvus-dense",
+                input_passages="data/passages.jsonl",
+                input_queries="data/queries.jsonl",
+            )
+
+        Override keys may be flat (``top_k=10``), dotted
+        (``**{"retriever.top_k": 10}``), or nested via a single dict
+        argument (use ``from_dict`` for that case). See
+        :func:`docuverse.presets.list_presets` for available recipe names.
+        """
+        from docuverse.presets import deep_merge_overrides, load_preset
+
+        merged = deep_merge_overrides(load_preset(name), overrides)
+        return cls(config_or_path=merged)
+
+    @classmethod
+    def from_yaml(cls, path: str, **overrides) -> "SearchEngine":
+        """Build a ``SearchEngine`` from a YAML/JSON config file, with optional overrides.
+
+        Equivalent to ``SearchEngine(config_or_path=path)`` when no overrides
+        are supplied. With overrides, the file is loaded into a dict and the
+        same deep-merge as ``from_preset`` is applied on top.
+        """
+        from docuverse.presets import deep_merge_overrides
+        from docuverse.utils import read_config_file
+
+        if not overrides:
+            return cls(config_or_path=path)
+        base = read_config_file(path) or {}
+        if not isinstance(base, dict):
+            raise ValueError(f"{path} did not parse to a dict")
+        merged = deep_merge_overrides(base, overrides)
+        return cls(config_or_path=merged)
+
+    @classmethod
+    def from_dict(cls, config: dict, **overrides) -> "SearchEngine":
+        """Build a ``SearchEngine`` from an in-memory config dict, with optional overrides."""
+        from docuverse.presets import deep_merge_overrides
+
+        merged = deep_merge_overrides(config, overrides)
+        return cls(config_or_path=merged)
+
+    @classmethod
+    def list_presets(cls) -> list[str]:
+        """Return the sorted list of available preset names."""
+        from docuverse.presets import list_presets
+
+        return list_presets()
+
+    def with_reranker(
+        self, reranker_model: str, reranker_engine: str = "dense", **kwargs
+    ) -> "SearchEngine":
+        """Attach (or replace) a reranker on this engine, in place.
+
+        Returns ``self`` so calls can chain::
+
+            engine = SearchEngine.from_preset("milvus-dense").with_reranker(
+                "cross-encoder/ms-marco-MiniLM-L-12-v2",
+                reranker_engine="cross-encoder",
+            )
+
+        Composition avoids the 11×4 retrieval×reranker preset cross-product.
+        """
+        if self.config is None or self.config.reranker_config is None:
+            raise RuntimeError(
+                "with_reranker requires an initialized config; "
+                "build the engine first then attach a reranker."
+            )
+        self.config.reranker_config.reranker_model = reranker_model
+        self.config.reranker_config.reranker_engine = reranker_engine
+        for key, value in kwargs.items():
+            setattr(self.config.reranker_config, key, value)
+        self.reranker = self._create_reranker()
+        return self
+
     def create(self, config_or_path, **kwargs):
         if isinstance(config_or_path, str | dict):
             self.config = DocUVerseConfig(config_or_path)

@@ -46,8 +46,11 @@ class MilvusEngine(RetrievalEngine):
 
     """
     @staticmethod
-    def read_servers(config: str = "config/milvus_servers.json"):
-        return RetrievalServers(config="config/milvus_servers.json")
+    def read_servers(config: str = "servers/milvus_servers.json"):
+        # The resolver in RetrievalServers handles legacy `config/...` paths,
+        # so passing `servers/milvus_servers.json` finds the new layout
+        # without breaking old checkouts.
+        return RetrievalServers(config=config)
 
 
     def __init__(self, config_params: SearchEngineConfig | dict, **kwargs):
@@ -66,18 +69,28 @@ class MilvusEngine(RetrievalEngine):
         self.client = None
         self.index = None
         self.embeddings_name = "embeddings"
-        self.milvus_defaults = read_config_file("config/milvus_default_config.yaml")
+        # Resolver-based lookup so this works installed (no checkout) too.
+        from docuverse.utils.config_resolver import resolve_optional
+        defaults_path = resolve_optional("engines/milvus_default_config.yaml") or "config/milvus_default_config.yaml"
+        self.milvus_defaults = read_config_file(defaults_path)
         self.load_model_config(config_params=config_params)
         self.servers = self.read_servers()
         self.server = None
-        if get_param(self.config, 'server', None):
-            if self.config.server.find("file:") >= 0:
-                file_dir = os.path.dirname(self.config.server)
-                if not os.path.isdir(file_dir):
+        server_spec = get_param(self.config, 'server', None)
+        if server_spec:
+            # Three accepted forms:
+            #   1. dict ({host, port, ...}): build Server inline (no registry lookup)
+            #   2. "file:<path>": embedded Milvus-Lite at <path>
+            #   3. str (named): registry lookup in milvus_servers.json
+            if isinstance(server_spec, dict):
+                self.server = Server(**server_spec)
+            elif isinstance(server_spec, str) and server_spec.find("file:") >= 0:
+                file_dir = os.path.dirname(server_spec)
+                if file_dir and not os.path.isdir(file_dir):
                     os.makedirs(file_dir, exist_ok=True)
-                self.server = Server(host=self.config.server)
+                self.server = Server(host=server_spec)
             else:
-                self.server = self.servers[self.config.server]
+                self.server = self.servers[server_spec]
         self.model = None
         self.init_model(**kwargs)
         # Milvus does not accept '-', only letters, numbers, and "_"

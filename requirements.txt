@@ -1,19 +1,5 @@
-rouge-score
-pyyaml~=6.0.2
-accelerate
-sentence-transformers==5.2.3
-python-dotenv~=1.0.1
-numpy==2.2.6
-# urllib3~=1.26.18
-urllib3~=2.5.0
-torch~=2.10.0
-multiprocess~=0.70.18;platform_system=="Darwin"
-tqdm~=4.67.1
-transformers==5.3.0
-orjson==3.11.5
-pydantic_core~=2.27.2
-simple_colors~=0.1.5
-pandas~=2.2.0
-jinja2~=3.1.0
-grpcio~=1.60.0
-scipy==1.16.1
+# DEPRECATED: dependencies have moved to pyproject.toml.
+# Keep this file as a thin compatibility shim for external CI / Dockerfiles
+# that pin against `pip install -r requirements.txt`. Prefer:
+#   pip install -e .
+-e .

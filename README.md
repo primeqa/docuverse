@@ -36,57 +36,80 @@ on top of the [Transformers](https://github.com/huggingface/transformers), Prime
 [models](https://huggingface.co/PrimeQA) that are directly 
 downloadable.
 
-## Design
-
-The following is a code snippet showing how to ingesting a new corpus (create an index for a specific engine), 
-read the query file, run the search, compute the results and print them:
-```python
-from docuverse import SearchEngine
-engine = SearchEngine(config_or_path="data/clapnq_small/milvus-test.yaml")
-
-# Read the ClapNQ dataset
-data = engine.read_data() # or engine.read_data(engine.config.input_passages)
-#Ingest the data
-engine.ingest(data)
-
-# Read the queries
-queries = engine.read_questions() # or engine.read_questions(engine.config.input_queries)
-# Run the retrieval
-results = engine.search(queries)
-# Evaluation and print the results
-scores = engine.compute_score(queries, results)
-
-# Print the evaluation results in a human-readable format.
-print(f"Results:\n{scores}")
-```
-
 ## ✔️ Getting Started
 
-### Installation
-[Installation doc](https://primeqa.github.io/primeqa/installation.html)       
+### Install
+
+The curated `quickstart` extra pulls in everything the README example needs
+(Milvus-Lite + sentence-transformers); no external service required.
 
 ```shell
-# cd to project root
-
-# If you want to run on GPU make sure to install torch appropriately
-
-# Install as editable (-e) or non-editable using pip, with extras (e.g. tests) as desired
-# Example installation commands:
-
-# Minimal install (non-editable)
-pip install .
-
-# Full install (editable)
-pip install -e .
-
-# Install milvus and/or elastic dependencies, and the pyizumo library (if you have acecess to it)
-pip install -r requirements-milvus.txt
-pip install -r requirements-elastic.txt
-pip install -r requirements_extra.txt
+pip install -e .[quickstart]
 ```
 
-Please note that dependencies (specified in [setup.py](./setup.py)) are pinned to provide a stable experience.
-When installing from source these can be modified, however this is not officially supported.
+Other extras: `elastic`, `chromadb`, `faiss`, `lancedb`, `extra` (pyizumo,
+huggingface CLI), `dev` (pytest, ruff, mypy). Combine them as needed:
+`pip install -e .[quickstart,elastic,dev]`.
+
+### Run the quickstart — three equivalent surfaces
+
+The repo ships a 10-passage / 5-query toy corpus under
+[`examples/quickstart/`](examples/quickstart/). All three of the following
+produce the same ranked results.
+
+**Python — preset with overrides** (the headline API):
+
+```python
+from docuverse import SearchEngine
+
+engine = SearchEngine.from_preset(
+    "milvus-dense",
+    index_name="docuverse_quickstart",
+    input_passages="examples/quickstart/passages.jsonl",
+    input_queries="examples/quickstart/queries.jsonl",
+    output_file="examples/quickstart/output.json",
+)
+engine.ingest(engine.read_data())
+queries = engine.read_questions()
+results = engine.search(queries)
+print(engine.compute_score(queries, results))
+```
+
+**Python — explicit YAML** (when you want the config in version control):
+
+```python
+from docuverse import SearchEngine
+
+engine = SearchEngine(config_or_path="examples/quickstart/recipe.yaml")
+engine.ingest(engine.read_data())
+queries = engine.read_questions()
+print(engine.compute_score(queries, engine.search(queries)))
+```
+
+**CLI**:
+
+```bash
+docuverse run --config examples/quickstart/recipe.yaml
+```
+
+### Discover presets
+
+```bash
+docuverse presets list --with-engine    # name + db_engine
+docuverse presets show milvus-dense     # parsed config
+docuverse presets dump milvus-dense > my-recipe.yaml   # copy-and-edit
+```
+
+In Python: `SearchEngine.list_presets()`.
+
+### Configuration
+
+DocUVerse looks for config files under `./config/<rel_path>` (with a
+`./config/<basename>` legacy fallback that emits one `DeprecationWarning`),
+plus operator-level `$DOCUVERSE_HOME/...` and per-user `~/.docuverse/...`
+overrides. See [`config/README.md`](config/README.md) for the full
+six-tier resolver and the categorized layout (`servers/`, `engines/`,
+`recipes/`, `data_formats/`).
 
 ## 🔭 Learn more (not yet working)
 

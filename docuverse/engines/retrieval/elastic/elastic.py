@@ -64,11 +64,15 @@ class ElasticEngine(RetrievalEngine):
         self.duplicate_removal = None
         self.coga_mappings = {}
         self.settings = {}
-        config = os.path.join(get_config_dir("elastic_config.json"), "elastic_config.json")
+        # Use the 6-tier resolver: tries new layout (engines/elastic_config.json,
+        # servers/elastic_servers.json), then legacy flat layout, then packaged
+        # defaults. Old hard-coded behavior preserved by the legacy fallback.
+        from docuverse.utils.config_resolver import resolve
+        config = resolve("engines/elastic_config.json")
         self._read_mappings(config)
         self.config = None
         self.load_model_config(config_params)
-        self.es_servers = RetrievalServers(config="config/elastic_servers.json")
+        self.es_servers = RetrievalServers(config="servers/elastic_servers.json")
         self.source_excludes = []
         self.pipeline = None
         self.client = None
@@ -92,7 +96,11 @@ class ElasticEngine(RetrievalEngine):
         self.init_client()
         self._set_pipelines()
 
-    def _init_connection_info(self, server: str = None):
+    def _init_connection_info(self, server=None):
+        # Three accepted forms (matching the Milvus engine):
+        #   1. None: read ES_HOST/ES_USER/... from environment (legacy default).
+        #   2. dict: inline server spec (host, port, user, password, ...).
+        #   3. str: named server, looked up in elastic_servers.json registry.
         if server is None:
             load_dotenv()
             self.host = os.getenv('ES_HOST')
@@ -100,6 +108,11 @@ class ElasticEngine(RetrievalEngine):
             self.user = os.getenv('ES_USER')
             self.api_key = os.getenv('ES_API_KEY')
             self.ssl_fingerprint = os.getenv('ES_SSL_FINGERPRINT')
+        elif isinstance(server, dict):
+            from docuverse.engines.retrieval.retrieval_servers import Server
+            server_info = Server(**server)
+            for key, val in vars(server_info).items():
+                setattr(self, key, val)
         else:
             server_info = get_param(self.es_servers, server.lower(), None)
             if server_info is None:
