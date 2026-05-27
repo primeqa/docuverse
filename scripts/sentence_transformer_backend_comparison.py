@@ -282,6 +282,57 @@ def compute_stats(vector: np.ndarray | list) -> Tuple[float, float, float, float
     return mean, median, std, min_val, arg_min
 
 
+def _extract_quant_tag(path: str | None) -> str | None:
+    """Pull a precision/quantization marker (e.g. 'quint8', 'int8', 'fp16')
+    out of an artifact path. Returns None if no known tag is present."""
+    if not path:
+        return None
+    p = path.lower()
+    # Order matters: longer / more specific tags first.
+    for tag in ('quint8', 'qint8', 'int4', 'int8', 'fp16', 'bf16', 'fp32'):
+        if tag in p:
+            return tag
+    return None
+
+
+def _default_output_name(args) -> str:
+    """Build a default output filename from the run's parameters.
+
+    Format: <short-model>.<backend>_<prec>[-<backend>_<prec>...].l<max>.<device>[.n<num>].json
+
+    Each backend carries its own precision tag so multi-backend comparisons are
+    unambiguous: pytorch uses --precision, onnx/openvino parse the quant tag
+    from their respective path (or fall back to fp32 when no path is given).
+    """
+    model_short = args.model.rsplit('/', 1)[-1]
+    for noise in ('embedding-', 'embedding_'):
+        model_short = model_short.replace(noise, '')
+    model_short = model_short.replace('multilingual', 'multi')
+
+    backend_short = {'pytorch': 'pt', 'openvino': 'ov', 'llama_cpp': 'llamacpp'}
+    tokens = []
+    for b in args.backends:
+        if b == 'pytorch':
+            prec = args.precision
+        elif b == 'onnx':
+            prec = _extract_quant_tag(args.onnx_path) or 'fp32'
+        elif b == 'openvino':
+            prec = _extract_quant_tag(args.openvino_path) or 'fp32'
+        else:
+            prec = None
+        short = backend_short.get(b, b)
+        tokens.append(f"{short}_{prec}" if prec else short)
+    backends_str = '-'.join(tokens)
+
+    parts = [model_short, backends_str]
+    if args.max_text_length:
+        parts.append(f"l{args.max_text_length}")
+    parts.append(args.device)
+    if args.num_samples:
+        parts.append(f"n{args.num_samples}")
+    return '.'.join(parts) + '.json'
+
+
 def _resolve_cached_export(model_name: str, fmt: str, file_name: str | None = None):
     """If model_name's HF cache snapshot already contains converted weights for
     the given format, return the snapshot dir. Otherwise return None.
@@ -621,7 +672,12 @@ Examples:
                        help="Model name to pass to the llama.cpp server (if different from --model)")
     parser.add_argument("--output-file", "--output_file", dest="output_file",
                        type=str, default=None,
-                       help="Path to save results (JSON format). If not specified, only prints to stdout")
+                       help="Path to save results (JSON format). If not specified, an auto-named "
+                            "file is written under --timing-dir.")
+    parser.add_argument("--timing-dir", "--timing_dir", dest="timing_dir",
+                       type=str, default="timings",
+                       help="Directory for the auto-generated timings JSON when --output-file is "
+                            "not specified (default: timings).")
     parser.add_argument("--output-format", "--output_format", dest="output_format",
                        type=str, default="json", choices=["json"],
                        help="Output file format (default: json)")
@@ -637,6 +693,12 @@ Examples:
     # Validate that at least one input source is provided
     if not args.input and not args.fof:
         parser.error("At least one of --input or --fof is required")
+
+    # Auto-name the output file under --timing-dir when not specified.
+    if args.output_file is None:
+        os.makedirs(args.timing_dir, exist_ok=True)
+        args.output_file = os.path.join(args.timing_dir, _default_output_name(args))
+        print(f"No --output-file given; results will be written to: {args.output_file}")
 
     # Set PyTorch thread count if specified
     if args.num_threads is not None:
