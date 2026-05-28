@@ -73,9 +73,11 @@ class RetrievalArguments(GenericArguments):
     )
 
     attn_implementation: Optional[str]|None = field(
-        default="sdpa",
+        default="auto",
         metadata={
-            "help": "The attention implementation to use (default is sdpa)."
+            "help": "The attention implementation to use. 'auto' (default) picks "
+                    "flash_attention_2 when the flash-attn package is installed and "
+                    "the GPU is Ampere+ (SM ≥ 8.0); otherwise falls back to sdpa."
         }
     )
 

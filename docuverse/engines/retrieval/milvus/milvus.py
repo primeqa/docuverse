@@ -228,14 +228,20 @@ class MilvusEngine(RetrievalEngine):
         tq2 = tqdm(desc="  * Milvusing data", total=len(texts), leave=False)
         ingestion_batch = self.ingestion_batch_size
         tq.write(f"Ingesting with a batch size of {ingestion_batch}")
-        for i in range(0, len(texts), ingestion_batch):
-            last = min(i+ingestion_batch, len(texts))
-            tm.mark()
-            data = self._create_data(corpus[i:last], texts[i:last], tq_instance=tq1, tm=tm, **kwargs)
-            # tm.add_timing("encode")
-            self._insert_data(data, tq_instance=tq2)
-            tm.add_timing("data_milvusing")
-            tq.update(last-i)
+        try:
+            for i in range(0, len(texts), ingestion_batch):
+                last = min(i+ingestion_batch, len(texts))
+                tm.mark()
+                data = self._create_data(corpus[i:last], texts[i:last], tq_instance=tq1, tm=tm, **kwargs)
+                # tm.add_timing("encode")
+                self._insert_data(data, tq_instance=tq2)
+                tm.add_timing("data_milvusing")
+                tq.update(last-i)
+        finally:
+            # Close bars so subsequent prints aren't smeared by tqdm redraws.
+            tq1.close()
+            tq2.close()
+            tq.close()
         return True
 
     def _analyze_data(self, corpus):

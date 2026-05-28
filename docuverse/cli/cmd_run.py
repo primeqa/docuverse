@@ -50,6 +50,7 @@ def _run(args: argparse.Namespace) -> int:
 
     config = DocUVerseConfig(config_dict)
     from docuverse import SearchEngine
+    from tqdm.auto import tqdm
 
     engine = SearchEngine(config, name="docuverse-run")
     if config.ingest or config.update:
@@ -63,11 +64,11 @@ def _run(args: argparse.Namespace) -> int:
         _show_results(queries, results, top_k=min(3, getattr(config, "top_k", 3) or 3))
         out = getattr(config, "output_file", None)
         if out:
-            print(f"\nFull results written to {out}")
+            tqdm.write(f"\nFull results written to {out}")
         if config.evaluate and getattr(config, "eval_config", None) is not None:
             scored = engine.compute_score(queries, results)
-            print("\nEvaluation:")
-            print(scored)
+            tqdm.write("\nEvaluation:")
+            tqdm.write(str(scored))
     return 0
 
 
@@ -76,15 +77,29 @@ def _truncate(s, n: int = 120) -> str:
     return s if len(s) <= n else s[: n - 1].rstrip() + "…"
 
 
+def _drain_progress() -> None:
+    """Flush stdout/stderr so any tqdm bars finish painting before we print.
+
+    Without this, the final ``\\r``-redraw of a closing tqdm bar can race with
+    our summary prints and leave bar fragments (``████``) inside the output.
+    """
+    import sys
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+
 def _show_ingested(corpus, sample: int = 3) -> None:
     """Print a short summary of what was ingested."""
+    from tqdm.auto import tqdm
+
     try:
         total = len(corpus)
     except TypeError:
         corpus = list(corpus)
         total = len(corpus)
 
-    print(f"\nIngested {total} document(s). Showing first {min(sample, total)}:")
+    _drain_progress()
+    tqdm.write(f"\nIngested {total} document(s). Showing first {min(sample, total)}:")
     for i, doc in enumerate(corpus[:sample]):
         get = doc.get if hasattr(doc, "get") else (lambda k, d=None, _d=doc: getattr(_d, k, d))
         doc_id = get("id", "?")
@@ -93,15 +108,18 @@ def _show_ingested(corpus, sample: int = 3) -> None:
         header = f"  [{i + 1}] id={doc_id}"
         if title:
             header += f"  title={title!r}"
-        print(header)
-        print(f"      {_truncate(text, 140)}")
+        tqdm.write(header)
+        tqdm.write(f"      {_truncate(text, 140)}")
 
 
 def _show_results(queries, results, top_k: int = 3, max_queries: int = 5) -> None:
     """Print a per-query summary of the top retrieved passages."""
+    from tqdm.auto import tqdm
+
     n_queries = len(results)
     shown = min(n_queries, max_queries)
-    print(f"\nSearch results ({n_queries} query/queries; showing first {shown}, top {top_k} hits each):")
+    _drain_progress()
+    tqdm.write(f"\nSearch results ({n_queries} query/queries; showing first {shown}, top {top_k} hits each):")
     for qi, result in enumerate(results[:shown]):
         question = getattr(result, "question", None)
         q_text = getattr(question, "text", None) or (
@@ -110,10 +128,10 @@ def _show_results(queries, results, top_k: int = 3, max_queries: int = 5) -> Non
         q_id = getattr(question, "id", None) or (
             question.get("id") if hasattr(question, "get") else "?"
         )
-        print(f"\n  Q{qi + 1} (id={q_id}): {_truncate(q_text, 140)}")
+        tqdm.write(f"\n  Q{qi + 1} (id={q_id}): {_truncate(q_text, 140)}")
         passages = list(result)[:top_k]
         if not passages:
-            print("      (no hits)")
+            tqdm.write("      (no hits)")
             continue
         for ri, p in enumerate(passages):
             pid = p.get("id", p.get("_id", "?"))
@@ -125,5 +143,5 @@ def _show_results(queries, results, top_k: int = 3, max_queries: int = 5) -> Non
             score_str = f"  score={score:.4f}" if isinstance(score, float) else (
                 f"  score={score}" if score is not None else ""
             )
-            print(f"      {ri + 1}. id={pid}{score_str}")
-            print(f"         {_truncate(text, 140)}")
+            tqdm.write(f"      {ri + 1}. id={pid}{score_str}")
+            tqdm.write(f"         {_truncate(text, 140)}")

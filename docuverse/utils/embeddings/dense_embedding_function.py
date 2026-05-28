@@ -7,10 +7,37 @@ from docuverse.utils.embeddings.embedding_function import EmbeddingFunction
 import simple_colors
 
 
+def _resolve_attn_implementation(requested):
+    """Pick a usable attention backend.
+
+    ``"auto"`` (or ``None``) → ``flash_attention_2`` when ``flash_attn`` is
+    importable and the GPU is Ampere+ (SM ≥ 8.0); otherwise ``sdpa``. Any
+    other value is returned unchanged so explicit choices are respected.
+    """
+    if requested not in (None, "auto"):
+        return requested
+    if not torch.cuda.is_available():
+        return "sdpa"
+    try:
+        import flash_attn  # noqa: F401
+    except ImportError:
+        return "sdpa"
+    try:
+        major, _ = torch.cuda.get_device_capability()
+    except Exception:
+        return "sdpa"
+    if major < 8:
+        return "sdpa"
+    return "flash_attention_2"
+
+
 class DenseEmbeddingFunction(EmbeddingFunction):
     def __init__(self, model_or_directory_name, batch_size=128, **kwargs):
         super().__init__(model_or_directory_name=model_or_directory_name, batch_size=batch_size, **kwargs)
         self.model = None
+        kwargs['attn_implementation'] = _resolve_attn_implementation(
+            get_param(kwargs, 'attn_implementation', 'auto')
+        )
         device = self.detect_current_device(kwargs)
 
         self.pqa = False
@@ -92,19 +119,42 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                      attn_implementation="sdpa"):
         from sentence_transformers import SentenceTransformer
 
-        if attn_implementation is not None:
-            model_args: dict[str, Any] = {"attn_implementation": attn_implementation}
-            if attn_implementation.find("flash") >= 0:
-                model_args["dtype"] = torch.bfloat16
+        def _build_model_args(attn):
+            args: dict[str, Any] = {"attn_implementation": attn}
+            if "flash" in attn:
+                args["dtype"] = torch.bfloat16
             else:
-                model_args['dtype'] = self.torch_dtype
+                args["dtype"] = self.torch_dtype
+            return args
 
-            self.model = SentenceTransformer(model_or_directory_name,
-                                             device=device,
-                                             trust_remote_code=True,
-                                             model_kwargs=model_args)
+        if attn_implementation is not None:
+            model_args = _build_model_args(attn_implementation)
+            try:
+                self.model = SentenceTransformer(model_or_directory_name,
+                                                 device=device,
+                                                 trust_remote_code=True,
+                                                 model_kwargs=model_args)
+            except (ValueError, ImportError) as e:
+                # Model architecture or runtime didn't accept the requested attention
+                # backend (e.g. flash_attention_2 on a model lacking
+                # `_supports_flash_attn_2`). Fall back to sdpa once, but only when
+                # we were actually trying flash — preserve loud failure for explicit
+                # non-flash mismatches the caller is unlikely to want silently rewritten.
+                if "flash" not in attn_implementation:
+                    raise
+                print(simple_colors.yellow(
+                    f"Model {model_or_directory_name} does not support "
+                    f"{attn_implementation} ({e}); falling back to sdpa."
+                ))
+                attn_implementation = "sdpa"
+                self.model = SentenceTransformer(model_or_directory_name,
+                                                 device=device,
+                                                 trust_remote_code=True,
+                                                 model_kwargs=_build_model_args("sdpa"))
+            self._attn_implementation = attn_implementation
         else:
             self.model = SentenceTransformer(model_or_directory_name, device=device, trust_remote_code=True)
+            self._attn_implementation = None
         float_types = {p.dtype for p in self.model.parameters()}
         print(f"Floating point types used in the model {model_or_directory_name}: {float_types}")
         if self.torch_compile:
