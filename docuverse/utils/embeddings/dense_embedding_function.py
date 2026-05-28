@@ -297,10 +297,14 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         length_sorted_idx = np.argsort([-_text_length(s) for s in sentences])
         sentences_sorted = [sentences[int(idx)] for idx in length_sorted_idx]
 
+        # `preprocess` replaced `tokenize` in newer sentence-transformers releases;
+        # prefer it when present, fall back to `tokenize` on older versions.
+        tokenize_fn = getattr(model, "preprocess", None) or getattr(model, "tokenize", None)
+
         # Build extra_features for prompt_length
         extra_features = {}
-        if prompt is not None and hasattr(model, 'tokenize'):
-            prompt_tok = model.tokenize([prompt])
+        if prompt is not None and tokenize_fn is not None:
+            prompt_tok = tokenize_fn([prompt])
             if "input_ids" in prompt_tok:
                 extra_features["prompt_length"] = prompt_tok["input_ids"].shape[-1] - 1
 
@@ -312,7 +316,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         all_features = []
         for start_index in range(0, len(sentences_sorted), batch_size):
             batch = sentences_sorted[start_index:start_index + batch_size]
-            features = model.tokenize(batch)
+            features = tokenize_fn(batch)
             all_features.append(features)
         tm.add_timing("encode::tokenize")
 
