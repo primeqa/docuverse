@@ -1,0 +1,7 @@
+# FAISS in-process dense index. The `server:` is the on-disk path the index
+# is persisted to.
+db_engine: faiss
+model_name: ibm-granite/granite-embedding-small-english-r2
+index_name: docuverse_faiss
+server: "file:./.docuverse/faiss"
+top_k: 10

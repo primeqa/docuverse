@@ -1,0 +1,10 @@
+# Milvus + Granite-sparse learned-sparse retrieval. Recipe name kept as
+# `milvus-splade` for back-compat with the dispatcher; the default model is
+# now IBM Granite's 30m sparse embedding (Apache-2.0). Override `model_name`
+# with `naver/splade-cocondenser-ensembledistil` to use the original SPLADE
+# checkpoint.
+db_engine: milvus-splade
+model_name: ibm-granite/granite-embedding-30m-sparse
+index_name: docuverse_splade
+server: "file:./.docuverse/milvus.db"
+top_k: 10
