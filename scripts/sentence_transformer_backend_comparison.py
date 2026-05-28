@@ -20,7 +20,7 @@ import torch
 from tqdm import tqdm
 import os
 
-from docuverse.utils import open_stream
+from docuverse.utils import open_stream, save_command_line
 from docuverse.utils.jsonl_utils import read_jsonl_file
 
 def get_memory_usage():
@@ -574,55 +574,55 @@ def main():
         epilog=f"""
 Examples:
   # Compare PyTorch with ONNX
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --onnx-path ./model.onnx --input data.txt
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx --onnx-path ./model.onnx --input data.txt
 
   # Compare PyTorch with OpenVINO
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch openvino --openvino-path ./model.xml --input data.txt
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch openvino --openvino-path ./model.xml --input data.txt
 
   # Use FP32 precision instead of default BF16
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input data.txt --precision fp32
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch --input data.txt --precision fp32
 
   # Compare PyTorch with Ollama (same model name)
-  python {script_name} --model nomic-embed-text --backends pytorch ollama --input data.txt
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch ollama --input data.txt
 
   # Compare with Ollama using different model name
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch ollama --ollama-model all-minilm --input data.txt
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch ollama --ollama-model all-minilm --input data.txt
 
   # Compare Ollama with custom URL and model name
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends ollama --ollama-url http://localhost:11434 --ollama-model nomic-embed-text --input data.txt
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends ollama --ollama-url http://localhost:11434 --ollama-model nomic-embed-text --input data.txt
 
   # Compare all backends
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx openvino ollama --onnx-path ./model.onnx --openvino-path ./model.xml --ollama-model all-minilm --input data.txt
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx openvino ollama --onnx-path ./model.onnx --openvino-path ./model.xml --ollama-model all-minilm --input data.txt
 
   # Direct string input (single sentence)
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input "What is machine learning?"
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch --input "What is machine learning?"
 
   # JSONL file with auto-detected text field
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input data.jsonl
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch --input data.jsonl
 
   # JSONL file with custom field path
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input data.jsonl --field-path document.text
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch --input data.jsonl --field-path document.text
 
   # JSONL with array wildcard (all items)
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input data.jsonl --field-path documents[*].text
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch --input data.jsonl --field-path documents[*].text
 
   # Compressed JSONL file
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch ollama --input data.jsonl.bz2 --field-path question
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch ollama --input data.jsonl.bz2 --field-path question
 
   # Save results to JSON file
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --input data.txt --output-file results.json
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx --input data.txt --output-file results.json
 
   # JSONL input with JSON output
-  python {script_name} --model nomic-embed-text --backends pytorch ollama --input data.jsonl --field-path text --output-file benchmark_results.json
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch ollama --input data.jsonl --field-path text --output-file benchmark_results.json
 
   # Save results including embeddings (warning: creates large files)
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --input data.txt --output-file results_with_embeddings.json --save-embeddings
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx --input data.txt --output-file results_with_embeddings.json --save-embeddings
 
   # Multiple input files (num-samples applied per file)
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --input data1.jsonl data2.jsonl data3.txt --num-samples 100
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx --input data1.jsonl data2.jsonl data3.txt --num-samples 100
 
   # File-of-files input (one file path per line)
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --fof file_list.txt --num-samples 50
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx --fof file_list.txt --num-samples 50
         """
     )
     # ... rest of the argument definitions ...
@@ -693,7 +693,7 @@ Examples:
                        help="Print the N worst matching examples (lowest cosine similarity) per backend pair (default: 0 = off)")
 
     args = parser.parse_args()
-
+    save_command_line(sys.argv)
     # Validate that at least one input source is provided
     if not args.input and not args.fof:
         parser.error("At least one of --input or --fof is required")

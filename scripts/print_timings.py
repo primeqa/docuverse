@@ -14,17 +14,46 @@ import sys
 from collections import defaultdict
 
 
+_BACKEND_SUFFIXES = ('-openvino', '-ovino', '-onnx')
+
+
 def _short_model(name):
     if not name:
         return '?'
     short = os.path.basename(name.rstrip('/'))
     if not short or set(short) <= {'.'}:
         return name or '?'
+    # Strip trailing backend tags (local copies are often named e.g.
+    # "granite-embedding-278-ovino"); the backend column already conveys this.
+    for suffix in _BACKEND_SUFFIXES:
+        if short.lower().endswith(suffix):
+            short = short[: -len(suffix)]
+            break
     return short
 
 
 def _short_date(ts):
     return ts.split('T', 1)[0] if ts else ''
+
+
+_BACKEND_SHORT = {'pytorch': 'pt', 'openvino': 'ov', 'llama_cpp': 'llamacpp'}
+
+
+def _precision_from_filename(filename, backend):
+    """Extract the backend's precision tag from a filename written by
+    sentence_transformer_backend_comparison.py — its naming convention is
+    <model>.<backend1>_<prec1>[-<backend2>_<prec2>...].l<len>.<device>[...]
+    so the backend/precision pairs live in the second dot-segment, joined
+    with '-'. Returns None if no <backend>_<prec> token matches.
+    """
+    short = _BACKEND_SHORT.get(backend, backend)
+    parts = filename.split('.')
+    if len(parts) < 2:
+        return None
+    for token in parts[1].split('-'):
+        if token.startswith(short + '_'):
+            return token[len(short) + 1:]
+    return None
 
 
 def _collect_rows(json_paths):
@@ -42,12 +71,14 @@ def _collect_rows(json_paths):
         for backend, entry in perf.items():
             if not isinstance(entry, dict):
                 continue
+            fname = os.path.basename(p)
+            precision = _precision_from_filename(fname, backend) or cfg.get('precision', '?')
             rows.append({
-                'file': os.path.basename(p),
+                'file': fname,
                 'context': cfg.get('max_text_length'),
                 'model': cfg.get('model', '?'),
                 'backend': backend,
-                'precision': cfg.get('precision', '?'),
+                'precision': precision,
                 'device': cfg.get('device', '?'),
                 'samples': cfg.get('num_sentences'),
                 'batch': cfg.get('batch_size'),
@@ -85,15 +116,23 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--dir', '--timings-dir', dest='dir', default='timings',
                     help='Directory of timing JSON files (default: timings).')
+    valid_sort_keys = ('model', 'backend', 'precision', 'time_s',
+                       'throughput', 'date', 'file')
     ap.add_argument('--sort', default='throughput',
-                    choices=['model', 'backend', 'precision', 'time_s',
-                             'throughput', 'date', 'file'],
-                    help='Sort column within each context-length group '
-                         '(default: throughput).')
+                    help='Comma-separated sort columns within each '
+                         'context-length group; first key is most significant '
+                         f'(default: throughput). Valid: {", ".join(valid_sort_keys)}')
     ap.add_argument('--reverse', action='store_true',
-                    help='Flip the natural sort order (descending for '
-                         'throughput, ascending for everything else).')
+                    help='Flip the natural sort order on every key '
+                         '(descending for throughput, ascending for the rest).')
     args = ap.parse_args()
+
+    sort_keys = [k.strip() for k in args.sort.split(',') if k.strip()]
+    if not sort_keys:
+        ap.error('--sort must specify at least one column')
+    for k in sort_keys:
+        if k not in valid_sort_keys:
+            ap.error(f"invalid --sort key '{k}' (valid: {', '.join(valid_sort_keys)})")
 
     paths = sorted(glob.glob(os.path.join(args.dir, '*.json')))
     if not paths:
@@ -118,11 +157,15 @@ def main():
         ('file', 'File', str),
     ]
 
-    descending_by_default = args.sort in ('throughput',)
-    reverse = descending_by_default ^ args.reverse
+    descending_by_default = {'throughput'}
 
-    def _sort_key(r):
-        v = r.get(args.sort)
+    def _key_value(row, key):
+        v = row.get(key)
+        # Sort by the displayed value for the model column so trimmed-suffix
+        # rows ("granite-embedding-311m-multilingual-r2-onnx" and "...-ovino")
+        # group with the canonical name they render as.
+        if key == 'model':
+            v = _short_model(v) if v else v
         return (1, 0) if v is None else (0, v)
 
     def _ctx_key(c):
@@ -135,7 +178,11 @@ def main():
     for ctx in sorted(by_ctx.keys(), key=_ctx_key):
         title = (f'Context length: {ctx}'
                  if ctx is not None else 'Context length: unbounded')
-        group = sorted(by_ctx[ctx], key=_sort_key, reverse=reverse)
+        # Stable-sort right-to-left so the first key listed is most significant.
+        group = list(by_ctx[ctx])
+        for k in reversed(sort_keys):
+            desc = (k in descending_by_default) ^ args.reverse
+            group.sort(key=lambda row, _k=k: _key_value(row, _k), reverse=desc)
         print()
         print('=' * 78)
         print(f'  {title}  ({len(group)} run(s))')
