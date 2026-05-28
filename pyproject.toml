@@ -120,4 +120,4 @@ version = {file = "VERSION"}
 
 [tool.setuptools.package-data]
 "*" = ["*.cpp", "*.cu"]
-"docuverse" = ["presets/recipes/*.yaml"]
+"docuverse" = ["presets/recipes/*.yaml", "resources/*.json"]
