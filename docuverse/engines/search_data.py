@@ -386,7 +386,14 @@ class SearchData:
         if docid_filter and id not in docid_filter: # or 'title' not in itm or (not itm['title']):
             return []
         else:
-            if doc_based:
+            # Fall back to doc-based tiling when the unit doesn't carry the
+            # nested ``passages`` field — that's the common case for flat
+            # JSONL like the quickstart corpus, and it matches what users
+            # actually expect when they hand us a list of passages.
+            effective_doc_based = doc_based or (
+                data_template.passage_header not in unit
+            )
+            if effective_doc_based:
                 return tiler.create_tiles(id_=id,
                                           text=itm['text'],
                                           title=itm['title'],
@@ -588,11 +595,16 @@ class SearchData:
 
         if num_threads <= 0:
             passages = []
+            _drop_count = 0
+            _drop_first = None
             for doc in tqdm(all_data, desc="Processing docs"):
                 try:
                     items = process_text_func(unit=doc)
                 except Exception as e:
                     items = []
+                    _drop_count += 1
+                    if _drop_first is None:
+                        _drop_first = (type(e).__name__, str(e))
                 if items:
                     if verbose:
                         for item in items:
@@ -600,6 +612,13 @@ class SearchData:
                                                                                          forced_tok=True)})
                     else:
                         passages.extend(items)
+            if _drop_count:
+                # Silent drops were the cause of more than one quickstart bug;
+                # surface a one-line summary instead of swallowing them entirely.
+                print(
+                    f"WARNING: skipped {_drop_count} document(s) during "
+                    f"processing (first error: {_drop_first[0]}: {_drop_first[1]})"
+                )
         else:
             if verbose:
                 post_func = partial(_compute_tokenized_length, tiler=tiler)

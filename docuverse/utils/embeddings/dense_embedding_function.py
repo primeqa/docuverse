@@ -281,8 +281,20 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         else:
             sentences = list(texts)
 
-        # Sort by length for efficient batching (same as SentenceTransformer.encode)
-        length_sorted_idx = np.argsort([-model._text_length(s) for s in sentences])
+        # Sort by length for efficient batching (same as SentenceTransformer.encode).
+        # `_text_length` was a private helper removed in recent sentence-transformers
+        # releases; fall back to a local equivalent so we work on both old and new.
+        def _text_length(t):
+            if hasattr(model, "_text_length"):
+                return model._text_length(t)
+            if isinstance(t, dict):
+                return len(next(iter(t.values())))
+            if not hasattr(t, "__len__"):
+                return 1
+            if len(t) == 0 or isinstance(t[0], int):
+                return len(t)
+            return sum(len(x) for x in t)
+        length_sorted_idx = np.argsort([-_text_length(s) for s in sentences])
         sentences_sorted = [sentences[int(idx)] for idx in length_sorted_idx]
 
         # Build extra_features for prompt_length

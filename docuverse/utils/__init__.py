@@ -699,6 +699,13 @@ def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes')
     Returns:
         str: The user's response or the default answer if no input is provided.
     """
+    # Non-interactive opt-out for notebooks, CI, scripts: skip the prompt
+    # and return the default. Stdin-less callers (jupyter nbconvert, pytest
+    # captured stdin) also fall through here on EOFError / StdinNotImplemented.
+    if os.environ.get("DOCUVERSE_NONINTERACTIVE"):
+        print(text)
+        print(f" <DOCUVERSE_NONINTERACTIVE set: returning '{default}'>")
+        return default
     display_answers = ", ".join(a.title() if a==default else a for a in answers)
     print(text)
     try:
@@ -710,10 +717,16 @@ def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes')
                 return r
             else:
                 print(f"Please type one of {answers}, not {r}!")
-    except EOFError:
-        import simple_colors
-
-        print(f" <No input available: returning '{simple_colors.red(default)}'>")
+    except Exception:
+        # No usable stdin (EOFError on closed stdin, ipykernel's
+        # StdinNotImplementedError under `jupyter nbconvert --execute`, etc.)
+        # — fall back to default rather than crash an automated pipeline.
+        try:
+            import simple_colors
+            shown = simple_colors.red(default)
+        except Exception:
+            shown = default
+        print(f" <No input available: returning '{shown}'>")
         return default
 
 def convert_to_single_vectors(embs):

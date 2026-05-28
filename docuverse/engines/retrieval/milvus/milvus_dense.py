@@ -69,6 +69,18 @@ class MilvusDenseEngine(MilvusEngine):
             _index_params = _basic_index_params
         elif isinstance(_index_params, str):
             _index_params = get_param(self.milvus_defaults, "index_params." + _index_params, _basic_index_params)
+        # Milvus-Lite (file: server) only supports FLAT / IVF_FLAT / AUTOINDEX —
+        # downgrade HNSW (and any other unsupported types) silently so the
+        # zero-setup quickstart works on a laptop. Users targeting a real
+        # Milvus server still get the configured HNSW.
+        if self.server is not None and getattr(self.server, "type", None) == "file":
+            _lite_supported = {"FLAT", "IVF_FLAT", "AUTOINDEX"}
+            if _index_params.get("index_type") not in _lite_supported:
+                _index_params = {
+                    "index_type": "AUTOINDEX",
+                    "metric_type": _index_params.get("metric_type", "IP"),
+                    "params": {},
+                }
         import json
         print(f"Index params: {json.dumps(_index_params, indent=2)}")
         index_params.add_index(
@@ -102,8 +114,17 @@ class MilvusDenseEngine(MilvusEngine):
                                           )
 
     def get_search_params(self):
-        search_params = get_param(self.config, 'search_params',
-                                  self.milvus_defaults['search_params']["HNSW"])
+        # Pick a search-param default that matches the index we actually built.
+        # `prepare_index_params` may have downgraded HNSW → AUTOINDEX for
+        # Milvus-Lite; mirror that here so we don't pass HNSW knobs to a
+        # collection that doesn't have an HNSW index.
+        if self.index_type and self.index_type in self.milvus_defaults.get('search_params', {}):
+            _default_search = self.milvus_defaults['search_params'][self.index_type]
+        elif self.server is not None and getattr(self.server, "type", None) == "file":
+            _default_search = {"metric_type": "IP", "params": {}}
+        else:
+            _default_search = self.milvus_defaults['search_params']["HNSW"]
+        search_params = get_param(self.config, 'search_params', _default_search)
         if isinstance(search_params, str):
             search_params = get_param(self.milvus_defaults, "search_params." + search_params)
         return search_params

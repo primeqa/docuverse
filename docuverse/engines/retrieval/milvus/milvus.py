@@ -84,8 +84,20 @@ class MilvusEngine(RetrievalEngine):
             #   3. str (named): registry lookup in milvus_servers.json
             if isinstance(server_spec, dict):
                 self.server = Server(**server_spec)
-            elif isinstance(server_spec, str) and server_spec.find("file:") >= 0:
-                file_dir = os.path.dirname(server_spec)
+            elif isinstance(server_spec, str) and server_spec.startswith("file:"):
+                # Strip the `file:` scheme (and any repeats) before computing
+                # the parent dir — otherwise os.path.dirname leaves the prefix
+                # glued to the path and we'd makedirs("file:./.docuverse")
+                # or, worse, a literal "file:" / "file:experiments" directory.
+                local_path = server_spec
+                while local_path.startswith("file:"):
+                    local_path = local_path[len("file:"):]
+                file_dir = os.path.dirname(local_path)
+                if file_dir.startswith("file:"):
+                    raise ValueError(
+                        f"refusing to create file:-prefixed directory from "
+                        f"server spec {server_spec!r} (resolved to {file_dir!r})"
+                    )
                 if file_dir and not os.path.isdir(file_dir):
                     os.makedirs(file_dir, exist_ok=True)
                 self.server = Server(host=server_spec)
