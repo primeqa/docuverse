@@ -13,34 +13,39 @@
     },
     "retrieved_passages": [
       {
+        "_id": 1,
         "id": "p001-0-174",
-        "text": "Photosynthesis is the biological process by which green plants and certain other organisms convert light energy, usually from the sun, into chemical energy stored in glucose.",
         "title": "Photosynthesis",
-        "score": 0.8777340650558472
+        "text": "Photosynthesis is the biological process by which green plants and certain other organisms convert light energy, usually from the sun, into chemical energy stored in glucose.",
+        "score": 0.8777666091918945
       },
       {
+        "_id": 2,
         "id": "p002-0-191",
-        "text": "Mitochondria are membrane-bound organelles found in the cells of most eukaryotes. They generate most of the cell's supply of adenosine triphosphate (ATP), used as a source of chemical energy.",
         "title": "Mitochondria",
-        "score": 0.7737258076667786
+        "text": "Mitochondria are membrane-bound organelles found in the cells of most eukaryotes. They generate most of the cell's supply of adenosine triphosphate (ATP), used as a source of chemical energy.",
+        "score": 0.7737051844596863
       },
       {
+        "_id": 9,
         "id": "p009-0-205",
-        "text": "Quantum Mechanics\nQuantum mechanics is a fundamental theory in physics providing a description of the physical properties of nature at the scale of atoms and subatomic particles. It is the foundation of all quantum physics.",
         "title": "Quantum Mechanics",
-        "score": 0.7236141562461853
+        "text": "Quantum Mechanics\nQuantum mechanics is a fundamental theory in physics providing a description of the physical properties of nature at the scale of atoms and subatomic particles. It is the foundation of all quantum physics.",
+        "score": 0.7236049175262451
       },
       {
+        "_id": 3,
         "id": "p003-0-212",
-        "text": "DNA Structure\nDeoxyribonucleic acid (DNA) is a polymer composed of two polynucleotide chains that coil around each other to form a double helix carrying genetic instructions for development and function of all known organisms.",
         "title": "DNA Structure",
-        "score": 0.7136411666870117
+        "text": "DNA Structure\nDeoxyribonucleic acid (DNA) is a polymer composed of two polynucleotide chains that coil around each other to form a double helix carrying genetic instructions for development and function of all known organisms.",
+        "score": 0.713599681854248
       },
       {
+        "_id": 7,
         "id": "p007-0-211",
-        "text": "Newton's Laws of Motion\nNewton's laws of motion are three basic laws of classical mechanics that describe the relationship between the motion of an object and the forces acting on it. They were first formulated by Isaac Newton in 1687.",
         "title": "Newton's Laws of Motion",
-        "score": 0.702120304107666
+        "text": "Newton's Laws of Motion\nNewton's laws of motion are three basic laws of classical mechanics that describe the relationship between the motion of an object and the forces acting on it. They were first formulated by Isaac Newton in 1687.",
+        "score": 0.7020331621170044
       }
     ]
   },
@@ -58,34 +63,39 @@
     },
     "retrieved_passages": [
       {
+        "_id": 2,
         "id": "p002-0-191",
-        "text": "Mitochondria are membrane-bound organelles found in the cells of most eukaryotes. They generate most of the cell's supply of adenosine triphosphate (ATP), used as a source of chemical energy.",
         "title": "Mitochondria",
-        "score": 0.9023962020874023
+        "text": "Mitochondria are membrane-bound organelles found in the cells of most eukaryotes. They generate most of the cell's supply of adenosine triphosphate (ATP), used as a source of chemical energy.",
+        "score": 0.9024205207824707
       },
       {
+        "_id": 1,
         "id": "p001-0-174",
-        "text": "Photosynthesis is the biological process by which green plants and certain other organisms convert light energy, usually from the sun, into chemical energy stored in glucose.",
         "title": "Photosynthesis",
-        "score": 0.8024498820304871
+        "text": "Photosynthesis is the biological process by which green plants and certain other organisms convert light energy, usually from the sun, into chemical energy stored in glucose.",
+        "score": 0.8025057911872864
       },
       {
+        "_id": 3,
         "id": "p003-0-212",
-        "text": "DNA Structure\nDeoxyribonucleic acid (DNA) is a polymer composed of two polynucleotide chains that coil around each other to form a double helix carrying genetic instructions for development and function of all known organisms.",
         "title": "DNA Structure",
-        "score": 0.7589107751846313
+        "text": "DNA Structure\nDeoxyribonucleic acid (DNA) is a polymer composed of two polynucleotide chains that coil around each other to form a double helix carrying genetic instructions for development and function of all known organisms.",
+        "score": 0.7589166164398193
       },
       {
+        "_id": 9,
         "id": "p009-0-205",
-        "text": "Quantum Mechanics\nQuantum mechanics is a fundamental theory in physics providing a description of the physical properties of nature at the scale of atoms and subatomic particles. It is the foundation of all quantum physics.",
         "title": "Quantum Mechanics",
-        "score": 0.7167123556137085
+        "text": "Quantum Mechanics\nQuantum mechanics is a fundamental theory in physics providing a description of the physical properties of nature at the scale of atoms and subatomic particles. It is the foundation of all quantum physics.",
+        "score": 0.7167393565177917
       },
       {
+        "_id": 7,
         "id": "p007-0-211",
-        "text": "Newton's Laws of Motion\nNewton's laws of motion are three basic laws of classical mechanics that describe the relationship between the motion of an object and the forces acting on it. They were first formulated by Isaac Newton in 1687.",
         "title": "Newton's Laws of Motion",
-        "score": 0.6958245038986206
+        "text": "Newton's Laws of Motion\nNewton's laws of motion are three basic laws of classical mechanics that describe the relationship between the motion of an object and the forces acting on it. They were first formulated by Isaac Newton in 1687.",
+        "score": 0.6957816481590271
       }
     ]
   },
@@ -103,34 +113,39 @@
     },
     "retrieved_passages": [
       {
+        "_id": 7,
         "id": "p007-0-211",
-        "text": "Newton's Laws of Motion\nNewton's laws of motion are three basic laws of classical mechanics that describe the relationship between the motion of an object and the forces acting on it. They were first formulated by Isaac Newton in 1687.",
         "title": "Newton's Laws of Motion",
-        "score": 0.9135391116142273
+        "text": "Newton's Laws of Motion\nNewton's laws of motion are three basic laws of classical mechanics that describe the relationship between the motion of an object and the forces acting on it. They were first formulated by Isaac Newton in 1687.",
+        "score": 0.9135169982910156
       },
       {
+        "_id": 8,
         "id": "p008-0-210",
-        "text": "General Relativity\nGeneral relativity, also known as the general theory of relativity, is the geometric theory of gravitation published by Albert Einstein in 1915. It describes gravity as a property of the curvature of spacetime.",
         "title": "General Relativity",
-        "score": 0.7838402986526489
+        "text": "General Relativity\nGeneral relativity, also known as the general theory of relativity, is the geometric theory of gravitation published by Albert Einstein in 1915. It describes gravity as a property of the curvature of spacetime.",
+        "score": 0.7837987542152405
       },
       {
+        "_id": 9,
         "id": "p009-0-205",
-        "text": "Quantum Mechanics\nQuantum mechanics is a fundamental theory in physics providing a description of the physical properties of nature at the scale of atoms and subatomic particles. It is the foundation of all quantum physics.",
         "title": "Quantum Mechanics",
-        "score": 0.7640918493270874
+        "text": "Quantum Mechanics\nQuantum mechanics is a fundamental theory in physics providing a description of the physical properties of nature at the scale of atoms and subatomic particles. It is the foundation of all quantum physics.",
+        "score": 0.7640596032142639
       },
       {
+        "_id": 6,
         "id": "p006-0-200",
-        "text": "The French Revolution was a period of radical political and societal change in France that began with the Estates General of 1789 and ended with the formation of the French Consulate in November 1799.",
         "title": "The French Revolution",
-        "score": 0.7271332144737244
+        "text": "The French Revolution was a period of radical political and societal change in France that began with the Estates General of 1789 and ended with the formation of the French Consulate in November 1799.",
+        "score": 0.7270523309707642
       },
       {
+        "_id": 1,
         "id": "p001-0-174",
-        "text": "Photosynthesis is the biological process by which green plants and certain other organisms convert light energy, usually from the sun, into chemical energy stored in glucose.",
         "title": "Photosynthesis",
-        "score": 0.7240018844604492
+        "text": "Photosynthesis is the biological process by which green plants and certain other organisms convert light energy, usually from the sun, into chemical energy stored in glucose.",
+        "score": 0.7240020632743835
       }
     ]
   },
@@ -148,34 +163,39 @@
     },
     "retrieved_passages": [
       {
+        "_id": 5,
         "id": "p005-0-188",
-        "text": "World War II was a global war that lasted from 1939 to 1945. It involved the vast majority of the world's countries forming two opposing military alliances: the Allies and the Axis powers.",
         "title": "World War II",
-        "score": 0.8999296426773071
+        "text": "World War II was a global war that lasted from 1939 to 1945. It involved the vast majority of the world's countries forming two opposing military alliances: the Allies and the Axis powers.",
+        "score": 0.8998847007751465
       },
       {
+        "_id": 6,
         "id": "p006-0-200",
-        "text": "The French Revolution was a period of radical political and societal change in France that began with the Estates General of 1789 and ended with the formation of the French Consulate in November 1799.",
         "title": "The French Revolution",
-        "score": 0.7516404986381531
+        "text": "The French Revolution was a period of radical political and societal change in France that began with the Estates General of 1789 and ended with the formation of the French Consulate in November 1799.",
+        "score": 0.7516374588012695
       },
       {
+        "_id": 4,
         "id": "p004-0-207",
-        "text": "The Roman Empire was the post-Republican period of ancient Rome. As a polity, it included large territorial holdings around the Mediterranean Sea in Europe, North Africa, and Western Asia, ruled by emperors.",
         "title": "The Roman Empire",
-        "score": 0.7465605139732361
+        "text": "The Roman Empire was the post-Republican period of ancient Rome. As a polity, it included large territorial holdings around the Mediterranean Sea in Europe, North Africa, and Western Asia, ruled by emperors.",
+        "score": 0.7465305924415588
       },
       {
+        "_id": 10,
         "id": "p010-0-228",
-        "text": "The Pacific Ocean is the largest and deepest of Earth's five oceanic divisions. It extends from the Arctic Ocean in the north to the Southern Ocean in the south and is bounded by the continents of Asia and Australia in the west.",
         "title": "The Pacific Ocean",
-        "score": 0.6936904191970825
+        "text": "The Pacific Ocean is the largest and deepest of Earth's five oceanic divisions. It extends from the Arctic Ocean in the north to the Southern Ocean in the south and is bounded by the continents of Asia and Australia in the west.",
+        "score": 0.6937329173088074
       },
       {
+        "_id": 3,
         "id": "p003-0-212",
-        "text": "DNA Structure\nDeoxyribonucleic acid (DNA) is a polymer composed of two polynucleotide chains that coil around each other to form a double helix carrying genetic instructions for development and function of all known organisms.",
         "title": "DNA Structure",
-        "score": 0.6928471326828003
+        "text": "DNA Structure\nDeoxyribonucleic acid (DNA) is a polymer composed of two polynucleotide chains that coil around each other to form a double helix carrying genetic instructions for development and function of all known organisms.",
+        "score": 0.6928582191467285
       }
     ]
   },
@@ -193,34 +213,39 @@
     },
     "retrieved_passages": [
       {
+        "_id": 10,
         "id": "p010-0-228",
-        "text": "The Pacific Ocean is the largest and deepest of Earth's five oceanic divisions. It extends from the Arctic Ocean in the north to the Southern Ocean in the south and is bounded by the continents of Asia and Australia in the west.",
         "title": "The Pacific Ocean",
-        "score": 0.9092062711715698
+        "text": "The Pacific Ocean is the largest and deepest of Earth's five oceanic divisions. It extends from the Arctic Ocean in the north to the Southern Ocean in the south and is bounded by the continents of Asia and Australia in the west.",
+        "score": 0.9092304706573486
       },
       {
+        "_id": 3,
         "id": "p003-0-212",
-        "text": "DNA Structure\nDeoxyribonucleic acid (DNA) is a polymer composed of two polynucleotide chains that coil around each other to form a double helix carrying genetic instructions for development and function of all known organisms.",
         "title": "DNA Structure",
-        "score": 0.7222763299942017
+        "text": "DNA Structure\nDeoxyribonucleic acid (DNA) is a polymer composed of two polynucleotide chains that coil around each other to form a double helix carrying genetic instructions for development and function of all known organisms.",
+        "score": 0.7223041653633118
       },
       {
+        "_id": 2,
         "id": "p002-0-191",
-        "text": "Mitochondria are membrane-bound organelles found in the cells of most eukaryotes. They generate most of the cell's supply of adenosine triphosphate (ATP), used as a source of chemical energy.",
         "title": "Mitochondria",
-        "score": 0.714851975440979
+        "text": "Mitochondria are membrane-bound organelles found in the cells of most eukaryotes. They generate most of the cell's supply of adenosine triphosphate (ATP), used as a source of chemical energy.",
+        "score": 0.7149176597595215
       },
       {
+        "_id": 9,
         "id": "p009-0-205",
-        "text": "Quantum Mechanics\nQuantum mechanics is a fundamental theory in physics providing a description of the physical properties of nature at the scale of atoms and subatomic particles. It is the foundation of all quantum physics.",
         "title": "Quantum Mechanics",
-        "score": 0.7139586210250854
+        "text": "Quantum Mechanics\nQuantum mechanics is a fundamental theory in physics providing a description of the physical properties of nature at the scale of atoms and subatomic particles. It is the foundation of all quantum physics.",
+        "score": 0.7140024304389954
       },
       {
+        "_id": 5,
         "id": "p005-0-188",
-        "text": "World War II was a global war that lasted from 1939 to 1945. It involved the vast majority of the world's countries forming two opposing military alliances: the Allies and the Axis powers.",
         "title": "World War II",
-        "score": 0.7083945870399475
+        "text": "World War II was a global war that lasted from 1939 to 1945. It involved the vast majority of the world's countries forming two opposing military alliances: the Allies and the Axis powers.",
+        "score": 0.7083650231361389
       }
     ]
   }

@@ -53,6 +53,7 @@ dependencies = [
 [project.optional-dependencies]
 milvus = [
     "pymilvus[model]>=2.5,<3",
+    "pymilvus[milvus_lite]",
 ]
 chromadb = [
     "chromadb>=1.0",
@@ -76,6 +77,7 @@ lancedb = [
 # without an external service (Milvus-Lite via `file:` server).
 quickstart = [
     "pymilvus[model]>=2.5,<3",
+    "pymilvus[milvus_lite]",
 ]
 # `dev` pulls test/lint tooling so contributors can run the test suite.
 dev = [
