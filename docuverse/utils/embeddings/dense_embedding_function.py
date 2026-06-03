@@ -7,10 +7,37 @@ from docuverse.utils.embeddings.embedding_function import EmbeddingFunction
 import simple_colors
 
 
+def _resolve_attn_implementation(requested):
+    """Pick a usable attention backend.
+
+    ``"auto"`` (or ``None``) → ``flash_attention_2`` when ``flash_attn`` is
+    importable and the GPU is Ampere+ (SM ≥ 8.0); otherwise ``sdpa``. Any
+    other value is returned unchanged so explicit choices are respected.
+    """
+    if requested not in (None, "auto"):
+        return requested
+    if not torch.cuda.is_available():
+        return "sdpa"
+    try:
+        import flash_attn  # noqa: F401
+    except ImportError:
+        return "sdpa"
+    try:
+        major, _ = torch.cuda.get_device_capability()
+    except Exception:
+        return "sdpa"
+    if major < 8:
+        return "sdpa"
+    return "flash_attention_2"
+
+
 class DenseEmbeddingFunction(EmbeddingFunction):
     def __init__(self, model_or_directory_name, batch_size=128, **kwargs):
         super().__init__(model_or_directory_name=model_or_directory_name, batch_size=batch_size, **kwargs)
         self.model = None
+        kwargs['attn_implementation'] = _resolve_attn_implementation(
+            get_param(kwargs, 'attn_implementation', 'auto')
+        )
         device = self.detect_current_device(kwargs)
 
         self.pqa = False
@@ -43,7 +70,6 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         print('=== done initializing model')
 
     def detect_current_device(self, kwargs: dict[str, Any]) -> str:
-        import torch
         device = detect_device()
         if device == 'cpu':
             print(f"You are using {device}. This is much slower than using "
@@ -84,7 +110,6 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                 del self.model
                 self.model = None
                 # Clear CUDA cache
-                import torch
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
             except:
@@ -94,24 +119,56 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                      attn_implementation="sdpa"):
         from sentence_transformers import SentenceTransformer
 
-        if attn_implementation is not None:
-            model_args: dict[str, Any] = {"attn_implementation": attn_implementation}
-            if attn_implementation.find("flash") >= 0:
-                import torch
-                model_args["dtype"] = torch.bfloat16
+        def _build_model_args(attn):
+            args: dict[str, Any] = {"attn_implementation": attn}
+            if "flash" in attn:
+                args["dtype"] = torch.bfloat16
             else:
-                model_args['dtype'] = self.torch_dtype
+                args["dtype"] = self.torch_dtype
+            return args
 
-            self.model = SentenceTransformer(model_or_directory_name,
-                                             device=device,
-                                             trust_remote_code=True,
-                                             model_kwargs=model_args)
+        if attn_implementation is not None:
+            model_args = _build_model_args(attn_implementation)
+            try:
+                self.model = SentenceTransformer(model_or_directory_name,
+                                                 device=device,
+                                                 trust_remote_code=True,
+                                                 model_kwargs=model_args)
+            except (ValueError, ImportError) as e:
+                # Model architecture or runtime didn't accept the requested attention
+                # backend (e.g. flash_attention_2 on a model lacking
+                # `_supports_flash_attn_2`). Fall back to sdpa once, but only when
+                # we were actually trying flash — preserve loud failure for explicit
+                # non-flash mismatches the caller is unlikely to want silently rewritten.
+                if "flash" not in attn_implementation:
+                    raise
+                print(simple_colors.yellow(
+                    f"Model {model_or_directory_name} does not support "
+                    f"{attn_implementation} ({e}); falling back to sdpa."
+                ))
+                attn_implementation = "sdpa"
+                self.model = SentenceTransformer(model_or_directory_name,
+                                                 device=device,
+                                                 trust_remote_code=True,
+                                                 model_kwargs=_build_model_args("sdpa"))
+            self._attn_implementation = attn_implementation
         else:
             self.model = SentenceTransformer(model_or_directory_name, device=device, trust_remote_code=True)
+            self._attn_implementation = None
+        float_types = {p.dtype for p in self.model.parameters()}
+        print(f"Floating point types used in the model {model_or_directory_name}: {float_types}")
+        if self.torch_compile:
+            print("Applying torch.compile() to embedding model...")
+            self.model[0].auto_model = torch.compile(self.model[0].auto_model)
 
     @property
     def tokenizer(self):
         return self.model.tokenizer
+
+    @property
+    def embedding_dim(self):
+        dim = self.model.get_sentence_embedding_dimension()
+        return self.matryoshka_dim if self.matryoshka_dim > 0 else dim
 
     def start_pool(self):
         self.emb_pool = self.model.start_multi_process_pool()
@@ -125,6 +182,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                show_progress_bar=None,
                tqdm_instance=None,
                prompt_name=None,
+               tm=None,
                **kwargs) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
         embs = []
@@ -141,14 +199,14 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                 for i in range(0, len(texts), _batch_size):
                     i_end = min(i + _batch_size, len(texts))
                     tems = self._encode_data(texts=stexts[i:i_end], _batch_size=_batch_size,
-                                             show_progress_bar=False)
+                                             show_progress_bar=False, tm=tm)
                     embs.extend(tems)
                     del tems  # Free memory immediately
                     tqdm_instance.update(i_end - i)
             else:
                 embs = self._encode_data(texts=stexts, _batch_size=_batch_size,
                                          show_progress_bar=show_progress_bar,
-                                         prompt_name=prompt_name)
+                                         prompt_name=prompt_name, tm=tm)
             # Optimize memory by reordering in-place where possible
             result_embs = [None] * len(texts)
             for i in range(len(texts)):
@@ -157,25 +215,49 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             embs = result_embs
         else:
             raise NotImplemented
-            # if batch_size < 0:
-            #     batch_size = self.batch_size
-            # if len(texts) > batch_size:
-            #     embs = []
-            #     for i in tqdm(range(0, len(texts), batch_size)):
-            #         i_end = min(i + batch_size, len(texts))
-            #         tems = self.queries_to_vectors(self.tokenizer,
-            #                                        self.model,
-            #                                        texts[i:i_end],
-            #                                        max_query_length=500).tolist()
-            #         embs.extend(tems)
-            # else:
-            #     embs = self.queries_to_vectors(self.tokenizer, self.model, texts, max_query_length=500).tolist()
+
+        if self.matryoshka_dim > 0:
+            embs = self._truncate_and_renormalize(embs)
+
         return embs
+
+    def _truncate_and_renormalize(self, embs):
+        """Truncate embeddings to matryoshka_dim and re-normalize."""
+        d = self.matryoshka_dim
+        truncated = []
+        for e in embs:
+            t = e[:d]
+            norm = np.linalg.norm(t)
+            if norm > 0:
+                t = (np.array(t) / norm).tolist()
+            truncated.append(t)
+        return truncated
+
+    def _run_warmup(self, texts, _batch_size, prompt_name=None):
+        """Run warmup batches to trigger CUDA kernel JIT and memory allocation, then reset timers."""
+        from docuverse.utils.timer import timer
+        warmup_batch = texts[:_batch_size] if len(texts) >= _batch_size else texts
+        print(f"Running {self.warmup_batches} warmup batch(es) "
+              f"({len(warmup_batch)} texts, batch_size={_batch_size})...")
+        self.print_gpu_stats("Before warmup")
+        for i in range(self.warmup_batches):
+            _ = self._tokenize_and_encode(
+                warmup_batch, _batch_size, show_progress_bar=False,
+                normalize_embeddings=True, prompt_name=prompt_name
+            )
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        self.print_gpu_stats("After warmup")
+        timer.reset()
+        self._warmup_done = True
+        print(f"Warmup complete, timing counters reset.")
 
     def _encode_data(self, texts, _batch_size,
                      show_progress_bar,
-                     prompt_name=None):
+                     prompt_name=None, tm=None):
         embs = []
+        if self.warmup_batches > 0 and not self._warmup_done:
+            self._run_warmup(texts, _batch_size, prompt_name=prompt_name)
         if isinstance(texts, list) and len(texts) > 30 and self.num_devices > 1:
             try:
                 if self.emb_pool is None:
@@ -194,27 +276,23 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                         pass
                 raise e
         else:
-            _batch_size = _batch_size
             _with_torch = torch.cuda.is_available()
             while _batch_size >= 1:
                 try:
-                    embs = self.model.encode(texts,
-                                             show_progress_bar=show_progress_bar,
-                                             normalize_embeddings=True,
-                                             batch_size=_batch_size,
-                                             prompt_name=prompt_name
-                                             ).tolist()
+                    embs = self._tokenize_and_encode(
+                        texts, _batch_size, show_progress_bar,
+                        normalize_embeddings=True, prompt_name=prompt_name,
+                        tm=tm
+                    )
                     return embs
                 except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
                     print(f"Got an error: {e}, reducing batch size to {_batch_size // 2}")
                     if "out of memory" in str(e):
                         print(f"GPU out of memory, reducing batch size from {_batch_size} to {_batch_size // 2}")
-                        # Clear CUDA cache to free GPU memory
                         if _with_torch:
                             torch.cuda.empty_cache()
                         if _batch_size <= 1:
                             print("Using CPU for current batch only, will continue on GPU")
-                            # Temporarily move model to CPU for this batch only
                             original_device = self.model.device
                             cpu_model = self.model.to('cpu')
                             embs = cpu_model.encode(texts,
@@ -223,7 +301,6 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                                                      batch_size=1,
                                                      prompt_name=prompt_name
                                                      ).tolist()
-                            # Move model back to original device
                             self.model = cpu_model.to(original_device)
                             del cpu_model
                             if _with_torch:
@@ -232,6 +309,88 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                     _batch_size = _batch_size // 2
             raise RuntimeError("Out of memory, you're out of luck...")
         return embs
+
+    def _tokenize_and_encode(self, texts, batch_size, show_progress_bar,
+                             normalize_embeddings=True, prompt_name=None, tm=None):
+        """Encode texts with separate tokenization and forward-pass timing."""
+        from docuverse.utils.timer import timer
+        from sentence_transformers.util import batch_to_device
+        from tqdm.auto import tqdm
+
+        model = self.model
+        device = model.device
+
+        # Resolve prompt from prompt_name
+        prompt = None
+        if prompt_name is not None:
+            prompt = model.prompts.get(prompt_name)
+
+        # Prepend prompt to texts if needed
+        if prompt is not None:
+            sentences = [prompt + text for text in texts]
+        else:
+            sentences = list(texts)
+
+        # Sort by length for efficient batching (same as SentenceTransformer.encode).
+        # `_text_length` was a private helper removed in recent sentence-transformers
+        # releases; fall back to a local equivalent so we work on both old and new.
+        def _text_length(t):
+            if hasattr(model, "_text_length"):
+                return model._text_length(t)
+            if isinstance(t, dict):
+                return len(next(iter(t.values())))
+            if not hasattr(t, "__len__"):
+                return 1
+            if len(t) == 0 or isinstance(t[0], int):
+                return len(t)
+            return sum(len(x) for x in t)
+        length_sorted_idx = np.argsort([-_text_length(s) for s in sentences])
+        sentences_sorted = [sentences[int(idx)] for idx in length_sorted_idx]
+
+        # `preprocess` replaced `tokenize` in newer sentence-transformers releases;
+        # prefer it when present, fall back to `tokenize` on older versions.
+        tokenize_fn = getattr(model, "preprocess", None) or getattr(model, "tokenize", None)
+
+        # Build extra_features for prompt_length
+        extra_features = {}
+        if prompt is not None and tokenize_fn is not None:
+            prompt_tok = tokenize_fn([prompt])
+            if "input_ids" in prompt_tok:
+                extra_features["prompt_length"] = prompt_tok["input_ids"].shape[-1] - 1
+
+        # Create sub-timer for encode phases
+        if tm is None:
+            tm = timer(timer.get_top_method("encode"))
+
+        # Phase 1: Tokenize all batches
+        all_features = []
+        for start_index in range(0, len(sentences_sorted), batch_size):
+            batch = sentences_sorted[start_index:start_index + batch_size]
+            features = tokenize_fn(batch)
+            all_features.append(features)
+        tm.add_timing("encode::tokenize")
+
+        # Phase 2: Forward pass on all batches
+        all_embeddings = []
+        for features in tqdm(all_features, desc="Encoding", disable=not show_progress_bar):
+            features = batch_to_device(features, device)
+            features.update(extra_features)
+            with torch.no_grad():
+                out_features = model.forward(features)
+                embeddings = out_features["sentence_embedding"].detach()
+                if normalize_embeddings:
+                    embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+                all_embeddings.extend(embeddings.cpu())
+        if device.type == 'cuda':
+            torch.cuda.synchronize()
+        tm.add_timing("encode::model_forward")
+
+        # Unsort back to original order
+        all_embeddings = [all_embeddings[idx] for idx in np.argsort(length_sorted_idx)]
+
+        # Convert to list of lists
+        return np.asarray([emb.float().numpy() if emb.dtype == torch.bfloat16
+                           else emb.numpy() for emb in all_embeddings]).tolist()
 
     @staticmethod
     def normalize(passage_vectors):

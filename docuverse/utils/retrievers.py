@@ -49,7 +49,7 @@ def create_retrieval_engine(retriever_config: dict):
                engine = milvus.MilvusBM25Engine(retriever_config)
            elif name in ['milvus_hybrid', "milvus-hybrid"]:
                engine = milvus.MilvusHybridEngine(retriever_config)
-           elif name in ['milvus_splade ', 'milvus-splade']:
+           elif name in ['milvus_splade', 'milvus-splade']:
                engine = milvus.MilvusSpladeEngine(retriever_config)
            else:
                raise NotImplementedError(f"Unknown engine type: {name}")

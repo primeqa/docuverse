@@ -1,0 +1,35 @@
+# Quickstart recipe — equivalent to `SearchEngine.from_preset("milvus-dense", ...)`
+# but spelled out so you can see (and edit) every knob.
+#
+# This file is what `from_preset` produces internally before calling the
+# normal `SearchEngine(config_or_path=...)` constructor. Keep both forms in
+# sync when changing the recipe — `docuverse presets show milvus-dense`
+# prints the canonical version.
+
+db_engine: milvus-dense
+# IBM Granite English r2 — small, fast, ships under Apache-2.0 and is the
+# default the quickstart is tested against. Swap for the multilingual r2
+# (`ibm-granite/granite-embedding-97m-multilingual-r2`) if your corpus is
+# not English-only.
+model_name: ibm-granite/granite-embedding-small-english-r2
+index_name: docuverse_quickstart
+
+# Embedded Milvus-Lite — no external service. The DB file is created on first
+# use and will live next to wherever you run from.
+server: "file:./.docuverse/milvus.db"
+
+# Quickstart corpus shipped under examples/quickstart/.
+input_passages: examples/quickstart/passages.jsonl
+input_queries: examples/quickstart/queries.jsonl
+
+# Where ranked results land. Pick anything; ingest-and-test will create
+# parent directories.
+output_file: examples/quickstart/output.json
+
+# Top 5 documents per query is plenty for a 10-passage corpus.
+top_k: 5
+
+# Evaluation: which fields hold the gold relevance and how to score it.
+eval_config:
+  relevant: relevant   # field on each query holding gold passage ids
+  measure: ["mrr@10", "ndcg@10", "recall@5"]

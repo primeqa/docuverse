@@ -1,0 +1,9 @@
+# Milvus hybrid retrieval: dense + BM25 fused via RRF by default.
+# Override `hybrid_submodules` to control which child engines participate.
+db_engine: milvus-hybrid
+model_name: ibm-granite/granite-embedding-small-english-r2
+index_name: docuverse_hybrid
+project_dir: ".docuverse"
+server: "file:./.docuverse/milvus.db"
+hybrid: rrf
+top_k: 10

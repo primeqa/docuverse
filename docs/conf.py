@@ -18,11 +18,11 @@
 # -- Project information -----------------------------------------------------
 
 project = 'DocUVerse'
-copyright = '2024, PrimeQA/DocUVerse Team'
-author = 'PrimeQA/DocUVerse Team'
+copyright = '2024, DocUVerse Team'
+author = 'DocUVerse Team'
 
 # The full version, including alpha/beta/rc tags
-release = '0.0.1'
+release = '0.1.0'
 
 
 # -- General configuration ---------------------------------------------------

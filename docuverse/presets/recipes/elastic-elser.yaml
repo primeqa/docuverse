@@ -1,0 +1,7 @@
+# Elasticsearch with ELSER (server-side learned sparse). Requires ELSER model
+# already deployed on the Elastic cluster; `model_on_server: true` tells
+# DocUVerse not to ship embeddings from the client.
+db_engine: es-elser
+model_on_server: true
+index_name: docuverse_elser
+top_k: 10

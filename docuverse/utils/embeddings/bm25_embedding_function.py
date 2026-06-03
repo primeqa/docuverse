@@ -37,6 +37,7 @@ class BM25EmbeddingFunction(EmbeddingFunction):
     def encode(self, texts: Union[str, List[str]], _batch_size: int = -1,
                show_progress_bar=None,
                tqdm_instance=None,
+               tm=None,
                **kwargs) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
         embs = []

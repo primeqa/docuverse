@@ -73,9 +73,18 @@ class RetrievalArguments(GenericArguments):
     )
 
     attn_implementation: Optional[str]|None = field(
-        default="sdpa",
+        default="auto",
         metadata={
-            "help": "The attention implementation to use (default is sdpa)."
+            "help": "The attention implementation to use. 'auto' (default) picks "
+                    "flash_attention_2 when the flash-attn package is installed and "
+                    "the GPU is Ampere+ (SM ≥ 8.0); otherwise falls back to sdpa."
+        }
+    )
+
+    torch_compile: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, apply torch.compile() to the embedding model for faster inference (requires PyTorch 2.0+)."
         }
     )
 
@@ -362,6 +371,15 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    matryoshka_dim: Optional[int] = field(
+        default=0,
+        metadata={
+            "help": "If > 0, truncate embeddings to the first N dimensions (Matryoshka-style). "
+                    "The model must support Matryoshka representations for this to be effective. "
+                    "Set to 0 (default) to use the model's full embedding dimension."
+        }
+    )
+
     duplicate_removal: Optional[bool]|None = field(
         default=None,
         metadata={
@@ -461,6 +479,18 @@ class RetrievalArguments(GenericArguments):
     search_params: dict = None
 
     index_params: dict = None
+
+    warmup_batches: int = field(
+        default=0,
+        metadata={
+            "help": "Number of warmup batches to run through the embedding model before "
+                    "recording timing statistics. Warmup eliminates inflated max values "
+                    "caused by CUDA kernel JIT compilation and memory allocation on the "
+                    "first batches. The warmup batches re-encode the first batch of actual "
+                    "data, so no extra input is needed. Ensure your dataset has enough "
+                    "examples for the post-warmup measurements to be meaningful."
+        }
+    )
 
     def __post_init__(self):
         super().__post_init__()
@@ -572,6 +602,15 @@ class EngineArguments(GenericArguments):
         default=0,
         metadata={
             "help": "If provided, it will skip <skip> documents from indexing. Useful if milvus crashes."
+        }
+    )
+
+    timing_stats: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Comma-separated list of statistics to save in the .timing.json file. "
+                    "Available: count,sum,mean,median,std,min,max,p5,p25,p75,p95,p99. "
+                    "Default (when flag is omitted): count,sum,mean,median,std,p95,p99,max"
         }
     )
 
@@ -863,7 +902,7 @@ class DocUVerseConfig(GenericArguments):
             if os.path.exists(config_or_path):
                 try:
                     vals = read_config_file(config_or_path, parent)
-                    self._flatten_and_read_dict(vals)
+                    self._flatten_and_read_dict(vals, extra=parent)
                 except Exception as exc:
                     raise exc
             else:
@@ -876,13 +915,15 @@ class DocUVerseConfig(GenericArguments):
             return config_or_path
         return None
 
-    def _flatten_and_read_dict(self, vals):
+    def _flatten_and_read_dict(self, vals, extra=None):
         if get_param(vals, "retrieval|retriever"):  # By default, all parameters are assumed to be retriever params
             vals1 = {}
             for k, v in vals.items():
                 if v and v != "None":
                     vals1.update(v)
             vals = vals1
+        if extra:
+            vals.update(extra)
         self.read_dict(vals)
 
     def update(self, other_config):

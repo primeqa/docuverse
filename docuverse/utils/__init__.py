@@ -382,37 +382,51 @@ def file_is_of_type(input_file, extensions: Union[str, List[str]]):
 _parallel_process_func = None
 _parallel_post_func = None
 _parallel_post_label = None
+_parallel_data = None
 
 def _parallel_queue_worker(inqueue, result_queue, thread_number, expected_items, msg):
     """Worker with its own tqdm progress bar. Uses fork-inherited globals."""
     import queue as queue_module
+    import sys
+    import traceback
 
-    with tqdm(desc=f"{msg}/thread {thread_number}", leave=False,
-              position=thread_number + 1, total=expected_items) as tk:
-        while True:
-            try:
-                idx, text = inqueue.get(block=True, timeout=1)
-            except queue_module.Empty:
-                break
-            except Exception:
-                break
-            try:
-                result = _parallel_process_func(text)
-                if _parallel_post_func is not None:
-                    if isinstance(result[0], dict):
-                        result = [{**item,
-                                  _parallel_post_label: _parallel_post_func(item)}
-                                 for item in result]
-                    else:
-                        setattr(result, _parallel_post_label, _parallel_post_func(result))
-                result_queue.put((idx, result))
-            except Exception as e:
-                print(f"Error in thread {thread_number}: {e}")
-                result_queue.put((idx, []))
-            tk.update(1)
+    try:
+        with tqdm(desc=f"{msg}/thread {thread_number}", leave=False,
+                  position=thread_number + 1, total=expected_items) as tk:
+            while True:
+                try:
+                    idx = inqueue.get(block=True, timeout=1)
+                except queue_module.Empty:
+                    break
+                except Exception as e:
+                    print(f"[Worker {thread_number}] Queue error: {e}",
+                          file=sys.stderr, flush=True)
+                    break
+                try:
+                    text = _parallel_data[idx]
+                    result = _parallel_process_func(text)
+                    if _parallel_post_func is not None:
+                        if isinstance(result[0], dict):
+                            result = [{**item,
+                                      _parallel_post_label: _parallel_post_func(item)}
+                                     for item in result]
+                        else:
+                            setattr(result, _parallel_post_label, _parallel_post_func(result))
+                    result_queue.put((idx, result))
+                except Exception as e:
+                    tb_str = traceback.format_exc()
+                    print(f"[Worker {thread_number}] Error processing item {idx}: {e}",
+                          file=sys.stderr, flush=True)
+                    result_queue.put((idx, [], tb_str))
+                tk.update(1)
+    except Exception as e:
+        # Catch-all for anything that kills the worker (tqdm init, missing globals, etc.)
+        print(f"[Worker {thread_number}] FATAL: {e}\n"
+              f"{traceback.format_exc()}",
+              file=sys.stderr, flush=True)
 
 def parallel_process(process_func, data, num_threads, post_func=None, post_label=None,
-                     msg="Processing result:"):
+                     msg="Processing result:", use_threads=False):
     """
     This method parallelizes the processing of a list of documents using multiple threads.
 
@@ -452,6 +466,54 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     if num_threads <= 1:
         return [apply_funcs(dt) for dt in tqdm(data, desc=msg, smoothing=1)]
 
+    if use_threads:
+        import threading
+        import copy
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        # HuggingFace fast tokenizers are not thread-safe (Rust borrow semantics).
+        # Give each thread its own deep copy of process_func (which carries the tiler/tokenizer).
+        _thread_local = threading.local()
+
+        def _thread_apply(item):
+            if not hasattr(_thread_local, 'func'):
+                _thread_local.func = copy.deepcopy(process_func)
+                _thread_local.post = copy.deepcopy(post_func) if post_func is not None else None
+            result = _thread_local.func(item)
+            if _thread_local.post is not None:
+                if isinstance(result[0], dict):
+                    result = [{**r, post_label: _thread_local.post(r)} for r in result]
+                else:
+                    setattr(result, post_label, _thread_local.post(result))
+            return result
+
+        results = [None] * len(data)
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = {executor.submit(_thread_apply, item): i for i, item in enumerate(data)}
+            with tqdm(total=len(data), desc=msg) as tk:
+                for future in as_completed(futures):
+                    i = futures[future]
+                    try:
+                        results[i] = future.result()
+                    except Exception:
+                        import traceback
+                        print(f"\n[Thread {i}] Error: {traceback.format_exc()}", flush=True)
+                        results[i] = []
+                    tk.update(1)
+        return results
+
+    # Smoke-test: run the first item in the main process before forking.
+    # This surfaces Python exceptions with a full traceback immediately,
+    # rather than losing them to a worker crash.
+    if data:
+        try:
+            apply_funcs(data[0])
+        except Exception:
+            import traceback
+            print(f"\n[parallel_process] Smoke test failed on first item — "
+                  f"aborting parallel run.\n{traceback.format_exc()}", flush=True)
+            raise
+
     import multiprocessing as mp
 
     # Use 'fork' context for fast startup (avoids re-importing modules).
@@ -463,18 +525,19 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
 
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-    # Set module-level globals so forked workers inherit them
-    global _parallel_process_func, _parallel_post_func, _parallel_post_label
+    # Set module-level globals so forked workers inherit them (copy-on-write)
+    global _parallel_process_func, _parallel_post_func, _parallel_post_label, _parallel_data
     _parallel_process_func = process_func
     _parallel_post_func = post_func
     _parallel_post_label = post_label
+    _parallel_data = data
 
     num_docs = len(data)
     inqueue = ctx.Queue()
     result_queue = ctx.Queue()
 
-    for i, doc in enumerate(data):
-        inqueue.put((i, doc))
+    for i in range(num_docs):
+        inqueue.put(i)
 
     items_per_worker = (num_docs + num_threads - 1) // num_threads
     processes = []
@@ -486,23 +549,140 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
 
     # Collect results with main progress bar at position 0
     results = [None] * num_docs
+    errors = {}
+    reported_dead = set()
     tk = tqdm(desc=msg, total=num_docs, position=0)
     collected = 0
     while collected < num_docs:
         try:
-            idx, result = result_queue.get(timeout=30)
-            results[idx] = result
+            item = result_queue.get(timeout=5)
+            if len(item) == 3:
+                idx, _, tb_str = item
+                results[idx] = []
+                errors[idx] = tb_str
+            else:
+                idx, result = item
+                results[idx] = result
             collected += 1
             tk.update(1)
         except Exception:
-            if not any(p.is_alive() for p in processes):
-                break
-    tk.close()
+            pass
+
+        # Proactively report workers that have newly died (checked every iteration)
+        import signal as _signal
+        for i, p in enumerate(processes):
+            if i in reported_dead or p.is_alive():
+                continue
+            reported_dead.add(i)
+            ec = p.exitcode
+            if ec is None:
+                continue
+            if ec < 0:
+                try:
+                    sig_name = _signal.Signals(-ec).name
+                except (ValueError, AttributeError):
+                    sig_name = f"signal {-ec}"
+                print(f"\n  [Worker {i}] Killed by {sig_name} (exit code {ec})",
+                      flush=True)
+            elif ec != 0:
+                print(f"\n  [Worker {i}] Exited with code {ec}", flush=True)
+
+        # If all workers are gone and there's nothing left in the queue, stop waiting
+        if len(reported_dead) == num_threads:
+            # Drain any remaining queued results before giving up
+            while True:
+                try:
+                    item = result_queue.get_nowait()
+                    if len(item) == 3:
+                        idx, _, tb_str = item
+                        results[idx] = []
+                        errors[idx] = tb_str
+                    else:
+                        idx, result = item
+                        results[idx] = result
+                    collected += 1
+                    tk.update(1)
+                except Exception:
+                    break
+            tk.close()
+            _report_failed_items(results, data, num_docs, collected, errors)
+            break
+    else:
+        tk.close()
 
     for p in processes:
-        p.join()
+        p.join(timeout=10)
+
+    # Report any items that failed with exceptions
+    if errors:
+        _report_failed_items(results, data, num_docs, collected, errors)
+
+    # Replace any remaining None entries with empty lists
+    results = [r if r is not None else [] for r in results]
 
     return results
+
+
+def _report_failed_items(results, data, num_docs, collected, errors=None):
+    """Report items that were not processed due to worker crashes or exceptions."""
+    if errors is None:
+        errors = {}
+
+    failed_indices = [i for i, r in enumerate(results) if r is None]
+    errored_indices = sorted(errors.keys())
+    all_problem_indices = sorted(set(failed_indices) | set(errored_indices))
+
+    if not all_problem_indices:
+        return
+
+    n_crashed = len(failed_indices)
+    n_errored = len(errored_indices)
+    parts = []
+    if n_crashed:
+        parts.append(f"{n_crashed} crashed")
+    if n_errored:
+        parts.append(f"{n_errored} raised exceptions")
+    print(f"\nWARNING: {len(all_problem_indices)}/{num_docs} items failed "
+          f"({', '.join(parts)}).")
+
+    # Group errors by traceback to avoid repeating the same exception N times
+    tb_groups = {}
+    for idx in errored_indices:
+        tb = errors[idx]
+        tb_groups.setdefault(tb, []).append(idx)
+
+    if tb_groups:
+        print(f"\n  Distinct exceptions ({len(tb_groups)}):")
+        for i, (tb, indices) in enumerate(tb_groups.items(), 1):
+            # Indent the traceback for readability
+            indented_tb = "\n".join(f"    {line}" for line in tb.rstrip().splitlines())
+            print(f"\n  [{i}] Affected {len(indices)} item(s) "
+                  f"(first indices: {indices[:5]}{'...' if len(indices) > 5 else ''}):")
+            print(indented_tb)
+
+    # Report crashed items (no exception captured — worker died)
+    if n_crashed:
+        MAX_DISPLAY = 20
+        print(f"\n  Items lost to worker crashes (no traceback available):")
+        for idx in failed_indices[:MAX_DISPLAY]:
+            item = data[idx]
+            if isinstance(item, dict):
+                item_id = (item.get('id') or item.get('_id') or item.get('docid')
+                           or item.get('doc_id') or item.get('pid'))
+                if item_id is not None:
+                    print(f"    - index {idx}: id={item_id}")
+                else:
+                    preview = next((str(v)[:80] for v in item.values()
+                                    if isinstance(v, str) and v.strip()), None)
+                    print(f"    - index {idx}: {preview or '(no preview)'}")
+            else:
+                print(f"    - index {idx}: {str(item)[:80]}")
+        if n_crashed > MAX_DISPLAY:
+            print(f"    ... and {n_crashed - MAX_DISPLAY} more")
+
+    # Log the full list for programmatic use
+    print(f"  All failed indices: {all_problem_indices[:100]}"
+          f"{'...' if len(all_problem_indices) > 100 else ''}")
 
 def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes') -> str:
     """
@@ -519,6 +699,13 @@ def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes')
     Returns:
         str: The user's response or the default answer if no input is provided.
     """
+    # Non-interactive opt-out for notebooks, CI, scripts: skip the prompt
+    # and return the default. Stdin-less callers (jupyter nbconvert, pytest
+    # captured stdin) also fall through here on EOFError / StdinNotImplemented.
+    if os.environ.get("DOCUVERSE_NONINTERACTIVE"):
+        print(text)
+        print(f" <DOCUVERSE_NONINTERACTIVE set: returning '{default}'>")
+        return default
     display_answers = ", ".join(a.title() if a==default else a for a in answers)
     print(text)
     try:
@@ -530,10 +717,16 @@ def ask_for_confirmation(text, answers=['yes', 'no', 'skip'], default:str='yes')
                 return r
             else:
                 print(f"Please type one of {answers}, not {r}!")
-    except EOFError:
-        import simple_colors
-
-        print(f" <No input available: returning '{simple_colors.red(default)}'>")
+    except Exception:
+        # No usable stdin (EOFError on closed stdin, ipykernel's
+        # StdinNotImplementedError under `jupyter nbconvert --execute`, etc.)
+        # — fall back to default rather than crash an automated pipeline.
+        try:
+            import simple_colors
+            shown = simple_colors.red(default)
+        except Exception:
+            shown = default
+        print(f" <No input available: returning '{shown}'>")
         return default
 
 def convert_to_single_vectors(embs):

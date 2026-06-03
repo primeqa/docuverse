@@ -20,6 +20,7 @@ except:
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
 from docuverse.engines.search_engine_config_params import DocUVerseConfig, RetrievalArguments
 from docuverse.utils import get_param, ask_for_confirmation
+from docuverse.utils.timer import timer
 
 
 class MilvusHybridEngine(MilvusEngine):
@@ -180,7 +181,7 @@ class MilvusHybridEngine(MilvusEngine):
             self.collection = Collection(name=self.config.index_name)
 
 
-    def _create_data(self, corpus, texts, show_progress_bar=True, tqdms=None):
+    def _create_data(self, corpus, texts, show_progress_bar=True, tqdms=None, tm=None):
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         data = []
         if tqdms is None:
@@ -188,7 +189,7 @@ class MilvusHybridEngine(MilvusEngine):
         for m, tq in zip(self.models, tqdms):
             data.append(m.encode_data(texts, self.ingestion_batch_size,
                                       show_progress_bar=show_progress_bar,
-                                      tqdm_instance=tq)
+                                      tqdm_instance=tq, tm=tm)
                         )
 
         vals = []
@@ -288,8 +289,10 @@ class MilvusHybridEngine(MilvusEngine):
         raise NotImplementedError
 
     def search(self, question: SearchQueries.Query, **kwargs):
+        tm = timer("ingest_and_test::search::retrieve")
         search_params = [{"param": m.get_search_params()} for m in self.models]
-        data = [m.encode_query(question) for m in self.models]
+        data = [m.encode_query(question, tm=tm) for m in self.models]
+        tm.add_timing("encode")
         requests = []
         self.collection.load()
         for s, d, m, name in zip(search_params, data, self.models, self.embedding_names):

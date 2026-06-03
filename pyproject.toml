@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "docuverse"
 dynamic = ["version"]
-requires-python = ">=3.10.0, <3.13.0"
+requires-python = ">=3.10.0, <3.15.0"
 description = "State-of-the-art Retrieval/Search engine models, including ElasticSearch, ChromaDB, Milvus, and PrimeQA"
 readme = "README.md"
 license = "Apache-2.0"
@@ -24,43 +24,48 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 
+# Pins are intentionally permissive lower-bounds, not the tight pins that used to
+# live in requirements*.txt. They reflect the versions that are known to work in
+# the dev environment as of 2026-05; see requirements*.txt (now deprecation
+# shims) for historical exact pins.
 dependencies = [
     "rouge-score",
-    "pyyaml~=6.0.2",
+    "pyyaml>=6.0",
     "accelerate",
-    "sentence-transformers",
-    "python-dotenv~=1.0.1",
-    "numpy~=2.2.6",
-    "urllib3~=2.4.0",
-    "torch~=2.8.0",
-    "multiprocess~=0.70.18; platform_system=='Darwin'",
-    "tqdm~=4.67.1",
-    "transformers~=4.57.1",
-    "orjson~=3.10.18",
-    "pydantic_core~=2.27.2",
-    "simple_colors~=0.1.5",
-    "pandas~=2.2.0",
-    "jinja2~=3.1.0",
-    "grpcio~=1.60.0",
-    "scipy==1.16.1",
-    "matplotlib==3.10.5"
+    "sentence-transformers>=5.2",
+    "python-dotenv>=1.0",
+    "numpy>=1.26",
+    "urllib3>=2.0",
+    "torch>=2.10,<3",
+    "multiprocess>=0.70; platform_system=='Darwin'",
+    "tqdm>=4.65",
+    "transformers>=5.2,<6",
+    "orjson>=3.10",
+    "pydantic_core>=2.27",
+    "simple_colors",
+    "pandas>=2.2",
+    "jinja2>=3.1",
+    "grpcio>=1.60",
+    "scipy>=1.16",
+    "matplotlib>=3.7"
 ]
 
 [project.optional-dependencies]
 milvus = [
-    "pymilvus[model]~=2.5.10",
+    "pymilvus[model]>=2.5,<3",
+    "pymilvus[milvus_lite]",
 ]
 chromadb = [
-    "chromadb~=1.0.15",
+    "chromadb>=1.0",
 ]
 elastic = [
-    "elasticsearch~=8.17.3",
+    "elasticsearch>=8.17,<9",
 ]
 extra = [
-    "pyizumo[pos]==2.3.0",
+    "pyizumo[pos]>=2.0",
     "huggingface_hub[cli]",
     "pynvml",
-    "scikit-learn~=1.3.0",
+    "scikit-learn>=1.3",
 ]
 faiss = [
     "faiss-cpu",
@@ -68,30 +73,51 @@ faiss = [
 lancedb = [
     "lancedb>=0.15",
 ]
+# `quickstart` is the curated minimum to make the README example work end-to-end
+# without an external service (Milvus-Lite via `file:` server).
+quickstart = [
+    "pymilvus[model]>=2.5,<3",
+    "pymilvus[milvus_lite]",
+]
+# `dev` pulls test/lint tooling so contributors can run the test suite.
+dev = [
+    "pytest>=7",
+    "pytest-cov>=4",
+    "ruff>=0.4",
+]
 all = [
-    "pymilvus[model]~=2.5.9",
-    "chromadb~=1.0.15",
-    "elasticsearch~=8.17.3",
-    "pyizumo[pos]==2.3.0",
+    "pymilvus[model]>=2.5,<3",
+    "chromadb>=1.0",
+    "elasticsearch>=8.17,<9",
+    "faiss-cpu",
+    "lancedb>=0.15",
+    "pyizumo[pos]>=2.0",
     "huggingface_hub[cli]",
     "pynvml",
-    "scikit-learn~=1.7.1",
-    "matplotlib~=3.10.5",
+    "scikit-learn>=1.3",
 ]
 
 [project.urls]
 Homepage = "https://github.com/primeqa/docuverse"
 Repository = "https://github.com/primeqa/docuverse"
 
+[project.scripts]
+# `docuverse` is the unified entry point — see docuverse/cli/__init__.py.
+# `ingest-and-test` and `db2db-copy` are kept as legacy aliases.
+docuverse = "docuverse.cli:main"
+ingest-and-test = "docuverse.utils.ingest_and_test:main_cli"
+db2db-copy = "scripts.milvus_utils.db2db_copy:main"
+
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["docuverse", "docuverse.*"]
+include = ["docuverse", "docuverse.*", "scripts", "scripts.*"]
 
 [tool.setuptools.dynamic]
 version = {file = "VERSION"}
 
 [tool.setuptools.package-data]
 "*" = ["*.cpp", "*.cu"]
+"docuverse" = ["presets/recipes/*.yaml", "resources/*.json"]

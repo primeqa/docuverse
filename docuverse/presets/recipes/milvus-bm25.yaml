@@ -1,0 +1,8 @@
+# Milvus BM25 sparse retrieval (no embedding model required).
+# `project_dir` is where the BM25 IDF cache (<index>.idf) is written; the
+# default places it under .docuverse alongside the embedded server.
+db_engine: milvus-bm25
+index_name: docuverse_bm25
+project_dir: ".docuverse"
+server: "file:./.docuverse/milvus.db"
+top_k: 10

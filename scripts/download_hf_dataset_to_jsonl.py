@@ -20,17 +20,45 @@ Examples:
 """
 
 import argparse
-import json
+import bz2
 import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+import orjson
 from pathlib import Path
 from typing import List, Optional
 
 try:
     from datasets import load_dataset
+    from huggingface_hub import dataset_info
 except ImportError:
-    print("Error: 'datasets' library not found. Please install it:")
-    print("  pip install datasets")
+    print("Error: 'datasets' and 'huggingface_hub' libraries are required. Please install them:")
+    print("  pip install datasets huggingface_hub")
     exit(1)
+
+
+def get_subsets(dataset_name: str) -> List[str]:
+    """Fetch available subsets/configs for a dataset from HuggingFace Hub."""
+    info = dataset_info(dataset_name)
+    subsets = [c["config_name"] for c in info.card_data.get("configs", [])] if info.card_data else []
+    if not subsets and info.config_names:
+        subsets = info.config_names
+    return subsets
+
+
+def download_subset_worker(
+    dataset_name: str,
+    subset: str,
+    output_dir: str,
+    splits: Optional[List[str]] = None,
+) -> str:
+    """Download a single subset into output_dir/<subset>/. Returns a status message."""
+    subset_dir = str(Path(output_dir) / subset)
+    try:
+        download_and_save_dataset(dataset_name, output_dir=subset_dir, subset=subset, splits=splits)
+        return f"  ✓ {subset}"
+    except Exception as e:
+        return f"  ✗ {subset}: {e}"
 
 
 def save_split_to_jsonl(dataset, output_path: Path, split_name: str):
@@ -47,11 +75,9 @@ def save_split_to_jsonl(dataset, output_path: Path, split_name: str):
     num_examples = len(dataset)
     print(f"  Saving {num_examples} examples to {output_path}")
 
-    with open(output_path, 'w', encoding='utf-8') as f:
+    with bz2.open(output_path, 'wb') as f:
         for example in dataset:
-            # Convert the example to a JSON string and write it
-            json_line = json.dumps(example, ensure_ascii=False)
-            f.write(json_line + '\n')
+            f.write(orjson.dumps(example) + b'\n')
 
     print(f"  ✓ Saved {split_name} split ({num_examples} examples)")
 
@@ -88,9 +114,9 @@ def download_and_save_dataset(
     # Load the dataset
     try:
         if subset:
-            dataset = load_dataset(dataset_name, subset)
+            dataset = load_dataset(dataset_name, subset, trust_remote_code=True)
         else:
-            dataset = load_dataset(dataset_name)
+            dataset = load_dataset(dataset_name, trust_remote_code=True)
     except Exception as e:
         print(f"Error loading dataset: {e}")
         return
@@ -124,7 +150,7 @@ def download_and_save_dataset(
     for split in splits_to_save:
         # Use mapped name if available (e.g., 'validation' -> 'dev')
         output_name = split_name_map.get(split, split)
-        output_file = output_path / f"{output_name}.jsonl"
+        output_file = output_path / f"{output_name}.jsonl.bz2"
 
         print(f"Processing {split} split:")
         save_split_to_jsonl(dataset[split], output_file, split)
@@ -134,7 +160,7 @@ def download_and_save_dataset(
     print(f"\nFiles created:")
     for split in splits_to_save:
         output_name = split_name_map.get(split, split)
-        output_file = output_path / f"{output_name}.jsonl"
+        output_file = output_path / f"{output_name}.jsonl.bz2"
         if output_file.exists():
             size_mb = output_file.stat().st_size / (1024 * 1024)
             print(f"  - {output_file} ({size_mb:.2f} MB)")
@@ -157,6 +183,12 @@ Examples:
 
   # Specify output directory
   python download_hf_dataset_to_jsonl.py squad --output_dir data/squad
+
+  # List available subsets for a dataset
+  python download_hf_dataset_to_jsonl.py miracl/miracl --list-subsets
+
+  # Download all subsets in parallel (each in its own subdirectory)
+  python download_hf_dataset_to_jsonl.py miracl/miracl --all-subsets --output_dir benchmark/miracl --workers 8
 
   # Rename validation split to dev
   python download_hf_dataset_to_jsonl.py squad
@@ -200,12 +232,64 @@ Common datasets:
              'Common splits: train, validation, test, dev'
     )
 
+    parser.add_argument(
+        '--list-subsets',
+        action='store_true',
+        help='List available subsets/configs for the dataset and exit'
+    )
+
+    parser.add_argument(
+        '--all-subsets',
+        action='store_true',
+        help='Download all subsets, each into its own subdirectory under output_dir'
+    )
+
+    parser.add_argument(
+        '--workers',
+        type=int,
+        default=4,
+        help='Number of parallel workers for --all-subsets (default: 4)'
+    )
+
     args = parser.parse_args()
 
     # Parse splits argument
     splits = None
     if args.splits:
         splits = [s.strip() for s in args.splits.split(',')]
+
+    if args.list_subsets or args.all_subsets:
+        try:
+            subsets = get_subsets(args.dataset_name)
+        except Exception as e:
+            print(f"Error fetching dataset info: {e}")
+            exit(1)
+        if not subsets:
+            print(f"No subsets found for {args.dataset_name} (default config only)")
+            exit(0)
+
+        if args.list_subsets:
+            print(f"Available subsets for {args.dataset_name} ({len(subsets)}):")
+            for s in subsets:
+                print(f"  {s}")
+            exit(0)
+
+        # --all-subsets: download each subset in parallel
+        output_dir = args.output_dir or f"data/{args.dataset_name.replace('/', '_')}"
+        print(f"\nDownloading all {len(subsets)} subsets of {args.dataset_name}")
+        print(f"  Output directory: {output_dir}")
+        print(f"  Workers: {args.workers}\n")
+
+        with ProcessPoolExecutor(max_workers=args.workers) as pool:
+            futures = {
+                pool.submit(download_subset_worker, args.dataset_name, s, output_dir, splits): s
+                for s in subsets
+            }
+            for future in as_completed(futures):
+                print(future.result())
+
+        print(f"\n✓ All subsets saved to {output_dir}")
+        exit(0)
 
     download_and_save_dataset(
         dataset_name=args.dataset_name,

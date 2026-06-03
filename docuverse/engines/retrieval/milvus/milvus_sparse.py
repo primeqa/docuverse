@@ -26,7 +26,9 @@ class MilvusSparseEngine(MilvusEngine):
         self.model = SparseEmbeddingFunction(self.config.model_name, batch_size=self.config.bulk_batch,
                                              doc_max_tokens=get_param(self.config, 'sparse_config.doc_max_tokens', None),
                                              query_max_tokens=get_param(self.config, 'sparse_config.query_max_tokens', None),
-                                             process_name="ingest_and_test::search"
+                                             process_name="ingest_and_test::search",
+                                             torch_compile=get_param(self.config, 'torch_compile', False),
+                                             warmup_batches=get_param(self.config, 'warmup_batches', 0)
                                              )
 
     def prepare_index_params(self, embeddings_name="embeddings"):
@@ -63,11 +65,12 @@ class MilvusSparseEngine(MilvusEngine):
 
         return search_params
 
-    def encode_query(self, question):
+    def encode_query(self, question, tm=None):
         query_vector = self.model.encode_query(query=question.text,
                                                encode_question=get_param(self.config,
                                                                         'sparse_config.runtime_query_encoding',
-                                                                         True)
+                                                                         True),
+                                               tm=tm
                                                )
         return query_vector
 

@@ -1,0 +1,7 @@
+# Elasticsearch with kNN dense retrieval. Set ES_HOST/ES_USER/ES_PASSWORD in
+# your environment, or override `server:` with a named entry from
+# config/servers/elastic_servers.json.
+db_engine: es-dense
+model_name: ibm-granite/granite-embedding-small-english-r2
+index_name: docuverse_dense
+top_k: 10

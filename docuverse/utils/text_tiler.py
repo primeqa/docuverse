@@ -322,7 +322,8 @@ class TextTiler:
                                 eid -= 1
                             end_pos = offsets[eid][1]
                             # texts.append(split_passage[init_pos:end_pos+1])
-                            texts.append(tokenizer.decode(split_passage[sid:eid+1]))
+                            # texts.append(tokenizer.decode(split_passage[sid:eid]))
+                            texts.append(tokenizer.decode(split_passage[sid:len(split_passage) + eid + 1]))
                             positions.append([init_pos, end_pos])
                             # init_pos += stride
                         added_titles = [False for _ in positions]

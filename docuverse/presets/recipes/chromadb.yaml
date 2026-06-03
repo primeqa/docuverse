@@ -1,0 +1,6 @@
+# ChromaDB dense retrieval. Override `server:` to point at a remote ChromaDB
+# instance, or leave unset for the default in-process / persistent client.
+db_engine: chromadb
+model_name: ibm-granite/granite-embedding-small-english-r2
+index_name: docuverse_chromadb
+top_k: 10

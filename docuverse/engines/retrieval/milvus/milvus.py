@@ -46,8 +46,11 @@ class MilvusEngine(RetrievalEngine):
 
     """
     @staticmethod
-    def read_servers(config: str = "config/milvus_servers.json"):
-        return RetrievalServers(config="config/milvus_servers.json")
+    def read_servers(config: str = "servers/milvus_servers.json"):
+        # The resolver in RetrievalServers handles legacy `config/...` paths,
+        # so passing `servers/milvus_servers.json` finds the new layout
+        # without breaking old checkouts.
+        return RetrievalServers(config=config)
 
 
     def __init__(self, config_params: SearchEngineConfig | dict, **kwargs):
@@ -66,22 +69,45 @@ class MilvusEngine(RetrievalEngine):
         self.client = None
         self.index = None
         self.embeddings_name = "embeddings"
-        self.milvus_defaults = read_config_file("config/milvus_default_config.yaml")
+        # Resolver-based lookup so this works installed (no checkout) too.
+        from docuverse.utils.config_resolver import resolve_optional
+        defaults_path = resolve_optional("engines/milvus_default_config.yaml") or "config/milvus_default_config.yaml"
+        self.milvus_defaults = read_config_file(defaults_path)
         self.load_model_config(config_params=config_params)
         self.servers = self.read_servers()
         self.server = None
-        if get_param(self.config, 'server', None):
-            if self.config.server.find("file:") >= 0:
-                file_dir = os.path.dirname(self.config.server)
-                if not os.path.isdir(file_dir):
+        server_spec = get_param(self.config, 'server', None)
+        if server_spec:
+            # Three accepted forms:
+            #   1. dict ({host, port, ...}): build Server inline (no registry lookup)
+            #   2. "file:<path>": embedded Milvus-Lite at <path>
+            #   3. str (named): registry lookup in milvus_servers.json
+            if isinstance(server_spec, dict):
+                self.server = Server(**server_spec)
+            elif isinstance(server_spec, str) and server_spec.startswith("file:"):
+                # Strip the `file:` scheme (and any repeats) before computing
+                # the parent dir — otherwise os.path.dirname leaves the prefix
+                # glued to the path and we'd makedirs("file:./.docuverse")
+                # or, worse, a literal "file:" / "file:experiments" directory.
+                local_path = server_spec
+                while local_path.startswith("file:"):
+                    local_path = local_path[len("file:"):]
+                file_dir = os.path.dirname(local_path)
+                if file_dir.startswith("file:"):
+                    raise ValueError(
+                        f"refusing to create file:-prefixed directory from "
+                        f"server spec {server_spec!r} (resolved to {file_dir!r})"
+                    )
+                if file_dir and not os.path.isdir(file_dir):
                     os.makedirs(file_dir, exist_ok=True)
-                self.server = Server(host=self.config.server)
+                self.server = Server(host=server_spec)
             else:
-                self.server = self.servers[self.config.server]
+                self.server = self.servers[server_spec]
         self.model = None
         self.init_model(**kwargs)
         # Milvus does not accept '-', only letters, numbers, and "_"
-        self.init_client()
+        # init_client() is deferred to first use so that forked preprocessing
+        # workers (parallel_process) are spawned before gRPC threads exist.
         self.output_fields = ["id", "text", 'title'] if self.config.store_text_in_index else ["title", "id"]
         # self.output_fields = [self.config.data_template.get(f"{t}_header", t) for t in ["id", "text", 'title']]
         extra = get_param(self.config.data_template, 'extra_fields', None)
@@ -167,7 +193,7 @@ class MilvusEngine(RetrievalEngine):
 
     def check_client(self):
         if self.client is None:
-            raise RuntimeError("MilvusEngine server is not defined/initialized.")
+            self.init_client()
 
     def delete_index(self, index_name: str|None=None, fmt=None, **kwargs):
         self.check_client()
@@ -202,25 +228,32 @@ class MilvusEngine(RetrievalEngine):
         tq2 = tqdm(desc="  * Milvusing data", total=len(texts), leave=False)
         ingestion_batch = self.ingestion_batch_size
         tq.write(f"Ingesting with a batch size of {ingestion_batch}")
-        for i in range(0, len(texts), ingestion_batch):
-            last = min(i+ingestion_batch, len(texts))
-            data = self._create_data(corpus[i:last], texts[i:last], tq_instance=tq1, **kwargs)
-            tm.add_timing("encoding_data")
-            self._insert_data(data, tq_instance=tq2)
-            tm.add_timing("data_milvusing")
-            tq.update(last-i)
+        try:
+            for i in range(0, len(texts), ingestion_batch):
+                last = min(i+ingestion_batch, len(texts))
+                tm.mark()
+                data = self._create_data(corpus[i:last], texts[i:last], tq_instance=tq1, tm=tm, **kwargs)
+                # tm.add_timing("encode")
+                self._insert_data(data, tq_instance=tq2)
+                tm.add_timing("data_milvusing")
+                tq.update(last-i)
+        finally:
+            # Close bars so subsequent prints aren't smeared by tqdm redraws.
+            tq1.close()
+            tq2.close()
+            tq.close()
         return True
 
     def _analyze_data(self, corpus):
         pass
 
-    def _create_data(self, corpus, texts, tq_instance=None, **kwargs):
+    def _create_data(self, corpus, texts, tq_instance=None, tm=None, **kwargs):
         passage_vectors = [[]] * len(corpus)
         if tq_instance is not None:
-            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=False)
+            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=False, tm=tm)
             tq_instance.update(len(texts))
         else:
-            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=True)
+            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=True, tm=tm)
         data = []
         for i, (item, vector) in enumerate(zip(corpus, passage_vectors)):
             if vector_is_empty(vector):
@@ -264,9 +297,10 @@ class MilvusEngine(RetrievalEngine):
             print(f"{tm.time_since_beginning()}: Currently ingested items: {ingested_items}")
             time.sleep(10)
 
-    def encode_data(self, texts, batch_size, **kwargs):
+    def encode_data(self, texts, batch_size, tm=None, **kwargs):
         passage_vectors = self.model.encode(texts,
                                             _batch_size=batch_size,
+                                            tm=tm,
                                             **kwargs)
         # create embeddings
         return passage_vectors
@@ -297,8 +331,8 @@ class MilvusEngine(RetrievalEngine):
         self.check_client()
         search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'
-        query_vector = self.encode_query(question)
-        tm.add_timing("encode")
+        query_vector = self.encode_query(question, tm=tm)
+        # tm.add_timing("encode")
         if vector_is_empty(query_vector):
             print(f"Query \"{question.text}\" has 0 length representation.")
             return SearchResult(question=question, data=[])
@@ -339,18 +373,20 @@ class MilvusEngine(RetrievalEngine):
         # tm.add_timing("remove duplicates")
         return result
 
-    def encode_query(self, question):
+    def encode_query(self, question, tm=None):
         """
         Encodes a question text using the model's encode function. By default, it uses the usual encoding mechanism,
         but it can be overridden if necessary.
 
         Args:
             question (Question): The question object containing the text to be encoded.
+            tm: Optional timer instance for performance tracking.
 
         Returns:
             list: The encoded representation of the question text.
         """
-        return self.model.encode(question.text, show_progress_bar=False, prompt_name=self.config.query_prompt_name)
+        return self.model.encode(question.text, show_progress_bar=False, prompt_name=self.config.query_prompt_name,
+                                 tm=tm)
 
     def get_search_params(self):
         pass

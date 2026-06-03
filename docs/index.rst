@@ -10,7 +10,9 @@ Welcome to DocUVerse's documentation!
    :maxdepth: 2
    :caption: Contents:
 
-
+   quickstart
+   presets
+   cli
 
 Indices and tables
 ==================

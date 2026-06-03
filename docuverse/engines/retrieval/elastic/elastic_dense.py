@@ -10,7 +10,8 @@ class ElasticDenseEngine(ElasticEngine):
         self.model_on_server = get_param(kwargs, 'model_on_server', False)
         self.hidden_dim = 384
         if not self.model_on_server:
-            self.model = DenseEmbeddingFunction(config_params.model_name)
+            self.model = DenseEmbeddingFunction(config_params.model_name,
+                                                **config_params.__dict__)
         self.normalize_embs = get_param(kwargs, 'normalize_embs', False)
         self._init_connection()
 
@@ -25,7 +26,7 @@ class ElasticDenseEngine(ElasticEngine):
             else:
                 self.hidden_dim = 384  # Some default value, the system might crash if it's wrong.
         else:
-            self.hidden_dim = len(self.model.encode(['text'], show_progress_bar=False)[0])
+            self.hidden_dim = self.model.embedding_dim
             print(f"Hidden dimension for model: {self.hidden_dim}")
 
         self._set_pipelines()
@@ -119,8 +120,8 @@ class ElasticDenseEngine(ElasticEngine):
         if self.pipeline_name is not None:
             self.client.ingest.put_pipeline(processors=processors, id=self.pipeline_name)
 
-    def add_fields(self, actions, bulk_batch, corpus, k, num_passages):
+    def add_fields(self, actions, bulk_batch, corpus, k, num_passages, tm=None):
         if not self.config.model_on_server:
-            passage_vectors = self.model.encode([d['text'] for d in corpus[k:k+bulk_batch]], show_progress_bar=False)
+            passage_vectors = self.model.encode([d['text'] for d in corpus[k:k+bulk_batch]], show_progress_bar=False, tm=tm)
             for pi, (action, row) in enumerate(zip(actions, corpus[k:min(k + bulk_batch, num_passages)])):
                 action["_source"]['vector'] = passage_vectors[pi]

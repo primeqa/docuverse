@@ -1,0 +1,9 @@
+# Milvus dense retrieval — embedded (Milvus-Lite) by default so it Just Works
+# with no external service. Override `server:` with a named entry from
+# config/servers/milvus_servers.json (e.g. "localhost") or an inline dict
+# `{host: ..., port: 19530}` to point at a real Milvus instance.
+db_engine: milvus-dense
+model_name: ibm-granite/granite-embedding-small-english-r2
+index_name: docuverse_dense
+server: "file:./.docuverse/milvus.db"
+top_k: 10

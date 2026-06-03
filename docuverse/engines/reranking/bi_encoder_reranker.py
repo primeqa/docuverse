@@ -22,9 +22,9 @@ class BiEncoderReranker(Reranker):
 
         num_docs = len(answer_list)
         if self.config.reranker_lowercase:
-            embeddings = self.model.encode([l.lower() for l in texts], show_progress_bar=True)
+            embeddings = self.model.encode([l.lower() for l in texts], show_progress_bar=True, tm=self.tm)
         else:
-            embeddings = self.model.encode(texts, show_progress_bar=True, message="Reranking answers")
+            embeddings = self.model.encode(texts, show_progress_bar=True, message="Reranking answers", tm=self.tm)
         for qid, answer in tqdm(enumerate(answer_list), desc="Computing Cosine: ",
                                 total=num_docs, disable=not show_progress):
             num_examples = len(answer)

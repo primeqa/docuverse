@@ -10,13 +10,17 @@ from docuverse.utils.embeddings.ollama_embedding_function import OllamaSentenceT
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from typing import List, Tuple, LiteralString, Any
+if sys.version_info >= (3, 11):
+    from typing import List, Tuple, LiteralString, Any
+else:
+    from typing import List, Tuple, Any
+    from typing_extensions import LiteralString
 import time
 import torch
 from tqdm import tqdm
 import os
 
-from docuverse.utils import open_stream
+from docuverse.utils import open_stream, save_command_line
 from docuverse.utils.jsonl_utils import read_jsonl_file
 
 def get_memory_usage():
@@ -69,10 +73,24 @@ def load_sentence_transformer_with_backend(model_name: str,
                     'provider': 'CUDAExecutionProvider' if device == 'cuda' else 'CPUExecutionProvider'
                 }
             if model_path.endswith('.onnx'):
-                model_path = _get_model_and_file_names(model_path, onnx_kwargs)
-            # Use ONNX backend with SentenceTransformers
+                # Splits the path into (dir, file_name); when the user passes
+                # a relative file like "onnx/model_quint8_avx2.onnx", the dir
+                # is empty — fall back to model_name so the dir is the HF id
+                # (or the local checkpoint dir).
+                model_path = _get_model_and_file_names(model_path, onnx_kwargs) or model_name
+
+            load_path = model_name if os.path.exists(model_name) else model_path
+            # If load_path is still a HF id, see if the HF cache snapshot
+            # already contains converted ONNX weights and load from there to
+            # avoid SentenceTransformer triggering a fresh export.
+            if not os.path.isdir(load_path):
+                cached = _resolve_cached_export(load_path, 'onnx', onnx_kwargs.get('file_name'))
+                if cached is not None:
+                    print(f"  ✓ Using pre-converted ONNX weights from HF cache: {cached}")
+                    load_path = cached
+
             model = SentenceTransformer(
-                model_name if os.path.exists(model_name) else model_path,
+                load_path,
                 device=device,
                 backend='onnx',
                 model_kwargs=onnx_kwargs,
@@ -91,10 +109,22 @@ def load_sentence_transformer_with_backend(model_name: str,
 
             # Check if model_path points to an XML file
             if model_path and model_path.endswith('.xml'):
-                model_path = _get_model_and_file_names(model_path, openvino_kwargs)
+                # Splits into (dir, file_name); fall back to model_name when the
+                # user passes a relative path like "openvino/openvino_model.xml".
+                model_path = _get_model_and_file_names(model_path, openvino_kwargs) or model_name
+
+            load_path = model_name if os.path.exists(model_name) else model_path
+            # If load_path is still a HF id, see if the HF cache snapshot
+            # already contains converted OpenVINO weights and load from there
+            # to avoid a fresh export.
+            if not os.path.isdir(load_path):
+                cached = _resolve_cached_export(load_path, 'openvino', openvino_kwargs.get('file_name'))
+                if cached is not None:
+                    print(f"  ✓ Using pre-converted OpenVINO weights from HF cache: {cached}")
+                    load_path = cached
 
             model = SentenceTransformer(
-                model_name if os.path.exists(model_name) else model_path,
+                load_path,
                 backend='openvino',
                 model_kwargs=openvino_kwargs
             )
@@ -116,6 +146,48 @@ def load_sentence_transformer_with_backend(model_name: str,
                 return None
             except Exception as e:
                 print(f"❌ Error loading model with Ollama backend: {e}")
+                return None
+
+        elif backend == "llama_cpp":
+            print(f"Loading model with llama.cpp backend...")
+            try:
+                import requests as _req
+                base_url = backend_kwargs.get('base_url', 'http://localhost:8080')
+
+                class LlamaCppSentenceTransformer:
+                    _dim = None
+                    def __init__(self, url: str, mdl_name: str):
+                        self._url = url.rstrip('/')
+                        self._model = mdl_name
+
+                    def encode(self, sentences, batch_size: int = 32, **kwargs) -> np.ndarray:
+                        if isinstance(sentences, str):
+                            sentences = [sentences]
+                        embeddings = []
+                        for start in range(0, len(sentences), batch_size):
+                            chunk = sentences[start:start + batch_size]
+                            resp = _req.post(
+                                f"{self._url}/v1/embeddings",
+                                json={"model": self._model, "input": chunk},
+                                timeout=120,
+                            )
+                            resp.raise_for_status()
+                            data = sorted(resp.json()["data"], key=lambda x: x["index"])
+                            embeddings.extend(e["embedding"] for e in data)
+                        return np.array(embeddings, dtype=np.float32)
+
+                    def get_sentence_embedding_dimension(self) -> int:
+                        if self._dim is None:
+                            self._dim = self.encode(["test"]).shape[1]
+                        return self._dim
+
+                model = LlamaCppSentenceTransformer(base_url, model_name)
+                model.get_sentence_embedding_dimension()  # probe early to catch connection errors
+                print(f"✓ Model loaded successfully with llama.cpp backend")
+                print(f"  Server: {base_url}")
+                print(f"  Embedding dimension: {model.get_sentence_embedding_dimension()}")
+            except Exception as e:
+                print(f"❌ Error loading model with llama.cpp backend: {e}")
                 return None
 
         elif backend == "vllm":
@@ -210,6 +282,105 @@ def compute_stats(vector: np.ndarray | list) -> Tuple[float, float, float, float
     return mean, median, std, min_val, arg_min
 
 
+def _extract_quant_tag(path: str | None) -> str | None:
+    """Pull a precision/quantization marker (e.g. 'quint8', 'int8', 'fp16')
+    out of an artifact path. Returns None if no known tag is present."""
+    if not path:
+        return None
+    p = path.lower()
+    # Order matters: longer / more specific tags first.
+    for tag in ('quint8', 'qint8', 'int4', 'int8', 'fp16', 'bf16', 'fp32'):
+        if tag in p:
+            return tag
+    return None
+
+
+def _default_output_name(args) -> str:
+    """Build a default output filename from the run's parameters.
+
+    Format: <short-model>.<backend>_<prec>[-<backend>_<prec>...].l<max>.<device>[.n<num>].json
+
+    Each backend carries its own precision tag so multi-backend comparisons are
+    unambiguous: pytorch uses --precision, onnx/openvino parse the quant tag
+    from their respective path (or fall back to fp32 when no path is given).
+    """
+    # os.path.basename trims trailing slashes so e.g.
+    # "granite-embedding-278-ovino/" still yields the dir name.
+    model_short = os.path.basename(args.model.rstrip('/'))
+    for noise in ('embedding-', 'embedding_'):
+        model_short = model_short.replace(noise, '')
+    model_short = model_short.replace('multilingual', 'multi')
+    if not model_short or set(model_short) <= {'.'}:
+        model_short = 'model'
+
+    backend_short = {'pytorch': 'pt', 'openvino': 'ov', 'llama_cpp': 'llamacpp'}
+    tokens = []
+    for b in args.backends:
+        if b == 'pytorch':
+            prec = args.precision
+        elif b == 'onnx':
+            prec = _extract_quant_tag(args.onnx_path) or 'fp32'
+        elif b == 'openvino':
+            prec = _extract_quant_tag(args.openvino_path) or 'fp32'
+        else:
+            prec = None
+        short = backend_short.get(b, b)
+        tokens.append(f"{short}_{prec}" if prec else short)
+    backends_str = '-'.join(tokens)
+
+    parts = [model_short, backends_str]
+    if args.max_text_length:
+        parts.append(f"l{args.max_text_length}")
+    parts.append(args.device)
+    if args.num_samples:
+        parts.append(f"n{args.num_samples}")
+    return '.'.join(parts) + '.json'
+
+
+def _resolve_cached_export(model_name: str, fmt: str, file_name: str | None = None):
+    """If model_name's HF cache snapshot already contains converted weights for
+    the given format, return the snapshot dir. Otherwise return None.
+
+    fmt: 'onnx' or 'openvino'.
+    file_name: optional relative path inside the snapshot (e.g.
+        'onnx/model_quint8_avx2.onnx'). When supplied, only that exact file is
+        checked; the standard layout fallbacks are skipped so we never
+        substitute a different artifact than the caller requested.
+
+    This lets us hand SentenceTransformer a local dir with the pre-converted
+    artifacts (typically populated by export_to_openvino_onnx.py --inplace),
+    which skips the export-on-load behavior.
+    """
+    import pathlib
+    if not model_name:
+        return None
+    if os.path.isdir(model_name):
+        snapshot = pathlib.Path(model_name)
+    else:
+        try:
+            from huggingface_hub import snapshot_download
+            snapshot = pathlib.Path(snapshot_download(repo_id=model_name))
+        except Exception as e:
+            print(f"  (could not locate HF cache for {model_name}: {e})")
+            return None
+    if file_name:
+        return str(snapshot) if (snapshot / file_name).exists() else None
+    if fmt == 'onnx':
+        if (snapshot / 'onnx' / 'model.onnx').exists():
+            return str(snapshot)
+        if any(snapshot.glob('*.onnx')):
+            return str(snapshot)
+    elif fmt == 'openvino':
+        # Prefer the conventional openvino/ subdir layout; fall back to root
+        # for older exports that wrote openvino_model.{xml,bin} at top level.
+        if (snapshot / 'openvino' / 'openvino_model.xml').exists() and \
+                (snapshot / 'openvino' / 'openvino_model.bin').exists():
+            return str(snapshot)
+        if (snapshot / 'openvino_model.xml').exists() and (snapshot / 'openvino_model.bin').exists():
+            return str(snapshot)
+    return None
+
+
 def _get_model_and_file_names(model_path: str, kwargs: dict[str, str]) -> LiteralString | str | bytes:
     # Split path into all components
     path_components = []
@@ -225,8 +396,13 @@ def _get_model_and_file_names(model_path: str, kwargs: dict[str, str]) -> Litera
     return model_path
 
 
-def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_numpy: bool=True, batch_no=-1) -> np.ndarray:
-    """Generate embeddings using SentenceTransformer (works with all backends)."""
+def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_numpy: bool=True, batch_no=-1):
+    """Generate embeddings using SentenceTransformer (works with all backends).
+
+    Returns:
+        np.ndarray of embeddings, or None if the batch failed (connection error,
+        tokenization length issue, etc.)
+    """
     embeddings = None
     with torch.no_grad():
         try:
@@ -236,9 +412,37 @@ def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_nump
                 convert_to_numpy=convert_to_numpy,
                 normalize_embeddings=True
             )
+        except (ConnectionError, ConnectionRefusedError, ConnectionResetError, OSError) as e:
+            print(f"\n[WARN] Connection error on batch {batch_no}, skipping: {e}")
+            return None
+        except (RuntimeError, ValueError) as e:
+            err_msg = str(e).lower()
+            # Catch tokenization/sequence length errors gracefully
+            if any(kw in err_msg for kw in ('token', 'sequence length', 'too long', 'exceeds',
+                                             'max length', 'overflow', 'truncat')):
+                print(f"\n[WARN] Tokenization/length error on batch {batch_no}, skipping: {e}")
+                return None
+            # Catch CUDA OOM errors
+            if 'out of memory' in err_msg or 'cuda' in err_msg:
+                print(f"\n[WARN] CUDA/memory error on batch {batch_no}, skipping: {e}")
+                torch.cuda.empty_cache()
+                return None
+            print(f"\n[ERROR] Embedding computation failed on batch {batch_no}: {e}. "
+                  f"Texts: {[t[:100]+' ...' for t in batch]}")
+            return None
         except Exception as e:
-            print(f"Embedding computation failed on batch {batch_no}: {e}. The text: {[t[:100]+" ..." for t in batch]}")
-            raise e
+            # Catch-all: check if it looks like a connection or length issue
+            err_msg = str(e).lower()
+            if any(kw in err_msg for kw in ('connection', 'timeout', 'refused', 'reset',
+                                             'token', 'too long', 'max length', 'status 4')):
+                print(f"\n[WARN] Error on batch {batch_no}, skipping: {e}")
+                return None
+            print(f"\n[ERROR] Unexpected error on batch {batch_no}: {e}. "
+                  f"Texts: {[t[:100]+' ...' for t in batch]}")
+            return None
+
+    if embeddings is None:
+        return None
 
     # Ensure embeddings are on CPU and in numpy format for comparison
     if isinstance(embeddings, torch.Tensor):
@@ -262,7 +466,7 @@ def get_embeddings(model: SentenceTransformer, batch: List[str], convert_to_nump
     return embeddings
 
 
-def read_sentences(file_path_or_string: str, max_text_length: int = None, field_path: str = None) -> List[str]:
+def read_sentences(file_path_or_string: str, max_text_length: int = None, field_path: str = None, num_samples: int = None) -> List[str]:
     """Read sentences from a file or direct string input.
 
     Supports:
@@ -290,7 +494,7 @@ def read_sentences(file_path_or_string: str, max_text_length: int = None, field_
             print(f"Reading JSONL file: {file_path}")
             if field_path:
                 print(f"  Using field path: {field_path}")
-            sentences = read_jsonl_file(file_path, field_path=field_path, verbose=True)
+            sentences = read_jsonl_file(file_path, field_path=field_path, max_samples=num_samples, verbose=True)
             print(f"✓ Loaded {len(sentences)} texts from JSONL")
         else:
             # Original logic for plain text files
@@ -309,6 +513,8 @@ def read_sentences(file_path_or_string: str, max_text_length: int = None, field_
                         text = line
 
                     sentences.append(text)
+                    if num_samples and len(sentences) >= num_samples:
+                        break
     else:
         # It's a direct string input
         print(f"Using direct string input")
@@ -368,58 +574,69 @@ def main():
         epilog=f"""
 Examples:
   # Compare PyTorch with ONNX
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --onnx-path ./model.onnx --input data.txt
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx --onnx-path ./model.onnx --input data.txt
 
   # Compare PyTorch with OpenVINO
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch openvino --openvino-path ./model.xml --input data.txt
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch openvino --openvino-path ./model.xml --input data.txt
 
   # Use FP32 precision instead of default BF16
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input data.txt --precision fp32
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch --input data.txt --precision fp32
 
   # Compare PyTorch with Ollama (same model name)
-  python {script_name} --model nomic-embed-text --backends pytorch ollama --input data.txt
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch ollama --input data.txt
 
   # Compare with Ollama using different model name
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch ollama --ollama-model all-minilm --input data.txt
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch ollama --ollama-model all-minilm --input data.txt
 
   # Compare Ollama with custom URL and model name
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends ollama --ollama-url http://localhost:11434 --ollama-model nomic-embed-text --input data.txt
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends ollama --ollama-url http://localhost:11434 --ollama-model nomic-embed-text --input data.txt
 
   # Compare all backends
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx openvino ollama --onnx-path ./model.onnx --openvino-path ./model.xml --ollama-model all-minilm --input data.txt
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx openvino ollama --onnx-path ./model.onnx --openvino-path ./model.xml --ollama-model all-minilm --input data.txt
 
   # Direct string input (single sentence)
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input "What is machine learning?"
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch --input "What is machine learning?"
 
   # JSONL file with auto-detected text field
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input data.jsonl
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch --input data.jsonl
 
   # JSONL file with custom field path
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input data.jsonl --field-path document.text
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch --input data.jsonl --field-path document.text
 
   # JSONL with array wildcard (all items)
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch --input data.jsonl --field-path documents[*].text
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch --input data.jsonl --field-path documents[*].text
 
   # Compressed JSONL file
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch ollama --input data.jsonl.bz2 --field-path question
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch ollama --input data.jsonl.bz2 --field-path question
 
   # Save results to JSON file
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --input data.txt --output-file results.json
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx --input data.txt --output-file results.json
 
   # JSONL input with JSON output
-  python {script_name} --model nomic-embed-text --backends pytorch ollama --input data.jsonl --field-path text --output-file benchmark_results.json
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch ollama --input data.jsonl --field-path text --output-file benchmark_results.json
 
   # Save results including embeddings (warning: creates large files)
-  python {script_name} --model sentence-transformers/all-MiniLM-L6-v2 --backends pytorch onnx --input data.txt --output-file results_with_embeddings.json --save-embeddings
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx --input data.txt --output-file results_with_embeddings.json --save-embeddings
+
+  # Multiple input files (num-samples applied per file)
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx --input data1.jsonl data2.jsonl data3.txt --num-samples 100
+
+  # File-of-files input (one file path per line)
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx --fof file_list.txt --num-samples 50
         """
     )
     # ... rest of the argument definitions ...
     parser.add_argument("--model", required=True, help="SentenceTransformer model name or path")
     parser.add_argument('--backends', nargs='+',
-                        choices=['pytorch', 'onnx', 'openvino', 'tensorrt', 'vllm', 'ollama'],
+                        choices=['pytorch', 'onnx', 'openvino', 'tensorrt', 'vllm', 'ollama', 'llama_cpp'],
                         default=['pytorch', 'onnx'],
                         help='Backends to compare')
-    parser.add_argument("--input", required=True, help="Path to input file (text, JSONL, JSONL.bz2) or direct string to encode")
+    parser.add_argument("--input", nargs='+', default=None,
+                       help="Path(s) to input file(s) (text, JSONL, JSONL.bz2) or direct string to encode. "
+                            "When multiple files are given, --num-samples applies per file.")
+    parser.add_argument("--fof", "--file-of-files", dest="fof", type=str, default=None,
+                       help="Path to a file-of-files (one input file path per line). "
+                            "Alternative to --input with multiple files. --num-samples applies per file.")
     parser.add_argument("--field-path", "--field_path", dest="field_path",
                        type=str, default=None,
                        help="Dot-separated path to text field in JSONL (e.g., 'document.text', 'documents[*].text'). "
@@ -451,17 +668,41 @@ Examples:
     parser.add_argument("--ollama-model", "--ollama_model", dest="ollama_model",
                        type=str, default=None,
                        help="Ollama model name (if different from --model). E.g., 'nomic-embed-text' for Ollama vs HF model name")
+    parser.add_argument("--llamacpp-url", "--llamacpp_url", dest="llamacpp_url",
+                       type=str, default="http://localhost:8080",
+                       help="llama.cpp server URL (default: http://localhost:8080)")
+    parser.add_argument("--llamacpp-model", "--llamacpp_model", dest="llamacpp_model",
+                       type=str, default=None,
+                       help="Model name to pass to the llama.cpp server (if different from --model)")
     parser.add_argument("--output-file", "--output_file", dest="output_file",
                        type=str, default=None,
-                       help="Path to save results (JSON format). If not specified, only prints to stdout")
+                       help="Path to save results (JSON format). If not specified, an auto-named "
+                            "file is written under --timing-dir.")
+    parser.add_argument("--timing-dir", "--timing_dir", dest="timing_dir",
+                       type=str, default="timings",
+                       help="Directory for the auto-generated timings JSON when --output-file is "
+                            "not specified (default: timings).")
     parser.add_argument("--output-format", "--output_format", dest="output_format",
                        type=str, default="json", choices=["json"],
                        help="Output file format (default: json)")
     parser.add_argument("--save-embeddings", "--save_embeddings", dest="save_embeddings",
                        action="store_true",
                        help="Include embeddings in the JSON output (warning: can create large files)")
+    parser.add_argument("--print-worst", "--print_worst", dest="print_worst",
+                       type=int, default=0,
+                       help="Print the N worst matching examples (lowest cosine similarity) per backend pair (default: 0 = off)")
 
     args = parser.parse_args()
+    save_command_line(sys.argv)
+    # Validate that at least one input source is provided
+    if not args.input and not args.fof:
+        parser.error("At least one of --input or --fof is required")
+
+    # Auto-name the output file under --timing-dir when not specified.
+    if args.output_file is None:
+        os.makedirs(args.timing_dir, exist_ok=True)
+        args.output_file = os.path.join(args.timing_dir, _default_output_name(args))
+        print(f"No --output-file given; results will be written to: {args.output_file}")
 
     # Set PyTorch thread count if specified
     if args.num_threads is not None:
@@ -510,6 +751,12 @@ Examples:
                 ollama_model_name, backend='ollama', device=args.device,
                 **model_kwargs
             )
+        elif backend == "llama_cpp":
+            llamacpp_model_name = args.llamacpp_model if args.llamacpp_model else args.model
+            models[backend] = load_sentence_transformer_with_backend(
+                llamacpp_model_name, backend='llama_cpp', device=args.device,
+                base_url=args.llamacpp_url,
+            )
         elif backend == "vllm":
             # Add any vLLM-specific parameters
             model_kwargs = {
@@ -518,13 +765,26 @@ Examples:
             }
             models[backend] = load_sentence_transformer_with_backend(args.model, backend, model_kwargs)
 
-    # Read sentences
-    sentences = read_sentences(args.input, args.max_text_length, args.field_path)
-    if args.num_samples and args.num_samples < len(sentences):
-        print(f"Using {args.num_samples} out of {len(sentences)} sentences")
-        sentences = sentences[:args.num_samples]
-    else:
-        print(f"Using all {len(sentences)} sentences")
+    # Collect input file list from --input and/or --fof
+    input_files = []
+    if args.input:
+        input_files.extend(args.input)
+    if args.fof:
+        print(f"Reading file-of-files: {args.fof}")
+        with open(args.fof, 'r') as fof:
+            for line in fof:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    input_files.append(line)
+        print(f"  Found {len(input_files) - (len(args.input) if args.input else 0)} files from --fof")
+
+    # Read sentences from all input sources (num_samples applies per file)
+    sentences = []
+    for input_source in input_files:
+        file_sentences = read_sentences(input_source, args.max_text_length, args.field_path, args.num_samples)
+        print(f"  {input_source}: {len(file_sentences)} sentences")
+        sentences.extend(file_sentences)
+    print(f"Using {len(sentences)} sentences total (from {len(input_files)} source(s))")
 
     # Calculate and display sentence length statistics
     lengths = [len(s) for s in sentences]
@@ -564,19 +824,32 @@ Examples:
     scores = {}
     min_vals = {}
     arg_min_vals = {}
+    skipped_batches = 0
     for i, batch in enumerate(tqdm(batches)):
-        batch_embeddings = [[] for _ in args.backends]
+        batch_embeddings = [None for _ in args.backends]
+        batch_failed = False
 
         # Generate embeddings for each backend
         for i1, backend in enumerate(args.backends):
             start_time = time.time()
             embeddings = get_embeddings(models[backend], batch, convert_to_numpy=False, batch_no=i)
             backend_times[backend] += time.time() - start_time
+
+            if embeddings is None:
+                batch_failed = True
+                break
+
             batch_embeddings[i1] = embeddings
 
-            # Store embeddings if requested
-            if args.save_embeddings:
-                # Convert to numpy if needed
+        # Skip entire batch if any backend failed
+        if batch_failed:
+            skipped_batches += 1
+            continue
+
+        # Store embeddings if requested
+        if args.save_embeddings:
+            for i1, backend in enumerate(args.backends):
+                embeddings = batch_embeddings[i1]
                 if isinstance(embeddings, list):
                     embeddings_np = np.array(embeddings)
                 elif hasattr(embeddings, 'cpu'):  # torch tensor
@@ -605,6 +878,9 @@ Examples:
                 gc.collect()
                 print(f"GC triggered at batch {i}, memory: {current_memory:.1f}MB")
 
+    if skipped_batches > 0:
+        print(f"\n[WARN] Skipped {skipped_batches}/{len(batches)} batches due to errors")
+
     # Normalize the results:
     # for k in scores.keys():
     #     scores[k] /= num_sentences
@@ -626,8 +902,9 @@ Examples:
             'batch_size': args.batch_size,
             'device': args.device,
             'precision': args.precision,
-            'input_file': args.input,
+            'input_files': input_files,
             'field_path': args.field_path if hasattr(args, 'field_path') else None,
+            'max_text_length': args.max_text_length,
             'save_embeddings': args.save_embeddings,
         },
         'performance': {},
@@ -699,6 +976,22 @@ Examples:
                     print(f"  Cosine Similarity: {cosine_sim:.6f}")
         print("\n"+ "=" * 70)
         print(f"The min cosine is realized for \n {sentences[arg_min][:300]} ...")
+
+        # Print worst matching examples if requested
+        if args.print_worst > 0:
+            print("\n" + "=" * 70)
+            print(f"WORST MATCHING EXAMPLES (top {args.print_worst} lowest cosine similarity)")
+            print("=" * 70)
+            for key, score_lists in scores.items():
+                cosine_scores = np.array(score_lists[0])
+                n = min(args.print_worst, len(cosine_scores))
+                worst_indices = np.argsort(cosine_scores)[:n]
+                print(f"\n{key.upper()}:")
+                print("-" * 70)
+                for rank, idx in enumerate(worst_indices, 1):
+                    print(f"  #{rank} (cosine={cosine_scores[idx]:.6f}, idx={idx}):")
+                    print(f"    {sentences[idx][:200]}{'...' if len(sentences[idx]) > 200 else ''}")
+                    print()
 
     # Save results to JSON if output file specified
     if args.output_file:

@@ -31,9 +31,17 @@ Usage:
     # With plots:
     python benchmark_embedding_timing.py --input_file data.jsonl \
         --batch_sizes 1,8,16,32 --plot --plot_format pdf
+
+    # Multiple input files (per-file results + aggregate statistics):
+    python benchmark_embedding_timing.py \
+        --input_file queries.jsonl documents.jsonl.bz2 \
+        --field_path text --batch_sizes 1,16,32
 """
 
 import argparse
+import datetime
+import io
+import json
 import time
 import os
 import sys
@@ -42,15 +50,46 @@ import numpy as np
 from typing import List
 from openai import OpenAI
 import torch
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, AutoConfig
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 from tqdm import tqdm
 
+
+class _TeeStream:
+    """Write to two streams simultaneously (e.g. stdout + StringIO capture buffer)."""
+    def __init__(self, primary, secondary):
+        self.primary = primary
+        self.secondary = secondary
+
+    def write(self, data):
+        self.primary.write(data)
+        self.secondary.write(data)
+
+    def flush(self):
+        self.primary.flush()
+        self.secondary.flush()
+
+    def isatty(self):
+        return False
+
+
+class _NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that converts numpy scalars to Python native types."""
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
 # Add parent directory to path to import jsonl_utils
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from jsonl_utils import read_jsonl_file
+from docuverse.utils.jsonl_utils import read_jsonl_file
+from docuverse.utils import save_command_line, prepare_for_save_and_backup
 
 
 class APIEmbedder:
@@ -79,42 +118,436 @@ class APIEmbedder:
 class GPUEmbedder:
     """Local GPU-based embedding generator using transformers."""
 
-    def __init__(self, model_name: str, device: str = None):
+    DTYPE_MAP = {
+        "fp32": torch.float32,
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+    }
+
+    def __init__(self, model_name: str, device: str = None, use_torch_compile: bool = False,
+                 dtype: str = "bf16", trust_remote_code: bool = False,
+                 attn_implementation: str = None):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.device = device
         print(f"Loading model on {device}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name).to(device)
-        self.model.eval()
-        print(f"✓ Initialized GPU embedder: {model_name} on {device}")
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_name, trust_remote_code=trust_remote_code
+        )
 
-    def embed(self, texts: List[str]) -> np.ndarray:
-        """Generate embeddings using local GPU."""
-        # Tokenize
-        inputs = self.tokenizer(
+        torch_dtype = self.DTYPE_MAP.get(dtype, torch.bfloat16)
+        base_config = AutoConfig.from_pretrained(model_name, trust_remote_code=trust_remote_code)
+
+        # If flash_attn is installed but broken (e.g. ABI mismatch after a torch
+        # upgrade), its ImportError propagates through module-level imports in
+        # modeling_modernbert.py, preventing *any* attention implementation from
+        # loading.  Detect this early and block the broken package so that
+        # transformers falls back to its pure-PyTorch paths.
+        try:
+            import flash_attn  # noqa: F401
+        except ImportError:
+            import sys as _sys
+            _sys.modules.setdefault("flash_attn", None)
+            _sys.modules.setdefault("flash_attn.flash_attn_interface", None)
+
+        model_kwargs = {"torch_dtype": torch_dtype,
+                        "trust_remote_code": trust_remote_code}
+        # Build the list of attention implementations to try.
+        # If the user explicitly requested one, try that first; on failure
+        # print a red warning and fall back to the default sequence.
+        _ALL_ATTN_ATTEMPTS = [
+            ("flash_attention_2", {"attn_implementation": "flash_attention_2"}),
+            ("eager", {"attn_implementation": "eager"}),
+            ("default", {}),
+        ]
+        if attn_implementation is not None:
+            # Build kwargs for the requested implementation
+            if attn_implementation == "default":
+                requested = ("default", {})
+            else:
+                requested = (attn_implementation,
+                             {"attn_implementation": attn_implementation})
+            # Requested first, then the remaining defaults (excluding the
+            # requested one to avoid trying it twice).
+            attn_attempts = [requested] + [
+                (lbl, kw) for lbl, kw in _ALL_ATTN_ATTEMPTS
+                if lbl != attn_implementation
+            ]
+        else:
+            # Default order: flash_attention_2 → eager → default
+            # "eager" is tried before "default" because "default" defers to the
+            # model's custom code which may use xformers/unpad paths that trigger
+            # fatal CUDA assertions (e.g. GteModel/Snowflake) on some environments.
+            attn_attempts = list(_ALL_ATTN_ATTEMPTS)
+
+        # Two-pass loading strategy:
+        # Pass 1 (fast): no explicit config — let from_pretrained load and
+        #   initialize the model's own config class (preserves model-specific
+        #   optimizations like unpad_inputs, use_memory_efficient_attention).
+        # Pass 2 (safe): only if Pass 1 fails entirely — pass an explicit config
+        #   with use_memory_efficient_attention and unpad_inputs disabled (handles
+        #   environments where these trigger xformers deps or CUDA assertions).
+        _safe_flags = {}
+        for _flag in ("use_memory_efficient_attention", "unpad_inputs"):
+            if hasattr(base_config, _flag) and getattr(base_config, _flag, False):
+                _safe_flags[_flag] = False
+        _passes = [("fast", None)]  # None = don't override config
+        if _safe_flags:
+            import copy
+            safe_config = copy.deepcopy(base_config)
+            for _flag, _val in _safe_flags.items():
+                setattr(safe_config, _flag, _val)
+            disabled_str = ", ".join(f"{k}=False" for k in _safe_flags)
+            _passes.append((f"safe ({disabled_str})", safe_config))
+
+        last_exc = None
+        loaded = False
+        for pass_label, config in _passes:
+            _pass_kwargs = dict(model_kwargs)
+            if config is not None:
+                _pass_kwargs["config"] = config
+            for attn_label, attn_kwargs in attn_attempts:
+                try:
+                    self.model = AutoModel.from_pretrained(
+                        model_name, **attn_kwargs, **_pass_kwargs
+                    )
+                    # Patch missing config_class immediately — custom models
+                    # (e.g. Jina V5) omit it, and transformers' auto_factory
+                    # checks it on subsequent from_pretrained calls once the
+                    # class is registered locally.
+                    if not hasattr(type(self.model), 'config_class'):
+                        type(self.model).config_class = type(self.model.config)
+                    # transformers ≥5.x meta-device loading corrupts non-persistent
+                    # integer buffers (e.g. position_ids) with uninitialised memory.
+                    # Re-initialise any position_ids buffers before moving to GPU.
+                    for _name, _mod in self.model.named_modules():
+                        if hasattr(_mod, "position_ids") and isinstance(
+                            getattr(_mod, "position_ids"), torch.Tensor
+                        ):
+                            seq_len = _mod.position_ids.shape[-1]
+                            _mod.register_buffer(
+                                "position_ids",
+                                torch.arange(seq_len).unsqueeze(0),
+                                persistent=False,
+                            )
+                    self.model = self.model.to(self.device)
+                    # Validate with a test forward pass — some attention implementations
+                    # (e.g. flash_attention_2) load successfully but fail at inference time.
+                    # Use a real tokenized string: all-zero token IDs can trigger CUDA
+                    # index-out-of-bounds in models with custom gather/position logic
+                    # (e.g. GteModel / Snowflake Arctic Embed).
+                    self.model.eval()
+                    with torch.no_grad():
+                        test_inputs = self.tokenizer(
+                            ["test"],
+                            return_tensors="pt",
+                            padding=True,
+                            truncation=True,
+                            max_length=16,
+                        ).to(self.device)
+                        self.model(**test_inputs)
+                    loaded = True
+                    _used_attn = attn_label
+                    _used_pass = pass_label
+                    break
+                except (ValueError, ImportError, OSError, AttributeError) as e:
+                    last_exc = e
+                    if attn_implementation is not None and attn_label == attn_implementation:
+                        print(f"\033[91m\033[1m  Attention '{attn_label}' (requested via "
+                              f"--attn_implementation) failed ({type(e).__name__}): {e}\033[0m")
+                    else:
+                        print(f"  Attention '{attn_label}' failed ({type(e).__name__}): {e}")
+                    # After a failed from_pretrained, the model class may have been
+                    # registered locally without config_class (e.g. Jina V5).  Patch
+                    # it now so subsequent from_pretrained calls don't crash in
+                    # auto_factory's has_local_code branch.
+                    if trust_remote_code:
+                        try:
+                            _cfg_type = type(base_config)
+                            _model_cls = AutoModel._model_mapping[_cfg_type]
+                            if not hasattr(_model_cls, 'config_class'):
+                                _model_cls.config_class = _cfg_type
+                        except (KeyError, TypeError, AttributeError):
+                            pass
+                except Exception as e:
+                    last_exc = e
+                    if attn_implementation is not None and attn_label == attn_implementation:
+                        print(f"\033[91m\033[1m  Attention '{attn_label}' (requested via "
+                              f"--attn_implementation) failed at inference "
+                              f"({type(e).__name__}): {e}\033[0m")
+                    else:
+                        print(f"  Attention '{attn_label}' failed at inference ({type(e).__name__}): {e}")
+                    # Same config_class patch for inference failures
+                    if trust_remote_code:
+                        try:
+                            _cfg_type = type(base_config)
+                            _model_cls = AutoModel._model_mapping[_cfg_type]
+                            if not hasattr(_model_cls, 'config_class'):
+                                _model_cls.config_class = _cfg_type
+                        except (KeyError, TypeError, AttributeError):
+                            pass
+                    self.model = None
+            if loaded:
+                break
+            if len(_passes) > 1 and pass_label == _passes[0][0]:
+                print(f"  Retrying with {disabled_str}...")
+        if not loaded:
+            # Last resort: load with no attention kwargs and skip the validation
+            # forward pass.  Some models (e.g. Jina V5) fail the test inference
+            # due to missing attributes but work fine for actual embedding.
+            print(f"  All attention attempts failed — trying bare load (no validation pass)...")
+            try:
+                print(f"model_kwargs is {model_kwargs}")
+                self.model = AutoModel.from_pretrained(
+                    model_name, trust_remote_code=True
+                )
+                if not hasattr(type(self.model), 'config_class'):
+                    type(self.model).config_class = AutoConfig
+                for _name, _mod in self.model.named_modules():
+                    if hasattr(_mod, "position_ids") and isinstance(
+                        getattr(_mod, "position_ids"), torch.Tensor
+                    ):
+                        seq_len = _mod.position_ids.shape[-1]
+                        _mod.register_buffer(
+                            "position_ids",
+                            torch.arange(seq_len).unsqueeze(0),
+                            persistent=False,
+                        )
+                self.model = self.model.to(self.device)
+                self.model.eval()
+                loaded = True
+                _used_attn = "none (bare load, no validation)"
+                _used_pass = "fallback"
+                print(f"  \033[93mWARNING: Model loaded without attention validation — "
+                      f"inference errors may occur at runtime.\033[0m")
+            except Exception as e:
+                last_exc = e
+                print(f"  Bare load also failed ({type(e).__name__}): {e}")
+
+        if not loaded:
+            raise RuntimeError(
+                f"Could not load model {model_name} with any attention implementation"
+            ) from last_exc
+
+        if use_torch_compile:
+            import logging
+            # Remove TORCH_LOGS before calling set_logs — if the env var enables
+            # graph_code it takes priority and overrides our kwarg settings.
+            os.environ.pop("TORCH_LOGS", None)
+            # Artifact logging in torch._logging uses per-artifact child loggers
+            # (e.g. torch._dynamo.output_graph.graph_code) with their own setLevel
+            # calls.  Setting the parent logger alone is not enough; also set the
+            # root "torch" logger and disable propagation on the key subtrees.
+            for _lg_name in (
+                "torch",
+                "torch._dynamo",
+                "torch._inductor",
+                "torch.fx",
+                "torch.fx.experimental",
+                "torch._logging",
+            ):
+                _lg = logging.getLogger(_lg_name)
+                _lg.setLevel(logging.ERROR)
+            # Call set_logs per-kwarg so one unknown arg doesn't silently kill all.
+            try:
+                import torch._logging as _tl
+                for _k, _v in [
+                    ("graph", False),
+                    ("graph_code", False),
+                    ("graph_breaks", False),
+                    ("recompiles", False),
+                ]:
+                    try:
+                        _tl.set_logs(**{_k: _v})
+                    except TypeError:
+                        pass
+            except ImportError:
+                pass
+            # Older torch uses a config flag instead of the artifact system.
+            try:
+                torch._dynamo.config.output_code = False
+            except AttributeError:
+                pass
+            self.model = torch.compile(self.model)
+
+        # Retrieve the model's max sequence length from config
+        self.max_position_embeddings = getattr(
+            self.model.config, "max_position_embeddings", None
+        )
+        # Tokenizer-reported max sequence length (often the more accurate cap;
+        # e.g. sentence-transformers wrappers set this independently of
+        # max_position_embeddings).
+        tok_max = getattr(self.tokenizer, "model_max_length", None)
+        # Treat the sentinel HF value (very large int) as "unknown".
+        if tok_max is not None and tok_max > 10**6:
+            tok_max = None
+        self.max_seq_length = tok_max if tok_max is not None else self.max_position_embeddings
+        # Effective max tokens for tokenization — can be overridden by set_max_num_tokens()
+        self.max_num_tokens = self.max_seq_length
+
+        # Print all model configuration details
+        _active_config = self.model.config
+        print(f"  dtype: {dtype}")
+        print(f"  attn_implementation: {_used_attn} ({_used_pass})")
+        _mem_eff = getattr(_active_config, "use_memory_efficient_attention", None)
+        if _mem_eff is not None:
+            print(f"  use_memory_efficient_attention: {_mem_eff}")
+        # Read unpad_inputs from the actual loaded model's config (not base_config)
+        _unpad = getattr(_active_config, "unpad_inputs", None)
+        print(f"  unpad_inputs: {_unpad}")
+        if use_torch_compile:
+            print(f"  torch_compile: True")
+        self.gpu_info = None
+        if device.startswith("cuda"):
+            _gpu_idx = torch.cuda.current_device()
+            _gpu_name = torch.cuda.get_device_name(_gpu_idx)
+            _gpu_props = torch.cuda.get_device_properties(_gpu_idx)
+            _gpu_mem = getattr(_gpu_props, "total_memory", None) or getattr(_gpu_props, "total_mem", 0)
+            _gpu_mem_gb = _gpu_mem / (1024**3)
+            print(f"  gpu: {_gpu_name} ({_gpu_mem_gb:.1f} GB)")
+            self.gpu_info = {
+                "name": _gpu_name,
+                "index": _gpu_idx,
+                "total_memory_bytes": int(_gpu_mem),
+                "total_memory_gb": round(_gpu_mem_gb, 3),
+                "capability": f"{_gpu_props.major}.{_gpu_props.minor}",
+                "cuda_version": torch.version.cuda,
+                "torch_version": torch.__version__,
+            }
+        else:
+            self.gpu_info = {"name": "cpu", "torch_version": torch.__version__}
+        print(f"✓ Initialized GPU embedder: {model_name} on {device}"
+              f" (max_seq_length={self.max_seq_length}, "
+              f"max_position_embeddings={self.max_position_embeddings})")
+
+    def set_max_num_tokens(self, max_num_tokens: int):
+        """Set the effective max token length used during tokenization."""
+        self.max_num_tokens = max_num_tokens
+
+    def tokenize(self, texts: List[str], max_length: int = None):
+        """Tokenize texts and move to device."""
+        if max_length is None:
+            max_length = self.max_num_tokens or self.max_position_embeddings or 512
+        # print(f"Device is {self.device}")
+        return self.tokenizer(
             texts,
             padding=True,
             truncation=True,
             return_tensors="pt",
-            max_length=512
+            max_length=max_length
         ).to(self.device)
 
-        # Generate embeddings
+    def encode(self, inputs) -> np.ndarray:
+        """Run transformer inference on pre-tokenized inputs."""
         with torch.no_grad():
             outputs = self.model(**inputs)
-            # Use mean pooling
             embeddings = self._mean_pooling(outputs.last_hidden_state, inputs['attention_mask'])
-            # Normalize embeddings
             embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-
         return embeddings.cpu().numpy()
+
+    def embed(self, texts: List[str]) -> np.ndarray:
+        """Generate embeddings using local GPU (tokenize + encode)."""
+        inputs = self.tokenize(texts)
+        return self.encode(inputs)
 
     def _mean_pooling(self, token_embeddings, attention_mask):
         """Apply mean pooling to get sentence embeddings."""
         input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+
+
+class CollatorGPUEmbedder(GPUEmbedder):
+    """GPU embedder using DataCollatorWithFlattening for variable-length sequences.
+
+    Instead of padding all sequences to the longest in the batch, this approach
+    tokenizes each sentence individually (no padding), then uses
+    DataCollatorWithFlattening to pack them into a single flattened sequence with
+    appropriate position_ids and flash attention kwargs. This eliminates padding
+    overhead and leverages flash attention's variable-length support.
+
+    Drop-in replacement for GPUEmbedder — same constructor args and interface.
+    Requires flash_attn to be installed and a model that supports flash_attention_2.
+    """
+
+    def __init__(self, model_name: str, device: str = None, use_torch_compile: bool = False,
+                 dtype: str = "bf16", trust_remote_code: bool = False,
+                 attn_implementation: str = None):
+        # Force flash_attention_2 for the collator path — it's required for
+        # DataCollatorWithFlattening to produce correct results.
+        if attn_implementation is None:
+            attn_implementation = "flash_attention_2"
+        super().__init__(
+            model_name=model_name,
+            device=device,
+            use_torch_compile=use_torch_compile,
+            dtype=dtype,
+            trust_remote_code=trust_remote_code,
+            attn_implementation=attn_implementation,
+        )
+        from transformers import DataCollatorWithFlattening
+        self.collator = DataCollatorWithFlattening(return_flash_attn_kwargs=True)
+        print(f"  collator: DataCollatorWithFlattening (flash_attn variable-length packing)")
+
+    def tokenize(self, texts: List[str], max_length: int = None):
+        """Tokenize all sentences in a single batched call without padding.
+
+        Returns a dict with 'encoded' (list of per-sentence token dicts) and
+        'lengths' (token count per sentence), which encode() consumes.
+        """
+        if max_length is None:
+            max_length = self.max_num_tokens or self.max_position_embeddings or 512
+        batch_encoded = self.tokenizer(
+            texts,
+            return_attention_mask=False,
+            truncation=True,
+            max_length=max_length,
+            padding=False,
+        )
+        # Split batch result into per-text dicts for the collator
+        encoded = [{"input_ids": ids} for ids in batch_encoded["input_ids"]]
+        lengths = [len(ids) for ids in batch_encoded["input_ids"]]
+        return {"encoded": encoded, "lengths": lengths}
+
+    def encode(self, inputs) -> np.ndarray:
+        """Run inference using DataCollatorWithFlattening.
+
+        Takes the output of tokenize() — a dict with 'encoded' and 'lengths'.
+        Flattens all sequences into one, runs a single forward pass, then splits
+        the hidden states back by sentence length and applies mean pooling.
+        """
+        encoded = inputs["encoded"]
+        lengths = inputs["lengths"]
+
+        # Collator expects list of dicts with 'input_ids' as lists (not tensors)
+        batch = self.collator([{"input_ids": e["input_ids"]} for e in encoded])
+        batch = {
+            k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+            for k, v in batch.items()
+        }
+
+        with torch.no_grad():
+            outputs = self.model(**batch)
+
+        # outputs.last_hidden_state is [1, total_tokens, hidden_dim]
+        hidden = outputs.last_hidden_state.squeeze(0)  # [total_tokens, hidden_dim]
+
+        # Split back into per-sentence embeddings and mean-pool
+        embeddings = []
+        offset = 0
+        for length in lengths:
+            sentence_hidden = hidden[offset:offset + length]
+            embeddings.append(sentence_hidden.mean(dim=0))
+            offset += length
+
+        embeddings = torch.stack(embeddings)
+        embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+        return embeddings.float().cpu().numpy()
+
+    def embed(self, texts: List[str]) -> np.ndarray:
+        """Tokenize + encode in one call."""
+        inputs = self.tokenize(texts)
+        return self.encode(inputs)
 
 
 # The read_jsonl_file and get_nested_field functions have been moved to jsonl_utils.py
@@ -152,16 +585,30 @@ def generate_sample_texts(num_samples: int) -> List[str]:
     return texts
 
 
+def warmup_embedder(embedder, texts: List[str], batch_size: int, name: str,
+                    warmup_batches: int = 1):
+    """Run warmup batches for an embedder to stabilize GPU/torch.compile performance."""
+    if warmup_batches <= 0:
+        return
+    print(f"  Warming up {name} with {warmup_batches} batch(es) (batch_size={batch_size})...")
+    for wi in range(warmup_batches):
+        warmup_start = wi * batch_size
+        warmup_texts = texts[warmup_start % len(texts):(warmup_start % len(texts)) + batch_size]
+        if not warmup_texts:
+            warmup_texts = texts[:min(batch_size, len(texts))]
+        _ = embedder.embed(warmup_texts)
+    print(f"  Warmup complete for {name}.")
+
+
 def benchmark_embedder(embedder, texts: List[str], batch_size: int, name: str) -> dict:
     """Benchmark an embedder with given batch size."""
     num_batches = (len(texts) + batch_size - 1) // batch_size
     timings = []
+    tokenize_timings = []
+    encode_timings = []
+    has_split = hasattr(embedder, 'tokenize') and hasattr(embedder, 'encode')
 
     print(f"\n  Testing {name} with batch_size={batch_size} ({num_batches} batches)...")
-
-    # Warmup
-    warmup_texts = texts[:min(batch_size, len(texts))]
-    _ = embedder.embed(warmup_texts)
 
     # Benchmark with progress bar
     batch_ranges = list(range(0, len(texts), batch_size))
@@ -170,16 +617,29 @@ def benchmark_embedder(embedder, texts: List[str], batch_size: int, name: str) -
     for i in pbar:
         batch = texts[i:i + batch_size]
 
-        start_time = time.time()
-        embeddings = embedder.embed(batch)
-        elapsed = time.time() - start_time
+        if has_split:
+            tok_start = time.time()
+            inputs = embedder.tokenize(batch)
+            tok_elapsed = time.time() - tok_start
+
+            enc_start = time.time()
+            embeddings = embedder.encode(inputs)
+            enc_elapsed = time.time() - enc_start
+
+            elapsed = tok_elapsed + enc_elapsed
+            tokenize_timings.append(tok_elapsed)
+            encode_timings.append(enc_elapsed)
+        else:
+            start_time = time.time()
+            embeddings = embedder.embed(batch)
+            elapsed = time.time() - start_time
 
         timings.append(elapsed)
 
         # Update progress bar with current throughput
         if len(timings) > 0:
             current_throughput = len(batch) / elapsed
-            pbar.set_postfix({"throughput": f"{current_throughput:.1f} q/s"})
+            pbar.set_postfix({"throughput": f"{current_throughput:.1f} spans/s"})
 
     total_time = sum(timings)
     avg_time = np.mean(timings)
@@ -187,7 +647,7 @@ def benchmark_embedder(embedder, texts: List[str], batch_size: int, name: str) -
     throughput = len(texts) / total_time
     avg_latency_per_item = total_time / len(texts) * 1000  # ms
 
-    return {
+    result = {
         "name": name,
         "batch_size": batch_size,
         "num_samples": len(texts),
@@ -199,59 +659,171 @@ def benchmark_embedder(embedder, texts: List[str], batch_size: int, name: str) -
         "embedding_dim": embeddings.shape[-1]
     }
 
+    if has_split and tokenize_timings:
+        total_tokenize = sum(tokenize_timings)
+        total_encode = sum(encode_timings)
+        tokenize_throughput = len(texts) / total_tokenize if total_tokenize > 0 else 0
+        encode_throughput = len(texts) / total_encode if total_encode > 0 else 0
+        result.update({
+            "tokenize_time": total_tokenize,
+            "encode_time": total_encode,
+            "tokenize_pct": total_tokenize / total_time * 100,
+            "encode_pct": total_encode / total_time * 100,
+            "tokenize_throughput": tokenize_throughput,
+            "encode_throughput": encode_throughput,
+            "avg_tokenize_batch": np.mean(tokenize_timings),
+            "avg_encode_batch": np.mean(encode_timings),
+        })
 
-def print_results(results: List[dict]):
-    """Print benchmark results in a formatted table."""
-    print("\n" + "="*100)
+    return result
+
+
+def print_results(all_file_results: dict):
+    """Print all benchmark results in a unified table, grouped by batch size, method, and file."""
+    all_results = []
+    for results in all_file_results.values():
+        all_results.extend(results)
+
+    if not all_results:
+        print("\nNo benchmark results available!")
+        return
+
+    batch_sizes = sorted(set(r["batch_size"] for r in all_results))
+    file_labels = list(all_file_results.keys())
+    methods = sorted(set(r["name"] for r in all_results))
+    multiple_files = len(file_labels) > 1
+
+    print("\n" + "=" * 120)
     print("BENCHMARK RESULTS")
-    print("="*100)
-
-    # Group by batch size
-    batch_sizes = sorted(set(r["batch_size"] for r in results))
+    print("=" * 120)
 
     for batch_size in batch_sizes:
-        print(f"\n{'Batch Size: ' + str(batch_size):^100}")
-        print("-"*100)
-        print(f"{'Method':<20} {'Total Time (s)':<18} {'Throughput (q/s)':<20} {'Avg Latency (ms)':<20} {'Speedup':<15}")
-        print("-"*100)
+        print(f"\n{'Batch Size: ' + str(batch_size):^120}")
+        print("-" * 120)
 
-        batch_results = [r for r in results if r["batch_size"] == batch_size]
-        api_result = next((r for r in batch_results if "API" in r["name"]), None)
+        if multiple_files:
+            print(f"{'File':<30} {'Method':<10} {'Samples':<10} {'Total (s)':<12} "
+                  f"{'Throughput (spans/s)':<20} {'Avg Latency (ms)':<20} {'Std Batch (s)':<15}")
+        else:
+            print(f"{'Method':<15} {'Samples':<10} {'Total (s)':<12} "
+                  f"{'Throughput (spans/s)':<20} {'Avg Latency (ms)':<20} {'Std Batch (s)':<15}")
+        print("-" * 120)
 
-        for result in batch_results:
-            speedup = ""
-            if api_result and result["name"] != api_result["name"]:
-                speedup = f"{api_result['total_time'] / result['total_time']:.2f}x"
-            elif api_result and result["name"] == api_result["name"]:
-                speedup = "1.00x (baseline)"
+        for file_label in file_labels:
+            file_results = [r for r in all_file_results[file_label]
+                            if r["batch_size"] == batch_size]
+            for result in file_results:
+                if multiple_files:
+                    print(f"{file_label:<30} {result['name']:<10} "
+                          f"{result['num_samples']:<10} {result['total_time']:<12.3f} "
+                          f"{result['throughput']:<20.2f} {result['avg_latency_ms']:<20.2f} "
+                          f"{result['std_batch_time']:<15.4f}")
+                else:
+                    print(f"{result['name']:<15} "
+                          f"{result['num_samples']:<10} {result['total_time']:<12.3f} "
+                          f"{result['throughput']:<20.2f} {result['avg_latency_ms']:<20.2f} "
+                          f"{result['std_batch_time']:<15.4f}")
 
-            print(f"{result['name']:<20} "
-                  f"{result['total_time']:<18.3f} "
-                  f"{result['throughput']:<20.2f} "
-                  f"{result['avg_latency_ms']:<20.2f} "
-                  f"{speedup:<15}")
+    # Aggregate across files (shown only when multiple files)
+    if multiple_files:
+        print("\n" + "=" * 120)
+        print("AGGREGATE ACROSS FILES")
+        print("=" * 120)
 
-    print("\n" + "="*100)
+        for batch_size in batch_sizes:
+            print(f"\n{'Batch Size: ' + str(batch_size):^120}")
+            print("-" * 120)
+            print(f"{'Method':<15} {'Files':<8} {'Avg Throughput (spans/s)':<22} "
+                  f"{'Std Throughput':<18} {'Avg Latency (ms)':<20} {'Std Latency (ms)':<18}")
+            print("-" * 120)
 
-    # Summary comparison
-    print("\nSUMMARY")
-    print("-"*100)
-    api_results = [r for r in results if "API" in r["name"]]
-    gpu_results = [r for r in results if "GPU" in r["name"]]
+            for method in methods:
+                entries = [r for r in all_results
+                           if r["batch_size"] == batch_size and r["name"] == method]
+                if not entries:
+                    continue
+                throughputs = [e["throughput"] for e in entries]
+                latencies = [e["avg_latency_ms"] for e in entries]
+                print(f"{method:<15} {len(entries):<8} "
+                      f"{np.mean(throughputs):<22.2f} {np.std(throughputs):<18.2f} "
+                      f"{np.mean(latencies):<20.2f} {np.std(latencies):<18.2f}")
 
+    # Timing breakdown (tokenization vs inference vs total)
+    has_breakdown = any("tokenize_time" in r for r in all_results)
+    if has_breakdown:
+        print("\n" + "=" * 140)
+        print("THROUGHPUT BREAKDOWN (Tokenization vs Inference vs Total)")
+        print("=" * 140)
+
+        for batch_size in batch_sizes:
+            print(f"\n{'Batch Size: ' + str(batch_size):^140}")
+            print("-" * 140)
+
+            if multiple_files:
+                print(f"{'File':<25} {'Method':<10} "
+                      f"{'Tok (s)':<10} {'Inf (s)':<10} {'Total (s)':<10} "
+                      f"{'Tok spd (sp/s)':<15} {'Inf spd (sp/s)':<15} {'Total spd (sp/s)':<16} "
+                      f"{'Tok %':<8} {'Inf %':<8} "
+                      f"{'Avg Tok/bat (ms)':<18} {'Avg Inf/bat (ms)':<18}")
+            else:
+                print(f"{'Method':<15} "
+                      f"{'Tok (s)':<10} {'Inf (s)':<10} {'Total (s)':<10} "
+                      f"{'Tok spd (sp/s)':<15} {'Inf spd (sp/s)':<15} {'Total spd (sp/s)':<16} "
+                      f"{'Tok %':<8} {'Inf %':<8} "
+                      f"{'Avg Tok/bat (ms)':<18} {'Avg Inf/bat (ms)':<18}")
+            print("-" * 140)
+
+            for file_label in file_labels:
+                file_results = [r for r in all_file_results[file_label]
+                                if r["batch_size"] == batch_size and "tokenize_time" in r]
+                for result in file_results:
+                    if multiple_files:
+                        print(f"{file_label:<25} {result['name']:<10} "
+                              f"{result['tokenize_time']:<10.3f} {result['encode_time']:<10.3f} {result['total_time']:<10.3f} "
+                              f"{result['tokenize_throughput']:<15.1f} {result['encode_throughput']:<15.1f} {result['throughput']:<16.1f} "
+                              f"{result['tokenize_pct']:<8.1f} {result['encode_pct']:<8.1f} "
+                              f"{result['avg_tokenize_batch']*1000:<18.2f} {result['avg_encode_batch']*1000:<18.2f}")
+                    else:
+                        print(f"{result['name']:<15} "
+                              f"{result['tokenize_time']:<10.3f} {result['encode_time']:<10.3f} {result['total_time']:<10.3f} "
+                              f"{result['tokenize_throughput']:<15.1f} {result['encode_throughput']:<15.1f} {result['throughput']:<16.1f} "
+                              f"{result['tokenize_pct']:<8.1f} {result['encode_pct']:<8.1f} "
+                              f"{result['avg_tokenize_batch']*1000:<18.2f} {result['avg_encode_batch']*1000:<18.2f}")
+
+    # Summary
+    print("\n" + "=" * 120)
+    print("SUMMARY")
+    print("-" * 120)
+    for method in methods:
+        method_results = [r for r in all_results if r["name"] == method]
+        avg_throughput = np.mean([r["throughput"] for r in method_results])
+        avg_latency = np.mean([r["avg_latency_ms"] for r in method_results])
+        summary_line = (f"  {method}: Avg total throughput = {avg_throughput:.2f} spans/s, "
+                        f"Avg latency = {avg_latency:.2f} ms")
+        # Add per-phase throughput if available
+        method_with_breakdown = [r for r in method_results if "tokenize_throughput" in r]
+        if method_with_breakdown:
+            avg_tok_throughput = np.mean([r["tokenize_throughput"] for r in method_with_breakdown])
+            avg_enc_throughput = np.mean([r["encode_throughput"] for r in method_with_breakdown])
+            avg_tok_pct = np.mean([r["tokenize_pct"] for r in method_with_breakdown])
+            summary_line += (f"\n         Avg tokenize throughput = {avg_tok_throughput:.2f} spans/s, "
+                             f"Avg inference throughput = {avg_enc_throughput:.2f} spans/s "
+                             f"(tokenize = {avg_tok_pct:.1f}% of total time)")
+        print(summary_line)
+
+    api_results = [r for r in all_results if "API" in r["name"]]
+    gpu_results = [r for r in all_results if "GPU" in r["name"]]
     if api_results and gpu_results:
-        avg_api_throughput = np.mean([r["throughput"] for r in api_results])
-        avg_gpu_throughput = np.mean([r["throughput"] for r in gpu_results])
+        avg_api = np.mean([r["throughput"] for r in api_results])
+        avg_gpu = np.mean([r["throughput"] for r in gpu_results])
+        print(f"  GPU speedup over API: {avg_gpu / avg_api:.2f}x")
 
-        print(f"Average API throughput:  {avg_api_throughput:.2f} queries/sec")
-        print(f"Average GPU throughput:  {avg_gpu_throughput:.2f} queries/sec")
-        print(f"GPU speedup over API:   {avg_gpu_throughput / avg_api_throughput:.2f}x")
-
-    print("="*100 + "\n")
+    print("=" * 120 + "\n")
 
 
 def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png'):
     """Create visualization plots from benchmark results."""
+    global api_results, gpu_results
     os.makedirs(output_dir, exist_ok=True)
 
     # Extract unique batch sizes and method names
@@ -280,7 +852,7 @@ def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png')
                color=colors.get(method, f'C{i}'), alpha=0.8)
 
     ax.set_xlabel('Batch Size', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Throughput (queries/sec)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Throughput (spans/s)', fontsize=12, fontweight='bold')
     ax.set_title('Embedding Generation Throughput Comparison', fontsize=14, fontweight='bold')
     ax.set_xticks(x)
     ax.set_xticklabels(batch_sizes)
@@ -374,7 +946,7 @@ def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png')
                 label=method, color=colors.get(method, None))
 
     ax1.set_xlabel('Batch Size', fontsize=12, fontweight='bold')
-    ax1.set_ylabel('Throughput (queries/sec)', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Throughput (spans/s)', fontsize=12, fontweight='bold')
     ax1.set_title('Throughput Scaling with Batch Size', fontsize=14, fontweight='bold')
     ax1.legend(fontsize=11)
     ax1.grid(True, alpha=0.3)
@@ -417,7 +989,7 @@ def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png')
         ax1.bar(np.arange(len(batch_sizes)) + offset, throughputs, width,
                label=method, color=colors.get(method, f'C{i}'), alpha=0.8)
     ax1.set_xlabel('Batch Size', fontweight='bold')
-    ax1.set_ylabel('Throughput (q/s)', fontweight='bold')
+    ax1.set_ylabel('Throughput (spans/s)', fontweight='bold')
     ax1.set_title('Throughput Comparison', fontweight='bold')
     ax1.set_xticks(np.arange(len(batch_sizes)))
     ax1.set_xticklabels(batch_sizes)
@@ -451,7 +1023,7 @@ def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png')
         ax3.plot(bs, throughputs, marker='o', linewidth=2, markersize=6,
                 label=method, color=colors.get(method, None))
     ax3.set_xlabel('Batch Size', fontweight='bold')
-    ax3.set_ylabel('Throughput (q/s)', fontweight='bold')
+    ax3.set_ylabel('Throughput (spans/s)', fontweight='bold')
     ax3.set_title('Throughput Scaling', fontweight='bold')
     ax3.legend()
     ax3.grid(True, alpha=0.3)
@@ -490,7 +1062,7 @@ def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png')
             avg_throughput = np.mean([r["throughput"] for r in method_results])
             avg_latency = np.mean([r["avg_latency_ms"] for r in method_results])
             summary_text += f"{method}:\n"
-            summary_text += f"  Avg Throughput: {avg_throughput:.2f} q/s\n"
+            summary_text += f"  Avg Throughput: {avg_throughput:.2f} spans/s\n"
             summary_text += f"  Avg Latency: {avg_latency:.2f} ms\n\n"
 
         ax4.text(0.5, 0.5, summary_text, transform=ax4.transAxes,
@@ -507,6 +1079,62 @@ def create_plots(results: List[dict], output_dir: str, plot_format: str = 'png')
     print(f"  ✓ Saved: {dashboard_file}")
 
     print(f"\n✓ All plots saved to: {output_dir}/")
+
+
+def compute_short_labels(file_paths: List[str]) -> List[str]:
+    """Compute short labels by removing common prefix and suffix from file paths.
+
+    For inputs like:
+        benchmark/miracl/ar/train.jsonl.bz2
+        benchmark/miracl/bn/train.jsonl.bz2
+    Returns: ['ar', 'bn']
+    """
+    if len(file_paths) <= 1:
+        return [os.path.basename(f) for f in file_paths]
+
+    # Strip common directory prefix
+    common_dir = os.path.commonpath(file_paths)
+    if os.path.isfile(common_dir):
+        common_dir = os.path.dirname(common_dir)
+    stripped = [os.path.relpath(f, common_dir) for f in file_paths]
+
+    # Strip common suffix (e.g. /train.jsonl.bz2)
+    reversed_strs = [s[::-1] for s in stripped]
+    common_suffix = os.path.commonprefix(reversed_strs)[::-1]
+    if common_suffix:
+        suffix_len = len(common_suffix)
+        labels = [s[:-suffix_len].strip(os.sep).strip('/') for s in stripped]
+        if all(labels):
+            return labels
+
+    return stripped
+
+
+def load_texts_from_file(input_file: str, field_path: str = None,
+                         max_samples: int = None) -> List[str]:
+    """Load texts from a JSONL or JSONL.bz2 file.
+
+    Returns a list of text strings, or raises on error.
+    """
+    print(f"\nLoading texts from file: {input_file}")
+    if field_path:
+        print(f"  Using field path: {field_path}")
+    if max_samples:
+        print(f"  Max samples to read: {max_samples}")
+
+    texts = read_jsonl_file(
+        input_file,
+        field_path=field_path,
+        max_samples=max_samples,
+        verbose=True
+    )
+    print(f"  Loaded {len(texts)} texts from file")
+
+    if texts:
+        preview = texts[0][:100] + "..." if len(texts[0]) > 100 else texts[0]
+        print(f"  Preview: {preview}")
+
+    return texts
 
 
 def main():
@@ -527,8 +1155,9 @@ def main():
                              "Default: 100 for generated texts, all texts for input files.")
     parser.add_argument("--batch_sizes", type=str, default="1,8,16,32",
                         help="Comma-separated list of batch sizes to test")
-    parser.add_argument("--input_file", type=str, default=None,
-                        help="Path to JSONL or JSONL.bz2 file containing texts to embed")
+    parser.add_argument("--input_file", type=str, nargs="+", default=None,
+                        help="Path(s) to JSONL or JSONL.bz2 file(s) containing texts to embed. "
+                             "When multiple files are given, benchmarks run per-file with aggregate stats.")
     parser.add_argument("--field_path", type=str, default=None,
                         help="Dot-separated path to text field in JSONL with array support. "
                              "Examples: 'document.text', 'documents[*].text', 'documents[0].text', 'documents[].text'. "
@@ -549,10 +1178,58 @@ def main():
                         help="Directory to save plots (default: benchmark_plots)")
     parser.add_argument("--plot_format", type=str, default="png", choices=["png", "pdf", "svg"],
                         help="Plot file format (default: png)")
-    parser.add_argument("--max_text_size", type=int, default=1536,
-                        help="The maximum size for the text to encode",)
+    parser.add_argument("--warmup_batches", type=int, default=1,
+                        help="Number of warmup batches to run before timing (default: 1)")
+    parser.add_argument("--torch_compile", action="store_true",
+                        help="Enable torch.compile optimization for GPU model (default: disabled)")
+    parser.add_argument("--dtype", type=str, default="bf16", choices=["fp32", "fp16", "bf16"],
+                        help="Model weight dtype for GPU embedder (default: bf16)")
+    parser.add_argument("--output_file", type=str, default=None,
+                        help="Path to JSON file for saving benchmark results and full output text")
+    parser.add_argument("--fof", type=str, default=None,
+                        help="Path to a file-of-files: one input file path per line, "
+                             "expanded as if passed to --input_file")
+    parser.add_argument("--attn_implementation", type=str, default=None,
+                        choices=["flash_attention_2", "sdpa", "eager", "default"],
+                        help="Attention implementation to use for the GPU model. "
+                             "If the requested type fails, falls back to the default "
+                             "sequence (flash_attention_2 → eager → default)")
+    parser.add_argument("--trust_remote_code", action="store_true",
+                        help="Allow loading model code from the HuggingFace Hub repository "
+                             "(required for some models with custom architectures)")
+    parser.add_argument("--max_num_tokens", type=int, default=1536,
+                        help="Maximum number of tokens per text (texts are truncated to this length)")
+    parser.add_argument("--max_text_size", type=int, default=None,
+                        help="[Deprecated: use --max_num_tokens] Maximum number of tokens per text")
+    parser.add_argument("--select_longest", type=int, default=None,
+                        help="Before applying --num_samples, keep only the N longest texts "
+                             "(by character length). Useful for stress-testing with long inputs.")
+    parser.add_argument("--use_collator", action="store_true",
+                        help="Use CollatorGPUEmbedder (DataCollatorWithFlattening + flash attention) "
+                             "instead of standard padded GPUEmbedder. Eliminates padding overhead "
+                             "for variable-length inputs. Requires flash_attn.")
 
     args = parser.parse_args()
+
+    if args.fof:
+        with open(args.fof) as fof:
+            fof_paths = [line.strip() for line in fof if line.strip() and not line.startswith("#")]
+        args.input_file = (args.input_file or []) + fof_paths
+
+    save_command_line(sys.argv)
+
+    captured_output = io.StringIO()
+    if args.output_file:
+        sys.stdout = _TeeStream(sys.__stdout__, captured_output)
+
+    # Resolve --max_text_size (deprecated) vs --max_num_tokens
+    if args.max_text_size is not None:
+        import warnings
+        warnings.warn("--max_text_size is deprecated, use --max_num_tokens instead", DeprecationWarning)
+        # Explicit --max_text_size overrides the default of --max_num_tokens,
+        # but if both are explicitly provided, --max_num_tokens wins.
+        if "--max_num_tokens" not in sys.argv:
+            args.max_num_tokens = args.max_text_size
 
     # Parse batch sizes
     batch_sizes = [int(x.strip()) for x in args.batch_sizes.split(",")]
@@ -561,57 +1238,21 @@ def main():
     print("EMBEDDING TIMING BENCHMARK")
     print("="*100)
     print(f"Batch sizes: {batch_sizes}")
+    print(f"Warmup batches: {args.warmup_batches}")
     print("="*100)
 
-    # Load or generate sample texts
+    # Build list of input sources: each is (label, file_path_or_None)
+    input_sources = []
     if args.input_file:
-        print(f"\nLoading texts from file: {args.input_file}")
-        if args.field_path:
-            print(f"  Using field path: {args.field_path}")
-        if args.max_samples:
-            print(f"  Max samples to read: {args.max_samples}")
-
-        try:
-            texts = read_jsonl_file(
-                args.input_file,
-                field_path=args.field_path,
-                max_samples=args.max_samples,
-                verbose=True
-            )
-            print(f"✓ Loaded {len(texts)} texts from file")
-
-            if not texts:
-                print("✗ No texts loaded from file!")
-                return
-
-            # Show preview of first text
-            preview = texts[0][:100] + "..." if len(texts[0]) > 100 else texts[0]
-            print(f"  Preview: {preview}")
-
-        except FileNotFoundError:
-            print(f"✗ Error: File not found: {args.input_file}")
-            return
-        except Exception as e:
-            print(f"✗ Error loading file: {e}")
-            return
+        labels = compute_short_labels(args.input_file)
+        for label, f in zip(labels, args.input_file):
+            input_sources.append((label, f))
     else:
-        # Generate sample texts
-        num_to_generate = args.num_samples if args.num_samples is not None else 100
-        print(f"\nGenerating {num_to_generate} sample texts...")
-        texts = generate_sample_texts(num_to_generate)
-        print(f"✓ Generated {len(texts)} sample texts")
+        input_sources.append(("generated", None))
 
-    # Random sampling if num_samples is specified and we have more texts than requested
-    if args.num_samples is not None and len(texts) > args.num_samples:
-        print(f"\nRandomly sampling {args.num_samples} texts from {len(texts)} available texts")
-        print(f"  Random seed: {args.random_seed}")
-        random.seed(args.random_seed)
-        texts = random.sample(texts, args.num_samples)
-        print(f"✓ Sampled {len(texts)} texts")
+    multiple_files = len(input_sources) > 1
 
-    print(f"\nFinal dataset size: {len(texts)} texts")
-
-    # Initialize embedders
+    # Initialize embedders (once, shared across all files)
     embedders = []
 
     if not args.skip_api:
@@ -624,19 +1265,12 @@ def main():
 
     if not args.skip_gpu:
         try:
-            gpu_embedder = GPUEmbedder(args.local_model_name, args.device)
-            embedders.append(("GPU", gpu_embedder))
-            # Will also prune the texts so they are short enough
-            new_t = []
-            eliminated = 0
-            for t in texts:
-                toks = gpu_embedder.tokenizer.tokenize(t)
-                if len(toks) <= args.max_text_size:
-                    new_t.append(t)
-                else:
-                    eliminated += 1
-            texts = new_t
-            print(f"We had to eliminate {eliminated} texts, {len(new_t)} remaining.")
+            EmbedderClass = CollatorGPUEmbedder if args.use_collator else GPUEmbedder
+            gpu_label = "GPU(collator)" if args.use_collator else "GPU"
+            gpu_embedder = EmbedderClass(args.local_model_name, args.device, args.torch_compile, args.dtype,
+                                          trust_remote_code=args.trust_remote_code,
+                                          attn_implementation=args.attn_implementation)
+            embedders.append((gpu_label, gpu_embedder))
         except Exception as e:
             print(f"✗ Failed to initialize GPU embedder: {e}")
             print("  Skipping GPU benchmarking")
@@ -645,34 +1279,272 @@ def main():
         print("\n✗ No embedders available for benchmarking!")
         return
 
+    gpu_embedder_obj = next((emb for name, emb in embedders if "GPU" in name), None)
 
-    # Run benchmarks
-    results = []
+    # Resolve max_text_size: take min of user-provided value and model's max_seq_length
+    if gpu_embedder_obj is not None and gpu_embedder_obj.max_seq_length is not None:
+        model_max = gpu_embedder_obj.max_seq_length
+        if args.max_num_tokens > model_max:
+            print(f"\033[91m\033[1m"
+                  f"  WARNING: --max_num_tokens={args.max_num_tokens} exceeds model's "
+                  f"max_seq_length={model_max}. "
+                  f"Clamping max_num_tokens to {model_max}."
+                  f"\033[0m")
+            args.max_num_tokens = model_max
 
-    for batch_size in batch_sizes:
+    # Propagate the resolved max_num_tokens to the GPU embedder so that
+    # tokenize() truncates at the correct length.
+    if gpu_embedder_obj is not None:
+        gpu_embedder_obj.set_max_num_tokens(args.max_num_tokens)
+
+    # One-time warmup for all embedders
+    if multiple_files:
+        # Full benchmark run on first input file; results discarded as warmup
         print(f"\n{'='*100}")
-        print(f"BENCHMARKING WITH BATCH SIZE: {batch_size}")
+        print("WARMUP PHASE (first input file — full benchmark run, results discarded)")
         print(f"{'='*100}")
+        _, first_path = input_sources[0]
+        try:
+            warmup_texts = load_texts_from_file(
+                first_path, field_path=args.field_path, max_samples=args.max_samples
+            )
+            if args.select_longest is not None and len(warmup_texts) > args.select_longest:
+                warmup_texts.sort(key=len, reverse=True)
+                warmup_texts = warmup_texts[:args.select_longest]
+            if args.num_samples is not None and len(warmup_texts) > args.num_samples:
+                random.seed(args.random_seed)
+                warmup_texts = random.sample(warmup_texts, args.num_samples)
+            if args.select_longest is not None:
+                warmup_texts.sort(key=len, reverse=True)
+            if gpu_embedder_obj is not None:
+                _tok = gpu_embedder_obj.tokenizer
+                _orig_max = _tok.model_max_length
+                _tok.model_max_length = 10**7  # suppress length warning
+                _chunk = 4096
+                for cs in range(0, len(warmup_texts), _chunk):
+                    encoded = _tok(
+                        warmup_texts[cs:cs + _chunk],
+                        add_special_tokens=False, padding=False,
+                        truncation=True, max_length=args.max_num_tokens
+                    )
+                    for j, ids in enumerate(encoded['input_ids']):
+                        if len(ids) >= args.max_num_tokens:
+                            warmup_texts[cs + j] = _tok.decode(
+                                ids, skip_special_tokens=True
+                            )
+                _tok.model_max_length = _orig_max
+            if warmup_texts:
+                for batch_size in batch_sizes:
+                    for name, embedder in embedders:
+                        try:
+                            benchmark_embedder(embedder, warmup_texts, batch_size, name)
+                        except Exception as e:
+                            print(f"  Warmup batch_size={batch_size} {name} failed: {e}")
+        except Exception as e:
+            print(f"  Warmup from first file failed: {e}")
+    elif args.warmup_batches > 0:
+        print(f"\n{'='*100}")
+        print("WARMUP PHASE")
+        print(f"{'='*100}")
+        warmup_batch_size = max(batch_sizes)
+        warmup_count = warmup_batch_size * args.warmup_batches
+
+        if args.input_file:
+            # Sample warmup texts from the first input file
+            try:
+                warmup_texts = load_texts_from_file(
+                    args.input_file[0],
+                    field_path=args.field_path,
+                    max_samples=warmup_count
+                )
+                if not warmup_texts:
+                    print("  No texts loaded from first file for warmup, using generated texts.")
+                    warmup_texts = generate_sample_texts(warmup_count)
+                elif len(warmup_texts) > warmup_count:
+                    random.seed(args.random_seed)
+                    warmup_texts = random.sample(warmup_texts, warmup_count)
+            except Exception as e:
+                print(f"  Failed to load warmup texts from first file: {e}")
+                warmup_texts = generate_sample_texts(warmup_count)
+        else:
+            warmup_texts = generate_sample_texts(warmup_count)
 
         for name, embedder in embedders:
+            warmup_embedder(embedder, warmup_texts, warmup_batch_size, name,
+                            warmup_batches=args.warmup_batches)
+
+    # Iterate over input files
+    all_file_results = {}  # file_label -> list of result dicts
+    file_token_stats = {}  # file_label -> token count stats post-filter
+
+    for file_idx, (file_label, file_path) in enumerate(input_sources):
+        if multiple_files:
+            print(f"\n{'#'*100}")
+            print(f"FILE {file_idx + 1}/{len(input_sources)}: {file_label}")
+            print(f"{'#'*100}")
+
+        # Load or generate texts
+        if file_path is not None:
             try:
-                result = benchmark_embedder(embedder, texts, batch_size, name)
-                results.append(result)
+                texts = load_texts_from_file(
+                    file_path,
+                    field_path=args.field_path,
+                    max_samples=args.max_samples
+                )
+                if not texts:
+                    print(f"✗ No texts loaded from {file_label}, skipping.")
+                    continue
+            except FileNotFoundError:
+                print(f"✗ Error: File not found: {file_path}, skipping.")
+                continue
             except Exception as e:
-                print(f"  ✗ Error benchmarking {name} with batch_size={batch_size}: {e}")
+                print(f"✗ Error loading file {file_path}: {e}, skipping.")
+                continue
+        else:
+            num_to_generate = args.num_samples if args.num_samples is not None else 100
+            print(f"\nGenerating {num_to_generate} sample texts...")
+            texts = generate_sample_texts(num_to_generate)
+            print(f"  Generated {len(texts)} sample texts")
 
-    # Print results
-    if results:
-        print_results(results)
 
-        # Generate plots if requested
+        # Select longest texts if --select_longest is specified
+        if args.select_longest is not None and len(texts) > args.select_longest:
+            print(f"\nSelecting {args.select_longest} longest texts from {len(texts)} available texts (by character length)")
+            texts.sort(key=len, reverse=True)
+            texts = texts[:args.select_longest]
+            print(f"  Kept {len(texts)} longest texts "
+                  f"(min len={len(texts[-1])}, max len={len(texts[0])} chars)")
+
+        # Random sampling if num_samples is specified and we have more texts than requested
+        if args.num_samples is not None and len(texts) > args.num_samples:
+            print(f"\nRandomly sampling {args.num_samples} texts from {len(texts)} available texts")
+            print(f"  Random seed: {args.random_seed}")
+            random.seed(args.random_seed)
+            texts = random.sample(texts, args.num_samples)
+            print(f"  Sampled {len(texts)} texts")
+
+        # Sort by length for efficient batching (less padding waste) when select_longest is active
+        if args.select_longest is not None:
+            texts.sort(key=len, reverse=True)
+
+        # Truncate texts that exceed max_text_size (requires GPU tokenizer)
+        if gpu_embedder_obj is not None:
+            truncated_count = 0
+            token_lengths = []
+            _tok = gpu_embedder_obj.tokenizer
+            _orig_max = _tok.model_max_length
+            _tok.model_max_length = 10**7  # suppress length warning
+            _chunk = 4096
+            for cs in range(0, len(texts), _chunk):
+                chunk_texts = texts[cs:cs + _chunk]
+                encoded = _tok(
+                    chunk_texts, add_special_tokens=False,
+                    padding=False, truncation=False
+                )
+                for j, ids in enumerate(encoded['input_ids']):
+                    token_lengths.append(len(ids))
+                    if len(ids) > args.max_num_tokens:
+                        texts[cs + j] = _tok.decode(
+                            ids[:args.max_num_tokens], skip_special_tokens=True
+                        )
+                        truncated_count += 1
+            _tok.model_max_length = _orig_max
+            if truncated_count > 0:
+                print(f"  Truncated {truncated_count} texts to {args.max_num_tokens} tokens.")
+            if token_lengths:
+                effective_lengths = [min(l, args.max_num_tokens) for l in token_lengths]
+                print(f"  Tokens/doc (pre-truncation):  mean={np.mean(token_lengths):.2f}, "
+                      f"std={np.std(token_lengths):.2f}, min={np.min(token_lengths)}, "
+                      f"max={np.max(token_lengths)}")
+                print(f"  Tokens/doc (post-truncation): mean={np.mean(effective_lengths):.2f}, "
+                      f"std={np.std(effective_lengths):.2f}, min={np.min(effective_lengths)}, "
+                      f"max={np.max(effective_lengths)}")
+                file_token_stats[file_label] = {
+                    "num_docs": len(effective_lengths),
+                    "total_tokens": int(np.sum(effective_lengths)),
+                    "avg_tokens": float(np.mean(effective_lengths)),
+                    "std_tokens": float(np.std(effective_lengths)),
+                    "min_tokens": int(np.min(effective_lengths)),
+                    "max_tokens": int(np.max(effective_lengths)),
+                    "truncated_count": truncated_count,
+                }
+
+        print(f"\nFinal dataset size: {len(texts)} texts")
+
+        if not texts:
+            print(f"✗ No texts remaining for {file_label} after filtering, skipping.")
+            continue
+
+        # Run benchmarks for this file
+        file_results = []
+
+        for batch_size in batch_sizes:
+            for name, embedder in embedders:
+                try:
+                    result = benchmark_embedder(embedder, texts, batch_size, name)
+                    result["source_file"] = file_label
+                    file_results.append(result)
+                except Exception as e:
+                    print(f"  ✗ Error benchmarking {name} with batch_size={batch_size}: {e}")
+
+        if file_results:
+            all_file_results[file_label] = file_results
+            # Print per-file summary immediately
+            print(f"\n  --- Results for '{file_label}' ---")
+            print(f"  {'Method':<8} {'Batch':<8} {'Throughput (spans/s)':<22} {'Avg Latency (ms)':<20}")
+            print(f"  {'-'*58}")
+            for r in file_results:
+                print(f"  {r['name']:<8} {r['batch_size']:<8} "
+                      f"{r['throughput']:<22.2f} {r['avg_latency_ms']:<20.2f}")
+            print(f"  {'-'*58}")
+        else:
+            print(f"\n✗ No benchmark results for {file_label}!")
+
+    # Print all results at the end
+    if all_file_results:
+        print_results(all_file_results)
+
+        # Generate plots
         if args.plot:
             print("\n" + "="*100)
             print("GENERATING PLOTS")
             print("="*100)
-            create_plots(results, args.plot_dir, args.plot_format)
+            for file_label, file_results in all_file_results.items():
+                plot_dir = args.plot_dir
+                if multiple_files:
+                    plot_dir = os.path.join(args.plot_dir, file_label.replace('.', '_'))
+                create_plots(file_results, plot_dir, args.plot_format)
     else:
         print("\n✗ No benchmark results available!")
+
+    if args.output_file:
+        sys.stdout = sys.__stdout__
+        prepare_for_save_and_backup(args.output_file)
+
+        model_config = None
+        gpu_info = None
+        if gpu_embedder_obj is not None:
+            try:
+                model_config = gpu_embedder_obj.model.config.to_dict()
+            except Exception as e:
+                model_config = {"error": f"could not serialize config: {e}"}
+            gpu_info = gpu_embedder_obj.gpu_info
+
+        now = datetime.datetime.now().astimezone()
+        output_data = {
+            "run_date": now.isoformat(),
+            "run_date_utc": now.astimezone(datetime.timezone.utc).isoformat(),
+            "argv": list(sys.argv),
+            "args": vars(args),
+            "gpu_info": gpu_info,
+            "model_config": model_config,
+            "results": all_file_results,
+            "token_stats": file_token_stats,
+            "output": captured_output.getvalue(),
+        }
+        with open(args.output_file, "w") as f:
+            json.dump(output_data, f, indent=2, cls=_NumpyEncoder)
+        print(f"Results saved to: {args.output_file}")
 
 
 if __name__ == "__main__":

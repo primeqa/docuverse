@@ -157,3 +157,17 @@ examples/tmp.ipynb
 /notebooks/models/
 /docuverse/utils/yaml_config_reader.py
 /home-output/
+/bv-output/
+/*latency*/
+
+# IDE / OS / dev artifacts
+.idea/
+.docuverse/
+
+# DocUVerse session-local dev artifacts (sometimes appear at repo root)
+/logfile
+/notebooks/*.db
+/notebooks/*.lock
+/notebooks/*.pt
+*.onnx
+

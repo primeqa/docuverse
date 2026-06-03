@@ -1,0 +1,6 @@
+# LanceDB dense retrieval (embedded, on-disk).
+db_engine: lancedb
+model_name: ibm-granite/granite-embedding-small-english-r2
+index_name: docuverse_lancedb
+server: "file:./.docuverse/lancedb"
+top_k: 10

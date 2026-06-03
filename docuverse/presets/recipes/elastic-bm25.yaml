@@ -1,0 +1,5 @@
+# Elasticsearch BM25. Set ES_HOST/ES_USER/ES_PASSWORD in your environment, or
+# override `server:` with a named entry from config/servers/elastic_servers.json.
+db_engine: es-bm25
+index_name: docuverse_bm25
+top_k: 10
