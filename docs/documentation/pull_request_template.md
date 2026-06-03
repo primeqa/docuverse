@@ -22,14 +22,14 @@ Be sure to **request a review** from one or more reviewers (unless the PR is to 
 
 ## Versioning
 
-When opening a PR to make changes to PrimeQA (i.e. `primeqa/`) master, be sure to increment the version following
-[semantic versioning](https://semver.org/).  The VERSION is stored [here](https://github.com/primeqa/primeqa/blob/main/VERSION) 
+When opening a PR to make changes to DocUVerse (i.e. `docuverse/`) main, be sure to increment the version following
+[semantic versioning](https://semver.org/).  The VERSION is stored [here](https://github.com/primeqa/docuverse/blob/main/VERSION)
 and is incremented using `bump2version {patch,minor,major}` as described in the (development guide documentation)[development.html].
 
  - [ ] Have you updated the VERSION?
- - [ ] Or does this PR not change the `primeqa` package or was not into master?
+ - [ ] Or does this PR not change the `docuverse` package or was not into main?
 
-After pulling in changes from master to an existing PR, ensure the VERSION is updated appropriately.
+After pulling in changes from main to an existing PR, ensure the VERSION is updated appropriately.
 This may require bumping the version again if it has been previously bumped.
 
 If you're not quite ready yet to post a PR for review, feel free to open a [draft PR](https://github.blog/2019-02-14-introducing-draft-pull-requests/).
@@ -37,9 +37,9 @@ If you're not quite ready yet to post a PR for review, feel free to open a [draf
 ## Releases
 
 ### After Merging
-If merging into master and VERSION was updated, after this PR is merged:
-- [ ] [Create a release](https://docs.github.com/en/github/administering-a-repository/releasing-projects-on-github/managing-releases-in-a-repository#creating-a-release) from the master with version equal to [VERSION](https://github.com/primeqa/primeqa/blob/main/VERSION)
-- [ ] Not merging to master or VERSION not updated
+If merging into main and VERSION was updated, after this PR is merged:
+- [ ] [Create a release](https://docs.github.com/en/github/administering-a-repository/releasing-projects-on-github/managing-releases-in-a-repository#creating-a-release) from main with version equal to [VERSION](https://github.com/primeqa/docuverse/blob/main/VERSION)
+- [ ] Not merging to main or VERSION not updated
 
 ### Checklist
 
