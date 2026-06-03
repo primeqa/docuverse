@@ -755,6 +755,26 @@ def prepare_for_save_and_backup(output_file, overwrite=False):
 
 id_format = re.compile("(.*)-(\\d+)-(\\d+)")
 
+_url_fragment_re = re.compile(r"#.*$")
+_docs_version_re = re.compile(r"(://[^/]+/docs/[^?]+?)/(\d+(?:\.\d+)*)(?=\?|$)")
+
+
+def normalize_doc_url(url):
+    """Normalize an IBM docs URL by stripping the fragment and replacing the
+    trailing numeric version segment with `latest`.
+
+    Targets URLs of the form `https://host/docs/<lang>/<product>/<version>?...`
+    where `<version>` is digits with optional dotted parts (e.g. `2.5.0`, `13`,
+    `2024`). Only matches inside `/docs/` paths and only when the version sits
+    immediately before `?` or end-of-url, so date-like and id-like numeric
+    segments elsewhere are left alone. Falsy/non-matching URLs come back with
+    just the fragment removed.
+    """
+    if not url:
+        return url
+    url = _url_fragment_re.sub("", url)
+    return _docs_version_re.sub(r"\1/latest", url)
+
 
 def get_orig_docid(id):
     """
