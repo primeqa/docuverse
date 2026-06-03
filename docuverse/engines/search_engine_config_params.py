@@ -749,6 +749,16 @@ class EvaluationArguments(GenericArguments):
         }
     )
 
+    match_by: str = field(
+        default="id",
+        metadata={
+            "help": "How to match retrieved docs to gold relevance: "
+                    "'id' (default) compares each retrieved chunk's orig_docid against the query's `relevant` ids; "
+                    "'url' compares the retrieved chunk's normalized `metadata.url` against the query's "
+                    "`metadata.norm-gold-urls`. URL mode falls back to id-match for chunks lacking a url."
+        }
+    )
+
     def __post_init__(self):
         self.iranks = [int(r) for r in self.ranks.split(",")]
 

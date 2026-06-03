@@ -8,7 +8,7 @@ from tqdm import tqdm
 from docuverse import SearchResult, SearchQueries, SearchEngine
 from docuverse.engines import SearchData
 from docuverse.engines.search_engine_config_params import EvaluationArguments, DocUVerseConfig
-from . import get_param, get_orig_docid
+from . import get_param, get_orig_docid, normalize_doc_url
 from .evaluation_output import EvaluationOutput
 from rouge_score.rouge_scorer import RougeScorer
 from docuverse.utils.timer import timer
@@ -61,17 +61,25 @@ class EvaluationEngine:
             return EvaluationOutput()
         ranks = self.config.iranks
         rouge_scores = {r: 0 for r in ranks}  # passage scores
+        match_by = getattr(self.config, 'match_by', 'id')
         gt = {-1: -1}
+        gt_urls = {}
         num_positive = {}
         for q in input_queries:
             rels = get_param(q, relevant_header)
             id = get_param(q, query_id_header)
             if isinstance(rels, list):
-                gt[id] = {id: 1 for id in rels}
+                gt[id] = {r: 1 for r in rels}
                 num_positive[id] = len(rels)
             else:
                 gt[id] = {rels: 1}
                 num_positive[id] = 1
+            if match_by == 'url':
+                md = get_param(q, 'metadata', None) or {}
+                norm_urls = md.get('norm-gold-urls', []) if isinstance(md, dict) else []
+                gt_urls[id] = {normalize_doc_url(u) for u in norm_urls if u}
+                if gt_urls[id]:
+                    num_positive[id] = len(gt_urls[id])
 
         def skip(out_ranks, record, rid):
             qid = record[0]
@@ -136,8 +144,16 @@ class EvaluationEngine:
                 seen_docids.add(str(docid))
                 eval_count += 1
 
-                self.relevant[rid].append(str(docid) in gt[qid])
-                self.score_pairs[rid].append([answer.score, 1.0*(str(docid) in gt[qid])])
+                if match_by == 'url':
+                    chunk_url = get_param(answer, 'metadata.url', None)
+                    if chunk_url and gt_urls.get(qid):
+                        is_rel = normalize_doc_url(chunk_url) in gt_urls[qid]
+                    else:
+                        is_rel = str(docid) in gt[qid]
+                else:
+                    is_rel = str(docid) in gt[qid]
+                self.relevant[rid].append(is_rel)
+                self.score_pairs[rid].append([answer.score, 1.0 * is_rel])
                 if not self.config.compute_rouge:
                     continue
                 if len(query['passages']) == 0:
