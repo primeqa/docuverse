@@ -186,6 +186,7 @@ class SAPProccesor(DefaultProcessor):
             url = re.sub(r'\?locale=.*', "", doc_url)
             fields = url.split("/")
             fields[-1] = fields[-1].replace(".html", "")
+            url = "/".join(fields)
             return url, fields
         else:
             return "", ["", "", "", "", "", ""]
@@ -262,10 +263,10 @@ class SearchData:
         self.template = data_template
 
     def get_text(self, i: int) -> str:
-        return self.entries[i][self.template.text_header]
+        return get_param(self.entries[i], self.template.text_header)
 
     def __getitem__(self, i: int) -> Entry:
-        return SearchData.Entry(**self.entries[i])
+        return SearchData.Entry(self.entries[i])
 
     def __len__(self) -> int:
         return len(self.entries)

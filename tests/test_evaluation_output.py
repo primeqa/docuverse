@@ -1,8 +1,6 @@
 import unittest
-import math
-import itertools
-import operator
 from docuverse.utils.evaluation_output import EvaluationOutput
+
 
 class TestEvaluationOutput(unittest.TestCase):
 
@@ -10,19 +8,23 @@ class TestEvaluationOutput(unittest.TestCase):
         self.num_ranked_queries = 1
         self.num_judged_queries = 1
         self.doc_scores = [[1]]
+        self.score_pairs = [[(0.5, 1.0)]]
         self.ranks = [2]
         self.model_name = "model"
         self.rouge_scores = None
+        self.num_gold = [1]
         self.metrics = "match"
 
         self.evaluationOutputObj = EvaluationOutput(
-            self.num_ranked_queries, 
-            self.num_judged_queries, 
+            self.num_ranked_queries,
+            self.num_judged_queries,
             self.doc_scores,
+            self.score_pairs,
             self.ranks,
             self.model_name,
             self.rouge_scores,
-            metrics=self.metrics
+            num_gold=self.num_gold,
+            metrics=self.metrics,
         )
 
     def test_model_name(self):
@@ -36,14 +38,14 @@ class TestEvaluationOutput(unittest.TestCase):
 
     def test_compute_metrics(self):
         self.evaluationOutputObj.compute_metrics()
-        self.assertEqual(self.evaluationOutputObj.ndcg, {2: 0.6309297535714574})
-        self.assertEqual(self.evaluationOutputObj.match, {2: 0})
-        self.assertEqual(self.evaluationOutputObj.mrr, {2: 0.0})
+        self.assertEqual(self.evaluationOutputObj.ndcg, {2: 1.0})
+        self.assertEqual(self.evaluationOutputObj.match, {2: 1.0})
+        self.assertEqual(self.evaluationOutputObj.mrr, {2: 1.0})
 
     def test_str_method(self):
-        expected_str = "Model    M@\n" + \
-                       "model    0.0      \n"
+        expected_str = "Model    M@2       \nmodel    1.0       \n"
         self.assertEqual(self.evaluationOutputObj.__str__(), expected_str)
+
 
 if __name__ == '__main__':
     unittest.main()

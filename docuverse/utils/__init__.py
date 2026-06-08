@@ -338,7 +338,7 @@ def open_stream(file_name: str, write: bool = False, binary=False):
     if write:
         mode = "w"
         cache_dir = os.path.dirname(file_name)
-        if not os.path.exists(cache_dir):
+        if cache_dir and not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
     else:
         mode = "r"
