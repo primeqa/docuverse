@@ -44,7 +44,7 @@ dependencies = [
     "pydantic_core>=2.27",
     "simple_colors",
     "pandas>=2.2",
-    "jinja2>=3.1",
+    "jinja2>=3.1.6",
     "grpcio>=1.60",
     "scipy>=1.16",
     "matplotlib>=3.7"
