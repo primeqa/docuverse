@@ -73,6 +73,10 @@ faiss = [
 lancedb = [
     "lancedb>=0.15",
 ]
+spacy = [
+    "spacy>=3.8,<3.9",
+    "xx_sent_ud_sm @ https://github.com/explosion/spacy-models/releases/download/xx_sent_ud_sm-3.8.0/xx_sent_ud_sm-3.8.0-py3-none-any.whl",
+]
 # `quickstart` is the curated minimum to make the README example work end-to-end
 # without an external service (Milvus-Lite via `file:` server).
 quickstart = [
@@ -92,6 +96,8 @@ all = [
     "faiss-cpu",
     "lancedb>=0.15",
     "pyizumo[pos]>=2.0",
+    "spacy>=3.8,<3.9",
+    "xx_sent_ud_sm @ https://github.com/explosion/spacy-models/releases/download/xx_sent_ud_sm-3.8.0/xx_sent_ud_sm-3.8.0-py3-none-any.whl",
     "huggingface_hub[cli]",
     "pynvml",
     "scikit-learn>=1.3",

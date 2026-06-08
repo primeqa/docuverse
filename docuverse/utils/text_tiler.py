@@ -26,6 +26,7 @@ class TextTiler:
                  count_type='token',
                  trim_text_to: int=None,
                  trim_text_count_type='token',
+                 sentence_segmenter: str = "pyizumo",
                  **kwargs):
         """
 
@@ -36,6 +37,8 @@ class TextTiler:
         :param tokenizer: Tokenizer object or name of the tokenizer model.
         :param aligned_on_sentences: Flag indicating whether window alignment should be performed on sentences.
         :param count_type: Type of count to be performed, either 'tokens' or 'characters'.
+        :param sentence_segmenter: Backend used for sentence/token segmentation when
+                                   `aligned_on_sentences=True`. One of {"pyizumo", "spacy"}.
 
         :raises RuntimeError: If the tokenizer argument is neither a string nor a PreTrainedTokenizer class.
         """
@@ -64,6 +67,7 @@ class TextTiler:
         self.aligned_on_sentences = aligned_on_sentences
         self.text_trim_to = trim_text_to
         self.text_trim_to_type = trim_text_count_type
+        self.sentence_segmenter_backend = sentence_segmenter
         self.nlp = None
 
     def create_tiles(self,
@@ -366,16 +370,11 @@ class TextTiler:
 
     def _init_nlp(self, language_code):
         if not self.nlp:
-            try:
-                import pyizumo
-            except:
-                raise ImportError(f"You need to install the pyizumo package before using this method.")
-
-            try:
-                self.nlp = pyizumo.load(language_code, parsers=['token', 'sentence'])
-            except Exception as e:
-                raise ImportError(f"Problem loading the pyizumo package: {e}. If you're having trouble, "
-                                  f"maybe turn off sentence-based text splitting (--split_on_sentences=False) ")
+            from docuverse.utils.sentence_segmentation import create_segmenter
+            self.nlp = create_segmenter(
+                backend=self.sentence_segmenter_backend,
+                language_code=language_code,
+            )
 
     @staticmethod
     def remove_start_end_tokens(tokenizer, split_passage, start_token, end_token):
