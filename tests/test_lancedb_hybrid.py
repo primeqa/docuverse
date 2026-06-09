@@ -153,3 +153,107 @@ def test_hybrid_ingest_writes_one_row_per_doc(tmp_path, patched_models):
         assert "dense_vec" in r and "splade_vec" in r
         assert isinstance(r["dense_vec"], list) and len(r["dense_vec"]) == 8
         assert set(r["splade_vec"]) == {"indices", "values"}
+
+
+def _ingest_and_search(eng, docs, query_text):
+    from docuverse.engines.search_queries import SearchQueries
+    from docuverse.engines.data_template import default_query_template
+    eng.create_index()
+    records = eng._create_data(docs)
+    eng._insert_data(records)
+    eng.build_indexes()
+    q = SearchQueries.Query(template=default_query_template, id="q1", text=query_text,
+                            relevant=[], answers=[])
+    return eng.search(q)
+
+
+def test_hybrid_search_dense_bm25_rrf_native_fast_path(tmp_path, patched_models):
+    """Dense + BM25 + RRF should use LanceDB's native hybrid query."""
+    from docuverse.engines.retrieval.lancedb import LanceDBHybridEngine
+    cfg = _hybrid_config(tmp_path, combination="rrf", with_sparse=False, with_bm25=True)
+    eng = LanceDBHybridEngine(cfg)
+    docs = [
+        {"id": "a", "text": "alpha brown fox jumps high", "title": ""},
+        {"id": "b", "text": "beta lazy dog sleeps low", "title": ""},
+        {"id": "c", "text": "gamma quick fox runs fast", "title": ""},
+    ]
+    res = _ingest_and_search(eng, docs, "fox")
+    passages = res.retrieved_passages if hasattr(res, "retrieved_passages") else res
+    ids = [p["id"] for p in passages]
+    assert {"a", "c"} & set(ids)
+
+
+def test_hybrid_search_three_engines_rrf(tmp_path, patched_models):
+    """Dense + BM25 + sparse with RRF combination falls back to Python merge."""
+    from docuverse.engines.retrieval.lancedb import LanceDBHybridEngine
+    cfg = _hybrid_config(tmp_path, combination="rrf", with_sparse=True, with_bm25=True)
+    eng = LanceDBHybridEngine(cfg)
+    docs = [
+        {"id": "a", "text": "alpha brown fox jumps high", "title": ""},
+        {"id": "b", "text": "beta lazy dog sleeps low", "title": ""},
+        {"id": "c", "text": "gamma quick fox runs fast", "title": ""},
+    ]
+    res = _ingest_and_search(eng, docs, "fox")
+    passages = res.retrieved_passages if hasattr(res, "retrieved_passages") else res
+    ids = [p["id"] for p in passages]
+    assert len(ids) > 0
+    assert all(p.get("score") is not None for p in passages)
+
+
+def test_hybrid_search_three_engines_weighted(tmp_path, patched_models):
+    from docuverse.engines.retrieval.lancedb import LanceDBHybridEngine
+    cfg = _hybrid_config(tmp_path, combination="weighted",
+                         with_sparse=True, with_bm25=True)
+    eng = LanceDBHybridEngine(cfg)
+    docs = [
+        {"id": "a", "text": "alpha brown fox jumps high", "title": ""},
+        {"id": "b", "text": "beta lazy dog sleeps low", "title": ""},
+        {"id": "c", "text": "gamma quick fox runs fast", "title": ""},
+    ]
+    res = _ingest_and_search(eng, docs, "fox")
+    passages = res.retrieved_passages if hasattr(res, "retrieved_passages") else res
+    assert len(passages) > 0
+
+
+def test_hybrid_rrf_math_unit():
+    """RRF: rank-1 contribution = 1/(60+1); rank-2 = 1/(60+2)."""
+    from docuverse.engines.retrieval.lancedb.lancedb_hybrid import _rrf_combine
+    rankings = [
+        [("a", 5.0), ("b", 4.0), ("c", 3.0)],
+        [("c", 9.0), ("a", 7.0), ("b", 5.0)],
+    ]
+    out = _rrf_combine(rankings, k=60, top_k=3)
+    ids = [item[0] for item in out]
+    # 'a' appears at ranks 1 and 2; 'c' at ranks 3 and 1; 'b' at ranks 2 and 3.
+    # Score(a)=1/61+1/62; Score(c)=1/63+1/61; Score(b)=1/62+1/63.
+    # a > c > b
+    assert ids == ["a", "c", "b"]
+
+
+def test_hybrid_weighted_math_unit():
+    """Weighted: min-max normalize each ranking then weighted-sum."""
+    from docuverse.engines.retrieval.lancedb.lancedb_hybrid import _weighted_combine
+    rankings = [
+        [("a", 1.0), ("b", 0.0)],     # weight 0.7
+        [("b", 4.0), ("a", 2.0)],     # weight 0.3
+    ]
+    out = _weighted_combine(rankings, weights=[0.7, 0.3], top_k=2)
+    by_id = dict(out)
+    # 'a' normalized ranking 1 = 1.0; ranking 2 = 0.0  -> 0.7*1.0 + 0.3*0.0 = 0.7
+    # 'b' normalized ranking 1 = 0.0; ranking 2 = 1.0  -> 0.7*0.0 + 0.3*1.0 = 0.3
+    assert abs(by_id["a"] - 0.7) < 1e-9
+    assert abs(by_id["b"] - 0.3) < 1e-9
+
+
+def test_hybrid_single_subengine_skips_merge(tmp_path, patched_models):
+    from docuverse.engines.retrieval.lancedb import LanceDBHybridEngine
+    cfg = _hybrid_config(tmp_path, combination="rrf",
+                         with_sparse=False, with_bm25=False)
+    eng = LanceDBHybridEngine(cfg)
+    docs = [
+        {"id": "a", "text": "alpha brown fox", "title": ""},
+        {"id": "b", "text": "beta lazy dog", "title": ""},
+    ]
+    res = _ingest_and_search(eng, docs, "fox")
+    passages = res.retrieved_passages if hasattr(res, "retrieved_passages") else res
+    assert len(passages) > 0

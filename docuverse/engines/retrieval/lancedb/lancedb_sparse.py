@@ -145,24 +145,16 @@ class LanceDBSparseEngine(LanceDBEngine):
                 "scan; prefer use inside a hybrid composer.",
                 stacklevel=2,
             )
-            return (
-                self.table.search()
-                .select(cols)
-                .limit(None)
-                .to_list()
-            )
-        if not candidate_ids:
-            return []
-        # Build an SQL-style IN filter; LanceDB accepts duckdb-style filters.
-        ids_quoted = ", ".join(f"'{cid}'" for cid in candidate_ids)
-        filter_expr = f"id IN ({ids_quoted})"
-        return (
-            self.table.search()
-            .where(filter_expr)
-            .select(cols)
-            .limit(len(candidate_ids))
-            .to_list()
-        )
+            arrow_table = self.table.to_arrow()
+            rows = arrow_table.to_pylist()
+        else:
+            if not candidate_ids:
+                return []
+            arrow_table = self.table.to_arrow()
+            id_set = set(candidate_ids)
+            rows = [r for r in arrow_table.to_pylist() if r.get("id") in id_set]
+        present = [c for c in cols if not rows or c in rows[0]]
+        return [{c: r.get(c) for c in present} for r in rows]
 
     def info(self) -> Dict[str, Any]:
         info = super().info()
