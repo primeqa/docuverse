@@ -24,8 +24,6 @@ except ImportError:
 
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.engines.search_corpus import SearchCorpus
-from docuverse.engines.search_queries import SearchQueries
-from docuverse.engines.search_result import SearchResult
 from docuverse.utils import get_param, _trim_json
 from docuverse.utils.timer import timer
 
