@@ -46,6 +46,14 @@ KNOWN_NAMES = [
     "milvus_splade",  # locks the trailing-space fix from PR 1
     "lancedb",
     "lance",
+    "lancedb-dense",
+    "lancedb_dense",
+    "lancedb-bm25",
+    "lancedb_bm25",
+    "lancedb-sparse",
+    "lancedb_sparse",
+    "lancedb-hybrid",
+    "lancedb_hybrid",
 ]
 
 
