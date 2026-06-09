@@ -39,11 +39,12 @@ class LanceDBEngine(RetrievalEngine):
         super().__init__(config_params, **kwargs)
         self.db = None
         self.table = None
+        # load_model_config must come before any self.config access.
+        self.load_model_config(config_params)
         self.extra_fields = get_param(self.config.data_template, "extra_fields", [])
         self.persist_directory = get_param(self.config, "project_dir", "/tmp")
         self.metric = get_param(config_params, "metric", "dot")
 
-        self.load_model_config(config_params)
         self.init_model(**kwargs)
 
         if self.config.ingestion_batch_size == 40:
