@@ -5,7 +5,6 @@ set(CMAKE_C_STANDARD 11)
 find_package(OpenMP REQUIRED)
 
 set(COMMON_FLAGS -O3 -march=native)
-set(UNROLL_FLAGS ${COMMON_FLAGS} -funroll-loops)
 
 # ---- benchmark binaries ----
 

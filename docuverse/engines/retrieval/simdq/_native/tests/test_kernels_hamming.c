@@ -1,14 +1,14 @@
-// test_kernels.c — correctness tests for all Hamming scan kernels.
+// test_kernels_hamming.c — correctness tests for all Hamming scan kernels.
 //
 // Every kernel is checked against an independent scalar reference that uses
 // __builtin_popcountll and its own bookkeeping (nothing shared with the
 // kernels except the data layout). Covered:
-//   hamming_soa, scan_scalar_aos          (hamming_common.h, always built)
+//   hamming_soa, scan_scalar_aos          (simdq_common.h, always built)
 //   scan_soa512, scan_shard, min_lanes8   (AVX-512 VPOPCNTDQ path)
 //   scan_shard, popcnt_bytes              (AVX2 nibble-LUT path)
 //   scan_batch_parallel                   (OpenMP driver, either path)
 //
-// hamming_kernels.h selects the SIMD path from compiler flags, so this file
+// simdq_kernels_hamming.h selects the SIMD path from compiler flags, so this file
 // is built twice to cover both paths on one machine (see CMakeLists.txt):
 //   -march=native    -> AVX-512 kernels (on VPOPCNTDQ hardware)
 //   -mavx2 -mpopcnt  -> AVX2 kernels

@@ -1,5 +1,5 @@
-// hamming_bench_v5.c — threaded, query-batched 768-bit Hamming scan with
-// two scan_shard kernels selected at compile time (see hamming_kernels.h):
+// bench_hamming_top1.c — threaded, query-batched 768-bit Hamming scan with
+// two scan_shard kernels selected at compile time (see simdq_kernels_hamming.h):
 //   - AVX-512 VPOPCNTDQ path (Zen 4/5, Ice Lake+)   : as in v4 — 8 codes/iter,
 //     per word one 512-bit load XORed with the broadcast query word and
 //     popcounted with _mm512_popcnt_epi64; best distance/index tracked per
@@ -12,9 +12,9 @@
 // the scan_batch_parallel OpenMP shard/merge driver. KERNEL_NAME in the
 // output line reports which path was compiled in.
 //
-// Build:  gcc -O3 -march=native -fopenmp hamming_bench_v5.c -o hb5
+// Build:  gcc -O3 -march=native -fopenmp bench_hamming_top1.c -o bench_hamming_top1
 //         (-DNQ=32 etc. to change batch width; default 8)
-// Run:    OMP_NUM_THREADS=t ./hb5 <num_codes> <reps>
+// Run:    OMP_NUM_THREADS=t ./bench_hamming_top1 <num_codes> <reps>
 
 #include "simdq_kernels_hamming.h"
 

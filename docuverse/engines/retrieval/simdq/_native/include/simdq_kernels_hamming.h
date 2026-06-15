@@ -1,4 +1,4 @@
-// hamming_kernels.h — SIMD scan kernels over an SoA database (dbT[w*n + i]),
+// simdq_kernels_hamming.h — SIMD scan kernels over an SoA database (dbT[w*n + i]),
 // selected at compile time:
 //   AVX-512 VPOPCNTDQ (Zen 4/5, Ice Lake+) : vertical kernel, 8 codes/iter;
 //     per word, one 512-bit load is XORed with the broadcast query word and
