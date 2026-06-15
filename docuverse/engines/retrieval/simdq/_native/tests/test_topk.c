@@ -8,8 +8,6 @@
 
 #include "simdq_topk.h"
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 static int failures;
 #define CHECK(cond, ...) do { \
@@ -107,12 +105,78 @@ static void test_merge_two_heaps(void) {
               (long long)want_keys[i], (long long)want_idxs[i]);
 }
 
+static void test_k_equals_1(void) {
+    simdq_topk_t h;
+    int64_t keys[1]; int64_t idxs[1];
+    simdq_topk_init(&h, 1, keys, idxs);
+
+    simdq_topk_offer(&h, 50, 0);
+    CHECK(simdq_topk_threshold(&h) == 50, "k=1 single offer threshold");
+
+    simdq_topk_offer(&h, 30, 1);   // smaller, should evict
+    CHECK(simdq_topk_threshold(&h) == 30, "k=1 evict to smaller");
+
+    simdq_topk_offer(&h, 40, 2);   // larger than 30, rejected
+    CHECK(simdq_topk_threshold(&h) == 30, "k=1 reject larger");
+
+    int64_t ok[1], oi[1];
+    int n = simdq_topk_extract_sorted(&h, ok, oi);
+    CHECK(n == 1 && ok[0] == 30 && oi[0] == 1, "k=1 extract");
+}
+
+static void test_partial_fill_extract(void) {
+    simdq_topk_t h;
+    int64_t keys[5]; int64_t idxs[5];
+    simdq_topk_init(&h, 5, keys, idxs);
+
+    // only 3 of 5 slots filled
+    simdq_topk_offer(&h, 30, 0);
+    simdq_topk_offer(&h, 10, 1);
+    simdq_topk_offer(&h, 20, 2);
+    CHECK(simdq_topk_threshold(&h) == INT64_MAX, "partial threshold sentinel");
+
+    int64_t ok[5], oi[5];
+    int n = simdq_topk_extract_sorted(&h, ok, oi);
+    CHECK(n == 3, "partial extract n=%d", n);
+    int64_t want_k[3] = {10, 20, 30};
+    int64_t want_i[3] = {1, 2, 0};
+    for (int i = 0; i < 3; i++)
+        CHECK(ok[i] == want_k[i] && oi[i] == want_i[i],
+              "partial rank %d got (%lld,%lld) want (%lld,%lld)", i,
+              (long long)ok[i], (long long)oi[i],
+              (long long)want_k[i], (long long)want_i[i]);
+}
+
+static void test_ties_rejected(void) {
+    // strict-less-than in offer: equal keys are NOT replaced when the heap is full
+    simdq_topk_t h;
+    int64_t keys[2]; int64_t idxs[2];
+    simdq_topk_init(&h, 2, keys, idxs);
+
+    simdq_topk_offer(&h, 50, 0);
+    simdq_topk_offer(&h, 50, 1);   // both fit during fill phase
+    CHECK(h.size == 2, "ties fit during fill, size=%d", h.size);
+    CHECK(simdq_topk_threshold(&h) == 50, "tie threshold");
+
+    // now full; another key=50 should be rejected (strict <)
+    simdq_topk_offer(&h, 50, 2);
+    CHECK(h.size == 2, "tied offer rejected at full, size=%d", h.size);
+
+    // a strictly-smaller key DOES replace
+    simdq_topk_offer(&h, 49, 3);
+    CHECK(simdq_topk_threshold(&h) == 50, "post-replace root still 50");
+    CHECK(h.size == 2, "size unchanged after evict");
+}
+
 int main(void) {
     test_init_and_threshold();
     test_fill_to_capacity();
     test_evict_when_full();
     test_extract_sorted();
     test_merge_two_heaps();
+    test_k_equals_1();
+    test_partial_fill_extract();
+    test_ties_rejected();
     if (failures) { printf("%d FAILURE(S)\n", failures); return 1; }
     printf("all topk tests passed\n");
     return 0;
