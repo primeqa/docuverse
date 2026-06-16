@@ -18,6 +18,11 @@ target_compile_options(bench_hamming PRIVATE ${COMMON_FLAGS})
 target_include_directories(bench_hamming PRIVATE include)
 target_link_libraries(bench_hamming PRIVATE OpenMP::OpenMP_C)
 
+add_executable(bench_asym_b1 bench/bench_asym_b1.c)
+target_compile_options(bench_asym_b1 PRIVATE ${COMMON_FLAGS})
+target_include_directories(bench_asym_b1 PRIVATE include)
+target_link_libraries(bench_asym_b1 PRIVATE m)
+
 # ---- tests (ctest) ----
 enable_testing()
 
