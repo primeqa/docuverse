@@ -23,6 +23,11 @@ target_compile_options(bench_asym_b1 PRIVATE ${COMMON_FLAGS})
 target_include_directories(bench_asym_b1 PRIVATE include)
 target_link_libraries(bench_asym_b1 PRIVATE m)
 
+add_executable(bench_asym_b2 bench/bench_asym_b2.c)
+target_compile_options(bench_asym_b2 PRIVATE ${COMMON_FLAGS})
+target_include_directories(bench_asym_b2 PRIVATE include)
+target_link_libraries(bench_asym_b2 PRIVATE m)
+
 # ---- tests (ctest) ----
 enable_testing()
 
