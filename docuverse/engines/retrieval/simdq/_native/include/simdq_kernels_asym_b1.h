@@ -11,10 +11,10 @@
 #pragma once
 
 #include "simdq_topk.h"
+#include <assert.h>
 #include <immintrin.h>
 #include <math.h>
 #include <stdint.h>
-#include <string.h>
 
 #define ASYM_D 768
 
@@ -35,6 +35,7 @@
 static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
                                           const float *q, int K,
                                           float *out_s, int64_t *out_i) {
+    assert(K > 0 && K <= 256);
     const size_t row_bytes = (N + 7) / 8;
     // bounded max-heap of NEGATIVE scores, so larger -> "smaller" -> top
     int64_t hkeys[256], hidxs[256];
@@ -98,6 +99,7 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
 static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
                                           const float *q, int K,
                                           float *out_s, int64_t *out_i) {
+    assert(K > 0 && K <= 256);
     const size_t row_bytes = (N + 7) / 8;
     int64_t hkeys[256], hidxs[256];
     simdq_topk_t heap;
