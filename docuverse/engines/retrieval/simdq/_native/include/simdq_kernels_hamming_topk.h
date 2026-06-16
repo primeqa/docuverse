@@ -9,8 +9,13 @@
 
 #pragma once
 
+#ifdef KERNEL_NAME
+#  error "simdq_kernels_hamming.h and simdq_kernels_hamming_topk.h must not be included in the same TU"
+#endif
+
 #include "simdq_common.h"
 #include "simdq_topk.h"
+#include <assert.h>
 #include <immintrin.h>
 #include <string.h>
 
@@ -42,6 +47,7 @@ static inline void scan_shard_topk(const uint64_t *dbT, size_t n,
                                    size_t i0, size_t i1,
                                    const uint64_t *q, int K,
                                    int64_t *out_d, int64_t *out_i) {
+    assert(K > 0 && K <= 256);
     int64_t hkeys[256], hidxs[256];     // K up to 256 supported on stack
     simdq_topk_t heap;
     simdq_topk_init(&heap, K, hkeys, hidxs);
@@ -54,10 +60,10 @@ static inline void scan_shard_topk(const uint64_t *dbT, size_t n,
             acc = _mm512_add_epi64(acc,
                   _mm512_popcnt_epi64(_mm512_xor_si512(d, _mm512_set1_epi64(q[w]))));
         }
-        int64_t d8[8];
+        int64_t d8[LANES];
         _mm512_storeu_si512(d8, acc);
         int64_t thr = simdq_topk_threshold(&heap);
-        for (int l = 0; l < 8; l++)
+        for (int l = 0; l < LANES; l++)
             if (d8[l] < thr) {
                 simdq_topk_offer(&heap, d8[l], (int64_t)(i + l));
                 thr = simdq_topk_threshold(&heap);
@@ -86,6 +92,7 @@ static inline void scan_shard_topk(const uint64_t *dbT, size_t n,
                                    size_t i0, size_t i1,
                                    const uint64_t *q, int K,
                                    int64_t *out_d, int64_t *out_i) {
+    assert(K > 0 && K <= 256);
     int64_t hkeys[256], hidxs[256];
     simdq_topk_t heap;
     simdq_topk_init(&heap, K, hkeys, hidxs);
@@ -136,6 +143,7 @@ static inline void scan_shard_topk(const uint64_t *dbT, size_t n,
 static inline void scan_batch_parallel_topk(const uint64_t *dbT, size_t n,
                                             const uint64_t *q, int K,
                                             int64_t *gd, int64_t *gi) {
+    assert(K > 0 && K <= 256);
     int64_t gkeys[256], gidxs[256];
     simdq_topk_t global;
     simdq_topk_init(&global, K, gkeys, gidxs);
@@ -148,6 +156,7 @@ static inline void scan_batch_parallel_topk(const uint64_t *dbT, size_t n,
         size_t i1 = i0 + chunk < n ? i0 + chunk : n;
         if (i0 < i1) {
             int64_t ld[256], li[256];
+            for (int r = 0; r < K; r++) { ld[r] = INT64_MAX; li[r] = -1; }
             scan_shard_topk(dbT, n, i0, i1, q, K, ld, li);
             #pragma omp critical
             for (int r = 0; r < K; r++)
