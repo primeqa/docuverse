@@ -51,3 +51,9 @@ target_compile_options(test_kernels_hamming_topk_avx2 PRIVATE -O3 -mavx2 -mpopcn
 target_include_directories(test_kernels_hamming_topk_avx2 PRIVATE include)
 target_link_libraries(test_kernels_hamming_topk_avx2 PRIVATE OpenMP::OpenMP_C)
 add_test(NAME kernels_hamming_topk_avx2 COMMAND test_kernels_hamming_topk_avx2)
+
+add_executable(test_pack tests/test_pack.c)
+target_compile_options(test_pack PRIVATE ${COMMON_FLAGS})
+target_include_directories(test_pack PRIVATE include)
+target_link_libraries(test_pack PRIVATE m)
+add_test(NAME pack COMMAND test_pack)
