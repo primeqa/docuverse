@@ -13,6 +13,11 @@ target_compile_options(bench_hamming_top1 PRIVATE ${COMMON_FLAGS})
 target_include_directories(bench_hamming_top1 PRIVATE include)
 target_link_libraries(bench_hamming_top1 PRIVATE OpenMP::OpenMP_C)
 
+add_executable(bench_hamming bench/bench_hamming.c)
+target_compile_options(bench_hamming PRIVATE ${COMMON_FLAGS})
+target_include_directories(bench_hamming PRIVATE include)
+target_link_libraries(bench_hamming PRIVATE OpenMP::OpenMP_C)
+
 # ---- tests (ctest) ----
 enable_testing()
 
