@@ -108,12 +108,31 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
     for (size_t i0 = 0; i0 + ASYM_B1_LANES <= N; i0 += ASYM_B1_LANES) {
         __m256 acc = _mm256_setzero_ps();
         for (size_t w = 0; w < ASYM_B1_D; w++) {
+            // Broadcast the byte to all 32 lanes; AND against per-lane single-bit
+            // masks; lift the {zero, nonzero} result to a {-1, 0} per-byte mask
+            // via cmpeq-with-zero (works for bit 7, where the masked value is
+            // (char)128 = -128 — a signed cmpgt against zero would mis-classify
+            // lane 7 because -128 is not > 0).
             uint8_t bits = codes[w * row_bytes + (i0 >> 3)];
-            // expand 8 bits to 8 floats: +1 or -1
-            float vf[8];
-            for (int l = 0; l < 8; l++)
-                vf[l] = (bits & (1u << l)) ? 1.0f : -1.0f;
-            __m256 v = _mm256_loadu_ps(vf);
+            __m256i bbroad = _mm256_set1_epi8((char)bits);
+            const __m256i lane_mask = _mm256_setr_epi8(
+                1, 2, 4, 8, 16, 32, 64, (char)128,
+                1, 2, 4, 8, 16, 32, 64, (char)128,
+                1, 2, 4, 8, 16, 32, 64, (char)128,
+                1, 2, 4, 8, 16, 32, 64, (char)128);
+            __m256i isset = _mm256_and_si256(bbroad, lane_mask);
+            // 0xFF where bit is CLEAR, 0x00 where set (cmpeq-zero is sign-agnostic).
+            __m256i clear_mask = _mm256_cmpeq_epi8(isset, _mm256_setzero_si256());
+            // Take the low 8 bytes and sign-extend each to int32: 0xFFFFFFFF for
+            // clear lanes, 0x00000000 for set lanes.
+            __m128i low8 = _mm256_castsi256_si128(clear_mask);
+            __m256i widened = _mm256_cvtepi8_epi32(low8);
+            __m256 mask_ps = _mm256_castsi256_ps(widened);
+            // blendv_ps picks b when the mask's sign bit is 1, a otherwise.
+            // mask_ps high bit is 1 for CLEAR lanes -> -1.0; 0 for SET -> +1.0.
+            __m256 v = _mm256_blendv_ps(_mm256_set1_ps( 1.0f),
+                                        _mm256_set1_ps(-1.0f),
+                                        mask_ps);
             __m256 qb = _mm256_set1_ps(q[w]);
             acc = _mm256_fmadd_ps(qb, v, acc);
         }
