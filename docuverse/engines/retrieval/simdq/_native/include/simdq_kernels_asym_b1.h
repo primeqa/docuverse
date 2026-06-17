@@ -23,18 +23,19 @@
 #define ASYM_B1_LANES 16     // floats per AVX-512 register; 16 codes per block
 
 /*
- * Single-shard top-K asymmetric b=1 scan over codes [0, N). Inner loop:
+ * Shard top-K asymmetric b=1 scan over codes [i0, i1). Inner loop:
  * for each dim w, broadcast q'[w], unpack 16 codes' bit (one byte holds
  * 8 codes; 16 codes = 2 bytes via mask -> int8 -> float conversion),
  * FMA into per-lane accumulator. After d dims, store the 16 partial
  * scores and offer to top-K heap.
  *
- * For d=768 and N <= a few million this is memory-bound on the codes
- * buffer at 1 byte per 8 codes per dim = N/8 * 768 bytes.
+ * N stays (needed for row_bytes = (N + 7) / 8, the dim-stride).
+ * i0/i1 define the code range to scan.
  */
-static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
-                                          const float *q, int K,
-                                          float *out_s, int64_t *out_i) {
+static inline void scan_asym_b1_d768_shard_topk(const uint8_t *codes, size_t N,
+                                                size_t i0, size_t i1,
+                                                const float *q, int K,
+                                                float *out_s, int64_t *out_i) {
     assert(K > 0 && K <= 256);
     const size_t row_bytes = (N + 7) / 8;
     // bounded max-heap of NEGATIVE scores, so larger -> "smaller" -> top
@@ -43,12 +44,12 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
     simdq_topk_init(&heap, K, hkeys, hidxs);
 
     // Process 16 codes at a time; we need 2 bytes per dim (16 / 8).
-    for (size_t i0 = 0; i0 + ASYM_B1_LANES <= N; i0 += ASYM_B1_LANES) {
+    for (size_t ii = i0; ii + ASYM_B1_LANES <= i1; ii += ASYM_B1_LANES) {
         __m512 acc = _mm512_setzero_ps();
         for (size_t w = 0; w < ASYM_B1_D; w++) {
-            // 2 bytes from this dim's row, holding codes [i0, i0+16)
-            uint16_t bits = ((uint16_t)codes[w * row_bytes + (i0 >> 3) + 1] << 8)
-                          |  (uint16_t)codes[w * row_bytes + (i0 >> 3)];
+            // 2 bytes from this dim's row, holding codes [ii, ii+16)
+            uint16_t bits = ((uint16_t)codes[w * row_bytes + (ii >> 3) + 1] << 8)
+                          |  (uint16_t)codes[w * row_bytes + (ii >> 3)];
             // expand 16 bits to a 16-lane mask register
             __mmask16 m = (__mmask16)bits;
             // +1 where bit set, -1 elsewhere
@@ -66,14 +67,14 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
             // negate to convert top-largest into top-smallest
             int64_t neg = -(int64_t)(sc[l] * (float)(1 << 20));   // fixed-point key
             if (neg < thr) {
-                simdq_topk_offer(&heap, neg, (int64_t)(i0 + l));
+                simdq_topk_offer(&heap, neg, (int64_t)(ii + l));
                 thr = simdq_topk_threshold(&heap);
             }
         }
     }
     // tail: scalar
-    size_t i = N - (N % ASYM_B1_LANES);
-    for (; i < N; i++) {
+    size_t i = i1 - ((i1 - i0) % ASYM_B1_LANES);
+    for (; i < i1; i++) {
         float s = 0.0f;
         for (size_t w = 0; w < ASYM_B1_D; w++) {
             int8_t v = (codes[w * row_bytes + (i >> 3)] & (1u << (i & 7))) ? 1 : -1;
@@ -92,20 +93,27 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
     }
 }
 
+static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
+                                          const float *q, int K,
+                                          float *out_s, int64_t *out_i) {
+    scan_asym_b1_d768_shard_topk(codes, N, 0, N, q, K, out_s, out_i);
+}
+
 #elif defined(__AVX2__) && defined(__FMA__)
 #define ASYM_B1_KERNEL_NAME "AVX2-FMA"
 #define ASYM_B1_LANES 8
 
-static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
-                                          const float *q, int K,
-                                          float *out_s, int64_t *out_i) {
+static inline void scan_asym_b1_d768_shard_topk(const uint8_t *codes, size_t N,
+                                                size_t i0, size_t i1,
+                                                const float *q, int K,
+                                                float *out_s, int64_t *out_i) {
     assert(K > 0 && K <= 256);
     const size_t row_bytes = (N + 7) / 8;
     int64_t hkeys[256], hidxs[256];
     simdq_topk_t heap;
     simdq_topk_init(&heap, K, hkeys, hidxs);
 
-    for (size_t i0 = 0; i0 + ASYM_B1_LANES <= N; i0 += ASYM_B1_LANES) {
+    for (size_t ii = i0; ii + ASYM_B1_LANES <= i1; ii += ASYM_B1_LANES) {
         __m256 acc = _mm256_setzero_ps();
         for (size_t w = 0; w < ASYM_B1_D; w++) {
             // Broadcast the byte to all 32 lanes; AND against per-lane single-bit
@@ -113,7 +121,7 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
             // via cmpeq-with-zero (works for bit 7, where the masked value is
             // (char)128 = -128 — a signed cmpgt against zero would mis-classify
             // lane 7 because -128 is not > 0).
-            uint8_t bits = codes[w * row_bytes + (i0 >> 3)];
+            uint8_t bits = codes[w * row_bytes + (ii >> 3)];
             __m256i bbroad = _mm256_set1_epi8((char)bits);
             const __m256i lane_mask = _mm256_setr_epi8(
                 1, 2, 4, 8, 16, 32, 64, (char)128,
@@ -142,13 +150,13 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
         for (int l = 0; l < ASYM_B1_LANES; l++) {
             int64_t neg = -(int64_t)(sc[l] * (float)(1 << 20));
             if (neg < thr) {
-                simdq_topk_offer(&heap, neg, (int64_t)(i0 + l));
+                simdq_topk_offer(&heap, neg, (int64_t)(ii + l));
                 thr = simdq_topk_threshold(&heap);
             }
         }
     }
-    size_t i = N - (N % ASYM_B1_LANES);
-    for (; i < N; i++) {
+    size_t i = i1 - ((i1 - i0) % ASYM_B1_LANES);
+    for (; i < i1; i++) {
         float s = 0.0f;
         for (size_t w = 0; w < ASYM_B1_D; w++) {
             int8_t v = (codes[w * row_bytes + (i >> 3)] & (1u << (i & 7))) ? 1 : -1;
@@ -163,6 +171,59 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
     for (int r = 0; r < n; r++) {
         out_s[r] = -(float)ks[r] / (float)(1 << 20);
         out_i[r] = is[r];
+    }
+}
+
+static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
+                                          const float *q, int K,
+                                          float *out_s, int64_t *out_i) {
+    scan_asym_b1_d768_shard_topk(codes, N, 0, N, q, K, out_s, out_i);
+}
+#endif
+
+#if defined(_OPENMP)
+#include <omp.h>
+
+/*
+ * Threaded top-K asymmetric b=1 scan over [0, N). Each thread runs
+ * scan_asym_b1_d768_shard_topk on its range, then a critical-section
+ * merge folds per-thread results into the global top-K. Per-thread
+ * results from a partial-fill shard set unused entries to score=-INF
+ * and idx=-1; the merge skips those.
+ */
+static inline void scan_asym_b1_d768_topk_parallel(const uint8_t *codes, size_t N,
+                                                   const float *q, int K,
+                                                   float *gs, int64_t *gi) {
+    assert(K > 0 && K <= 256);
+    int64_t gkeys[256], gidxs[256];
+    simdq_topk_t global;
+    simdq_topk_init(&global, K, gkeys, gidxs);
+
+    #pragma omp parallel
+    {
+        int t = omp_get_thread_num(), T = omp_get_num_threads();
+        size_t chunk = (N + (size_t)T - 1) / (size_t)T;
+        size_t i0 = (size_t)t * chunk;
+        size_t i1 = i0 + chunk < N ? i0 + chunk : N;
+        if (i0 < i1) {
+            float ls[256]; int64_t li[256];
+            // pre-fill so a partial shard is detectable
+            for (int r = 0; r < K; r++) { ls[r] = -INFINITY; li[r] = -1; }
+            scan_asym_b1_d768_shard_topk(codes, N, i0, i1, q, K, ls, li);
+            #pragma omp critical
+            for (int r = 0; r < K; r++) {
+                if (li[r] < 0) continue;
+                int64_t neg = -(int64_t)(ls[r] * (float)(1 << 20));
+                if (neg < simdq_topk_threshold(&global))
+                    simdq_topk_offer(&global, neg, li[r]);
+            }
+        }
+    }
+    int64_t ks[256], is[256];
+    int n = simdq_topk_extract_sorted(&global, ks, is);
+    for (int r = 0; r < n; r++) {
+        gs[r] = -(float)ks[r] / (float)(1 << 20);
+        gi[r] = is[r];
     }
 }
 #endif

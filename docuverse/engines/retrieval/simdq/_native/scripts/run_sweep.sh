@@ -40,3 +40,25 @@ for bin in "${BINS[@]}"; do
         printf "| %s | %s | %s | %s |\n" "$bin" "$n" "$reps" "$out"
     done
 done
+
+# ---- Plan 2: threaded asymmetric sweep ----
+ASYM_BINS=(bench_asym_b1 bench_asym_b2 bench_asym_b4)
+ASYM_THREADS=32
+
+echo
+echo "# simdq Plan 2 threaded asymmetric sweep — OMP_NUM_THREADS=$ASYM_THREADS, K=$K"
+echo
+printf "| binary | n | reps | output |\n"
+printf "|--------|---|------|--------|\n"
+for bin in "${ASYM_BINS[@]}"; do
+    if [[ ! -x "$BUILD/$bin" ]]; then
+        printf "| %s | — | — | (binary missing) |\n" "$bin"
+        continue
+    fi
+    for i in "${!SIZES[@]}"; do
+        n="${SIZES[$i]}"
+        reps="${REPS[$i]}"
+        out=$(OMP_NUM_THREADS="$ASYM_THREADS" "$BUILD/$bin" "$n" "$reps" "$K" 2>&1 | tail -1)
+        printf "| %s | %s | %s | %s |\n" "$bin" "$n" "$reps" "$out"
+    done
+done

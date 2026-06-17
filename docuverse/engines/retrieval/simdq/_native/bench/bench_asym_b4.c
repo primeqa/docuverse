@@ -6,6 +6,7 @@
 #include "simdq_kernels_asym_b4.h"
 #include "simdq_pack.h"
 #include "simdq_common.h"
+#include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -31,20 +32,20 @@ int main(int argc, char **argv) {
     for (size_t w = 0; w < 768; w++) q[w] = ((float)rand() / RAND_MAX) - 0.5f;
 
     float out_s[256]; int64_t out_i[256];
-    scan_asym_b4_d768_topk(codes, n, q, K, out_s, out_i);
+    scan_asym_b4_d768_topk_parallel(codes, n, q, K, out_s, out_i);
 
     double tmin = 1e30;
     for (int r = 0; r < reps; r++) {
         double t0 = now();
-        scan_asym_b4_d768_topk(codes, n, q, K, out_s, out_i);
+        scan_asym_b4_d768_topk_parallel(codes, n, q, K, out_s, out_i);
         double dt = now() - t0;
         if (dt < tmin) tmin = dt;
     }
     double cmps = (double)n / tmin;
     double bytes = (double)n * d / 2;
     double gbs = bytes / tmin / 1e9;
-    printf("kernel=%s n=%zu K=%d reps=%d  best=%.3fms  cmp/s=%.2fM  GB/s=%.1f  top1=%lld score=%f\n",
-           ASYM_B4_KERNEL_NAME, n, K, reps, tmin * 1e3,
+    printf("kernel=%s threads=%d n=%zu K=%d reps=%d  best=%.3fms  cmp/s=%.2fM  GB/s=%.1f  top1=%lld score=%f\n",
+           ASYM_B4_KERNEL_NAME, omp_get_max_threads(), n, K, reps, tmin * 1e3,
            cmps / 1e6, gbs, (long long)out_i[0], out_s[0]);
     free(codes); free(scales);
     return 0;
