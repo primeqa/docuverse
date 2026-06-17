@@ -27,22 +27,7 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
             self.num_devices = 0
         else:
             self.num_devices = torch.cuda.device_count()
-        dmf_loaded = False
-        if get_param(kwargs, 'from_dmf', None) is not None:
-            model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
-            dmf_loaded = True
-
-        # from sentence_transformers import SentenceTransformer
-        try:
-            self.create_model(model_or_directory_name=model_or_directory_name, device=device, batch_size=batch_size, **kwargs)
-        except Exception as e:
-            # Try once more, from dmf
-            if not dmf_loaded:
-                model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
-                self.create_model(model_or_directory_name=model_or_directory_name, device=device)
-            else:
-                print(f"Model not found: {model_or_directory_name}")
-                raise RuntimeError(f"Model not found: {model_or_directory_name}")
+        self.create_model(model_or_directory_name=model_or_directory_name, device=device, batch_size=batch_size, **kwargs)
         print('=== done initializing model')
 
     def create_model(self, model_or_directory_name: str = None, device: str = "cpu", batch_size=128, **kwargs):

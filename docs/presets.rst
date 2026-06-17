@@ -46,6 +46,16 @@ Preset name        Backend / variant
 ``lancedb``         LanceDB, dense embeddings.
 ================== ==========================================================
 
+.. note::
+
+   ChromaDB is dense-only in this project. The Python ``chromadb`` package
+   on PyPI gates sparse vector indexing behind a ChromaCloud-only mode —
+   ``PersistentClient`` rejects schemas that declare a
+   ``SparseVectorIndexConfig`` with
+   ``"Sparse vector indexing is not enabled in local"``. Use the Milvus
+   variants (``milvus-bm25``, ``milvus-splade``, ``milvus-hybrid``) for
+   BM25, SPLADE, or hybrid retrieval.
+
 Override merge order
 --------------------
 

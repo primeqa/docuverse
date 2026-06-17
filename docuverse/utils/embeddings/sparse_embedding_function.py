@@ -10,7 +10,7 @@ from typing import Union, List, Dict
 
 # from triton.language.extra.cuda import num_threads
 
-from docuverse.utils import get_param, get_config_dir
+from docuverse.utils import get_param
 from docuverse.utils.embeddings.embedding_function import EmbeddingFunction
 from transformers import AutoModelForMaskedLM, AutoTokenizer
 import torch
@@ -159,22 +159,7 @@ class SparseEmbeddingFunction(EmbeddingFunction):
             self.num_devices = 0
         else:
             self.num_devices = torch.cuda.device_count()
-        dmf_loaded = False
-        if get_param(kwargs, 'from_dmf', None) is not None:
-            model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
-            dmf_loaded = True
-
-        # from sentence_transformers import SentenceTransformer
-        try:
-            self.create_model(model_or_directory_name=model_or_directory_name, device=device, **kwargs)
-        except Exception as e:
-            # Try once more, from dmf
-            if not dmf_loaded:
-                model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
-                self.create_model(model_or_directory_name=model_or_directory_name, device=device)
-            else:
-                print(f"Model not found: {model_or_directory_name}")
-                raise RuntimeError(f"Model not found: {model_or_directory_name}")
+        self.create_model(model_or_directory_name=model_or_directory_name, device=device, **kwargs)
         print('=== done initializing model')
 
     @property
@@ -183,6 +168,7 @@ class SparseEmbeddingFunction(EmbeddingFunction):
 
 
     def create_model(self, model_or_directory_name:str=None, device:str="cpu", **kwargs):
+        kwargs.pop('torch_compile', None)
         self.model = SparseSentenceTransformer(model_or_directory_name, device,
                                                torch_compile=self.torch_compile, **kwargs)
 

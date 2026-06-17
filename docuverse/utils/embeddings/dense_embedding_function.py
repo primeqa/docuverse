@@ -42,30 +42,9 @@ class DenseEmbeddingFunction(EmbeddingFunction):
 
         self.pqa = False
         self.emb_pool = None
-        dmf_loaded = False
-        if get_param(kwargs, 'from_dmf', None) is not None:
-            model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
-            dmf_loaded = True
 
-        model_loaded = False
-        try:
-            self.create_model(model_or_directory_name, device,
-                              attn_implementation=get_param(kwargs, 'attn_implementation', "sdpa"))
-            model_loaded = True
-        except Exception as e:
-            raise e
-
-        if dmf_loaded and not model_loaded:
-            print(f"Model not found in DMF: {model_or_directory_name}")
-            raise RuntimeError(f"Model not found in DMF: {model_or_directory_name}")
-
-        if not model_loaded:
-            try:
-                model_or_directory_name = self.pull_from_dmf(model_or_directory_name)
-                self.create_model(model_or_directory_name, device)
-            except Exception as e:
-                print(f"Model not found: {model_or_directory_name}")
-                raise RuntimeError(f"Model not found: {model_or_directory_name}")
+        self.create_model(model_or_directory_name, device,
+                          attn_implementation=get_param(kwargs, 'attn_implementation', "sdpa"))
 
         print('=== done initializing model')
 

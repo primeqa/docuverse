@@ -186,6 +186,14 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
+    sentence_segmenter: Optional[str] = field(
+        default="pyizumo",
+        metadata={
+            "help": "Backend used for sentence/token segmentation when aligned_on_sentences=True. "
+                    "One of {'pyizumo', 'spacy'}."
+        }
+    )
+
     tile_overlap: Optional[int] = field(
         default=None,
         metadata={
@@ -884,6 +892,15 @@ class DocUVerseConfig(GenericArguments):
             self.config = self.read_configs(config, parent=parent)
 
     def read_dict(self, kwargs):
+        known = set()
+        for dc in (RetrievalArguments, RerankerArguments, EvaluationArguments, EngineArguments):
+            known.update(dc.__dataclass_fields__.keys())
+        unknown = sorted(k for k in kwargs if k not in known)
+        if unknown:
+            print(
+                f"WARNING: ignoring unknown config key(s): {', '.join(unknown)}. "
+                f"Check spelling against the documented config fields."
+            )
         self._process_params(self.params.parse_dict, kwargs, allow_extra_keys=True)
 
     def read_args(self):
