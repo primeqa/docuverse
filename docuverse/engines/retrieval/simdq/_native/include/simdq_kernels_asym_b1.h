@@ -5,7 +5,7 @@
 // Score: s_i = sum_w q'[w] * v_i[w]   where v_i[w] in {-1, +1}.
 //
 // Per-dim inner loop expands 8 packed bits into 8 ±1 floats and FMAs them
-// against q'[w] broadcast. Per-LANES-codes block, 8/16 codes' partial
+// against q'[w] broadcast. Per-ASYM_B1_LANES-codes block, 8/16 codes' partial
 // scores are accumulated; per-block we offer them to a top-K heap.
 
 #pragma once

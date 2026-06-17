@@ -9,7 +9,7 @@
 
 #pragma once
 
-#ifdef HAMMING_TOPK_KERNEL_NAME
+#ifdef KERNEL_NAME
 #  error "simdq_kernels_hamming.h and simdq_kernels_hamming_topk.h must not be included in the same TU"
 #endif
 
