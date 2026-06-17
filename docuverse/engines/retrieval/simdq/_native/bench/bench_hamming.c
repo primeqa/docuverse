@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
     double bytes = (double)n * WORDS * 8;
     double gbs = bytes / tmin / 1e9;
     printf("kernel=%s n=%zu K=%d reps=%d  best=%.3fms  cmp/s=%.2fM  GB/s=%.1f  top1=%lld\n",
-           KERNEL_NAME, n, K, reps, tmin * 1e3, cmps / 1e6, gbs,
+           HAMMING_TOPK_KERNEL_NAME, n, K, reps, tmin * 1e3, cmps / 1e6, gbs,
            (long long)out_i[0]);
     free(dbT);
     return 0;

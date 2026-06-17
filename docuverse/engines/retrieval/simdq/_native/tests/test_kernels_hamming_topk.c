@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifndef KERNEL_NAME
+#ifndef HAMMING_TOPK_KERNEL_NAME
 #error "tests need at least AVX2"
 #endif
 
@@ -155,7 +155,7 @@ static void test_topk_threaded(void) {
 
 int main(void) {
     srand(98765);
-    printf("kernel path: %s\n", KERNEL_NAME);
+    printf("kernel path: %s\n", HAMMING_TOPK_KERNEL_NAME);
     test_topk_K_eq_1();
     test_topk_planted();
     test_topk_random();

@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <math.h>
 
-#ifndef ASYM_KERNEL_NAME
+#ifndef ASYM_B4_KERNEL_NAME
 #error "tests need at least AVX2"
 #endif
 
@@ -84,7 +84,7 @@ static void test_planted_b4(void) {
 
 int main(void) {
     srand(9999);
-    printf("asym b4 kernel path: %s\n", ASYM_KERNEL_NAME);
+    printf("asym b4 kernel path: %s\n", ASYM_B4_KERNEL_NAME);
     test_random_b4();
     test_planted_b4();
     if (failures) { printf("%d FAILURE(S)\n", failures); return 1; }

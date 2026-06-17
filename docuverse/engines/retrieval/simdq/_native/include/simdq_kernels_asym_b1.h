@@ -16,11 +16,11 @@
 #include <math.h>
 #include <stdint.h>
 
-#define ASYM_D 768
+#define ASYM_B1_D 768
 
 #if defined(__AVX512F__)
-#define ASYM_KERNEL_NAME "AVX512F"
-#define ASYM_LANES 16     // floats per AVX-512 register; 16 codes per block
+#define ASYM_B1_KERNEL_NAME "AVX512F"
+#define ASYM_B1_LANES 16     // floats per AVX-512 register; 16 codes per block
 
 /*
  * Single-shard top-K asymmetric b=1 scan over codes [0, N). Inner loop:
@@ -43,9 +43,9 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
     simdq_topk_init(&heap, K, hkeys, hidxs);
 
     // Process 16 codes at a time; we need 2 bytes per dim (16 / 8).
-    for (size_t i0 = 0; i0 + ASYM_LANES <= N; i0 += ASYM_LANES) {
+    for (size_t i0 = 0; i0 + ASYM_B1_LANES <= N; i0 += ASYM_B1_LANES) {
         __m512 acc = _mm512_setzero_ps();
-        for (size_t w = 0; w < ASYM_D; w++) {
+        for (size_t w = 0; w < ASYM_B1_D; w++) {
             // 2 bytes from this dim's row, holding codes [i0, i0+16)
             uint16_t bits = ((uint16_t)codes[w * row_bytes + (i0 >> 3) + 1] << 8)
                           |  (uint16_t)codes[w * row_bytes + (i0 >> 3)];
@@ -62,7 +62,7 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
         float sc[16] __attribute__((aligned(64)));
         _mm512_store_ps(sc, acc);
         int64_t thr = simdq_topk_threshold(&heap);
-        for (int l = 0; l < ASYM_LANES; l++) {
+        for (int l = 0; l < ASYM_B1_LANES; l++) {
             // negate to convert top-largest into top-smallest
             int64_t neg = -(int64_t)(sc[l] * (float)(1 << 20));   // fixed-point key
             if (neg < thr) {
@@ -72,10 +72,10 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
         }
     }
     // tail: scalar
-    size_t i = N - (N % ASYM_LANES);
+    size_t i = N - (N % ASYM_B1_LANES);
     for (; i < N; i++) {
         float s = 0.0f;
-        for (size_t w = 0; w < ASYM_D; w++) {
+        for (size_t w = 0; w < ASYM_B1_D; w++) {
             int8_t v = (codes[w * row_bytes + (i >> 3)] & (1u << (i & 7))) ? 1 : -1;
             s += q[w] * (float)v;
         }
@@ -93,8 +93,8 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
 }
 
 #elif defined(__AVX2__) && defined(__FMA__)
-#define ASYM_KERNEL_NAME "AVX2-FMA"
-#define ASYM_LANES 8
+#define ASYM_B1_KERNEL_NAME "AVX2-FMA"
+#define ASYM_B1_LANES 8
 
 static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
                                           const float *q, int K,
@@ -105,9 +105,9 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
     simdq_topk_t heap;
     simdq_topk_init(&heap, K, hkeys, hidxs);
 
-    for (size_t i0 = 0; i0 + ASYM_LANES <= N; i0 += ASYM_LANES) {
+    for (size_t i0 = 0; i0 + ASYM_B1_LANES <= N; i0 += ASYM_B1_LANES) {
         __m256 acc = _mm256_setzero_ps();
-        for (size_t w = 0; w < ASYM_D; w++) {
+        for (size_t w = 0; w < ASYM_B1_D; w++) {
             uint8_t bits = codes[w * row_bytes + (i0 >> 3)];
             // expand 8 bits to 8 floats: +1 or -1
             float vf[8];
@@ -120,7 +120,7 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
         float sc[8] __attribute__((aligned(32)));
         _mm256_store_ps(sc, acc);
         int64_t thr = simdq_topk_threshold(&heap);
-        for (int l = 0; l < ASYM_LANES; l++) {
+        for (int l = 0; l < ASYM_B1_LANES; l++) {
             int64_t neg = -(int64_t)(sc[l] * (float)(1 << 20));
             if (neg < thr) {
                 simdq_topk_offer(&heap, neg, (int64_t)(i0 + l));
@@ -128,10 +128,10 @@ static inline void scan_asym_b1_d768_topk(const uint8_t *codes, size_t N,
             }
         }
     }
-    size_t i = N - (N % ASYM_LANES);
+    size_t i = N - (N % ASYM_B1_LANES);
     for (; i < N; i++) {
         float s = 0.0f;
-        for (size_t w = 0; w < ASYM_D; w++) {
+        for (size_t w = 0; w < ASYM_B1_D; w++) {
             int8_t v = (codes[w * row_bytes + (i >> 3)] & (1u << (i & 7))) ? 1 : -1;
             s += q[w] * (float)v;
         }

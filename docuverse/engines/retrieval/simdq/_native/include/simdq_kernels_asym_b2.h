@@ -11,14 +11,14 @@
 #include <math.h>
 #include <stdint.h>
 
-#define ASYM_D 768
+#define ASYM_B2_D 768
 
 #if defined(__AVX512F__)
-#define ASYM_KERNEL_NAME "AVX512F"
-#define ASYM_LANES 16
+#define ASYM_B2_KERNEL_NAME "AVX512F"
+#define ASYM_B2_LANES 16
 
 /*
- * Per dim w, we need ASYM_LANES=16 codes' decoded level. With b=2 and 4
+ * Per dim w, we need ASYM_B2_LANES=16 codes' decoded level. With b=2 and 4
  * codes per byte, that's 4 bytes (16 codes / 4 codes-per-byte). The 16
  * 2-bit fields are unpacked into 16 int8 values via a vpshufb-style
  * lookup, then converted to fp32 and FMA'd against q'[w] broadcast.
@@ -32,9 +32,9 @@ static inline void scan_asym_b2_d768_topk(const uint8_t *codes, size_t N,
     simdq_topk_t heap;
     simdq_topk_init(&heap, K, hkeys, hidxs);
 
-    for (size_t i0 = 0; i0 + ASYM_LANES <= N; i0 += ASYM_LANES) {
+    for (size_t i0 = 0; i0 + ASYM_B2_LANES <= N; i0 += ASYM_B2_LANES) {
         __m512 acc = _mm512_setzero_ps();
-        for (size_t w = 0; w < ASYM_D; w++) {
+        for (size_t w = 0; w < ASYM_B2_D; w++) {
             // 4 bytes from this dim row, holding 16 codes' 2-bit values
             uint32_t packed = *(const uint32_t *)(codes + w * row_bytes + (i0 >> 2));
             // unpack to 16 int8 levels via small scalar table; the
@@ -52,7 +52,7 @@ static inline void scan_asym_b2_d768_topk(const uint8_t *codes, size_t N,
         float sc[16] __attribute__((aligned(64)));
         _mm512_store_ps(sc, acc);
         int64_t thr = simdq_topk_threshold(&heap);
-        for (int l = 0; l < ASYM_LANES; l++) {
+        for (int l = 0; l < ASYM_B2_LANES; l++) {
             int64_t neg = -(int64_t)(sc[l] * (float)(1 << 20));
             if (neg < thr) {
                 simdq_topk_offer(&heap, neg, (int64_t)(i0 + l));
@@ -61,11 +61,11 @@ static inline void scan_asym_b2_d768_topk(const uint8_t *codes, size_t N,
         }
     }
     // tail
-    size_t i = N - (N % ASYM_LANES);
+    size_t i = N - (N % ASYM_B2_LANES);
     static const int8_t levels[4] = {-3, -1, 1, 3};
     for (; i < N; i++) {
         float s = 0.0f;
-        for (size_t w = 0; w < ASYM_D; w++) {
+        for (size_t w = 0; w < ASYM_B2_D; w++) {
             uint8_t byte = codes[w * row_bytes + (i >> 2)];
             int8_t v = levels[(byte >> ((i & 3) * 2)) & 0x3];
             s += q[w] * (float)v;
@@ -83,8 +83,8 @@ static inline void scan_asym_b2_d768_topk(const uint8_t *codes, size_t N,
 }
 
 #elif defined(__AVX2__) && defined(__FMA__)
-#define ASYM_KERNEL_NAME "AVX2-FMA"
-#define ASYM_LANES 8
+#define ASYM_B2_KERNEL_NAME "AVX2-FMA"
+#define ASYM_B2_LANES 8
 
 static inline void scan_asym_b2_d768_topk(const uint8_t *codes, size_t N,
                                           const float *q, int K,
@@ -96,9 +96,9 @@ static inline void scan_asym_b2_d768_topk(const uint8_t *codes, size_t N,
     simdq_topk_init(&heap, K, hkeys, hidxs);
     static const int8_t levels[4] = {-3, -1, 1, 3};
 
-    for (size_t i0 = 0; i0 + ASYM_LANES <= N; i0 += ASYM_LANES) {
+    for (size_t i0 = 0; i0 + ASYM_B2_LANES <= N; i0 += ASYM_B2_LANES) {
         __m256 acc = _mm256_setzero_ps();
-        for (size_t w = 0; w < ASYM_D; w++) {
+        for (size_t w = 0; w < ASYM_B2_D; w++) {
             // 2 bytes hold 8 codes' 2-bit values
             uint16_t packed = *(const uint16_t *)(codes + w * row_bytes + (i0 >> 2));
             float vf[8];
@@ -111,7 +111,7 @@ static inline void scan_asym_b2_d768_topk(const uint8_t *codes, size_t N,
         float sc[8] __attribute__((aligned(32)));
         _mm256_store_ps(sc, acc);
         int64_t thr = simdq_topk_threshold(&heap);
-        for (int l = 0; l < ASYM_LANES; l++) {
+        for (int l = 0; l < ASYM_B2_LANES; l++) {
             int64_t neg = -(int64_t)(sc[l] * (float)(1 << 20));
             if (neg < thr) {
                 simdq_topk_offer(&heap, neg, (int64_t)(i0 + l));
@@ -119,10 +119,10 @@ static inline void scan_asym_b2_d768_topk(const uint8_t *codes, size_t N,
             }
         }
     }
-    size_t i = N - (N % ASYM_LANES);
+    size_t i = N - (N % ASYM_B2_LANES);
     for (; i < N; i++) {
         float s = 0.0f;
-        for (size_t w = 0; w < ASYM_D; w++) {
+        for (size_t w = 0; w < ASYM_B2_D; w++) {
             uint8_t byte = codes[w * row_bytes + (i >> 2)];
             int8_t v = levels[(byte >> ((i & 3) * 2)) & 0x3];
             s += q[w] * (float)v;

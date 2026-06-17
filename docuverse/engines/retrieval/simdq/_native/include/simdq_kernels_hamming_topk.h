@@ -1,15 +1,15 @@
 // simdq_kernels_hamming_topk.h — top-K Hamming SoA scan kernels.
 //
 // Pattern: the inner SIMD loop computes per-lane distances exactly as in
-// the top-1 path. After each LANES-block, distances are stored to a small
+// the top-1 path. After each HAMMING_TOPK_LANES-block, distances are stored to a small
 // scratch array and offered to a per-shard simdq_topk_t heap. The hot
 // loop is unchanged from the top-1 kernel; the only added work is a
-// threshold compare + heap offer per LANES-block (amortized over LANES
+// threshold compare + heap offer per HAMMING_TOPK_LANES-block (amortized over HAMMING_TOPK_LANES
 // distances). For K << n this overhead is negligible.
 
 #pragma once
 
-#ifdef KERNEL_NAME
+#ifdef HAMMING_TOPK_KERNEL_NAME
 #  error "simdq_kernels_hamming.h and simdq_kernels_hamming_topk.h must not be included in the same TU"
 #endif
 
@@ -33,8 +33,8 @@ static inline size_t ref_scan_soa_top1(const uint64_t *dbT, size_t n,
 }
 
 #if defined(__AVX512VPOPCNTDQ__)
-#define KERNEL_NAME "AVX512-VPOPCNTDQ"
-#define LANES 8
+#define HAMMING_TOPK_KERNEL_NAME "AVX512-VPOPCNTDQ"
+#define HAMMING_TOPK_LANES 8
 
 /*
  * Single-query top-K Hamming SoA scan over codes [i0, i1). Maintains a
@@ -53,17 +53,17 @@ static inline void scan_shard_topk(const uint64_t *dbT, size_t n,
     simdq_topk_init(&heap, K, hkeys, hidxs);
 
     size_t i = i0;
-    for (; i + LANES <= i1; i += LANES) {
+    for (; i + HAMMING_TOPK_LANES <= i1; i += HAMMING_TOPK_LANES) {
         __m512i acc = _mm512_setzero_si512();
         for (int w = 0; w < WORDS; w++) {
             __m512i d = _mm512_loadu_si512(dbT + (size_t)w * n + i);
             acc = _mm512_add_epi64(acc,
                   _mm512_popcnt_epi64(_mm512_xor_si512(d, _mm512_set1_epi64(q[w]))));
         }
-        int64_t d8[LANES];
+        int64_t d8[HAMMING_TOPK_LANES];
         _mm512_storeu_si512(d8, acc);
         int64_t thr = simdq_topk_threshold(&heap);
-        for (int l = 0; l < LANES; l++)
+        for (int l = 0; l < HAMMING_TOPK_LANES; l++)
             if (d8[l] < thr) {
                 simdq_topk_offer(&heap, d8[l], (int64_t)(i + l));
                 thr = simdq_topk_threshold(&heap);
@@ -78,8 +78,8 @@ static inline void scan_shard_topk(const uint64_t *dbT, size_t n,
 }
 
 #elif defined(__AVX2__)
-#define KERNEL_NAME "AVX2-nibbleLUT"
-#define LANES 4
+#define HAMMING_TOPK_KERNEL_NAME "AVX2-nibbleLUT"
+#define HAMMING_TOPK_LANES 4
 
 static inline __m256i popcnt_bytes_avx2(__m256i x, __m256i lut, __m256i m0f) {
     __m256i lo = _mm256_and_si256(x, m0f);
@@ -104,7 +104,7 @@ static inline void scan_shard_topk(const uint64_t *dbT, size_t n,
     const __m256i zero = _mm256_setzero_si256();
 
     size_t i = i0;
-    for (; i + LANES <= i1; i += LANES) {
+    for (; i + HAMMING_TOPK_LANES <= i1; i += HAMMING_TOPK_LANES) {
         __m256i accb = zero;
         for (int w = 0; w < WORDS; w++) {
             __m256i d = _mm256_loadu_si256(
@@ -116,7 +116,7 @@ static inline void scan_shard_topk(const uint64_t *dbT, size_t n,
         int64_t d4[4];
         _mm256_storeu_si256((__m256i *)d4, sums);
         int64_t thr = simdq_topk_threshold(&heap);
-        for (int l = 0; l < LANES; l++)
+        for (int l = 0; l < HAMMING_TOPK_LANES; l++)
             if (d4[l] < thr) {
                 simdq_topk_offer(&heap, d4[l], (int64_t)(i + l));
                 thr = simdq_topk_threshold(&heap);
@@ -131,7 +131,7 @@ static inline void scan_shard_topk(const uint64_t *dbT, size_t n,
 }
 #endif
 
-#if defined(KERNEL_NAME) && defined(_OPENMP)
+#if defined(HAMMING_TOPK_KERNEL_NAME) && defined(_OPENMP)
 #include <omp.h>
 
 /*

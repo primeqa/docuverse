@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef ASYM_KERNEL_NAME
+#ifndef ASYM_B1_KERNEL_NAME
 #error "tests need at least AVX2 (-march=native or -mavx2)"
 #endif
 
@@ -93,7 +93,7 @@ static void test_planted_b1(void) {
 
 int main(void) {
     srand(7777);
-    printf("asym kernel path: %s\n", ASYM_KERNEL_NAME);
+    printf("asym kernel path: %s\n", ASYM_B1_KERNEL_NAME);
     test_random_b1();
     test_planted_b1();
     if (failures) { printf("%d FAILURE(S)\n", failures); return 1; }
