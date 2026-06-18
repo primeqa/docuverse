@@ -11,13 +11,31 @@ Spec section 6 ("Projection") allows two flavors:
 The "halve dims, double bits" comparison in the spec uses random_orthogonal
 with d = D/2; the recipe sweep in Plan 3 will exercise both.
 
-v1 supports d in {D, D/2} only — the kernels are templated on D=768 and
-the index format is dim-aware.  Other (D, d) combinations are rejected
-here so they fail fast rather than producing a malformed index downstream.
+Supported encoder dims D are {384, 768, 1024, 1536}; reduced dims d must be
+either D or D/2.  The family axis (asymmetric vs hamming) is handled in
+simdq_index.py, not here.
 """
 from __future__ import annotations
 
 import numpy as np
+
+SUPPORTED_D = (384, 768, 1024, 1536)
+SUPPORTED_d = (192, 384, 512, 768, 1024, 1536)
+
+
+def validate_D_d(D: int, d: int) -> None:
+    if D not in SUPPORTED_D:
+        raise ValueError(
+            f"simdq: D must be one of {SUPPORTED_D}; got {D}"
+        )
+    if d not in SUPPORTED_d:
+        raise ValueError(
+            f"simdq: d must be one of {SUPPORTED_d}; got {d}"
+        )
+    if d not in (D, D // 2):
+        raise ValueError(
+            f"simdq: for D={D}, d must be {D} or {D // 2}; got {d}"
+        )
 
 
 def identity(D: int) -> np.ndarray:

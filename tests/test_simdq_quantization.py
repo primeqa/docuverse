@@ -77,6 +77,6 @@ def test_pack_rejects_bad_b():
 
 
 def test_pack_rejects_bad_dim():
-    Y = _gaussian(8, 384, seed=5)  # D != 768 -> rejected in Plan 2
+    Y = _gaussian(8, 500, seed=5)  # 500 not in SUPPORTED_d -> rejected
     with pytest.raises(ValueError):
         fit_scales(Y)

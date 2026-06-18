@@ -4,23 +4,22 @@ C entry points return raw `bytes` objects to avoid a numpy build-time
 dependency in the extension. This module wraps them into typed numpy
 arrays and validates input shapes before crossing the FFI boundary.
 
-D is fixed at 768 in Plan 2 (the kernel template is templated on it);
-inputs with a different second axis are rejected here.
+Supported reduced dims d are {192, 384, 512, 768, 1024, 1536} (SUPPORTED_d
+from projection.py); inputs with other second-axis sizes are rejected here.
 """
 from __future__ import annotations
 
 import numpy as np
 
 from docuverse.engines.retrieval.simdq import _simdq_native as _native
-
-D_FIXED = _native.D       # 768 in Plan 2; Plan 3 widens this
+from docuverse.engines.retrieval.simdq.projection import SUPPORTED_d
 
 
 def _check_Y(Y: np.ndarray) -> np.ndarray:
-    if Y.ndim != 2 or Y.shape[1] != D_FIXED:
+    if Y.ndim != 2 or Y.shape[1] not in SUPPORTED_d:
         raise ValueError(
-            f"simdq quantization: Y must have shape (N, {D_FIXED}); "
-            f"got shape {Y.shape}"
+            f"simdq quantization: Y must have shape (N, d) with d in "
+            f"{SUPPORTED_d}; got shape {Y.shape}"
         )
     if Y.dtype != np.float32:
         Y = Y.astype(np.float32, copy=False)
@@ -67,6 +66,22 @@ def pack(Y: np.ndarray, scales: np.ndarray, b: int) -> np.ndarray:
         raw = _native.pack_b2(Y, scales)
     else:
         raw = _native.pack_b4(Y, scales)
+    return np.frombuffer(raw, dtype=np.uint8)
+
+
+def pack_hamming(Y: np.ndarray) -> np.ndarray:
+    """Sign-quantize Y to 1-bit AoS Hamming codes.
+
+    Returns a uint8 numpy array of length N * d / 8 bytes.
+    Bit ordering: codes[i*words + w] holds bits 64*w .. 64*w+63 of vector i,
+    with bit b set iff Y[i, w*64 + b] >= 0.
+    """
+    Y = _check_Y(Y)
+    if Y.shape[1] % 64 != 0:
+        raise ValueError(
+            f"simdq pack_hamming: d must be a multiple of 64; got {Y.shape[1]}"
+        )
+    raw = _native.pack_hamming(Y)
     return np.frombuffer(raw, dtype=np.uint8)
 
 
