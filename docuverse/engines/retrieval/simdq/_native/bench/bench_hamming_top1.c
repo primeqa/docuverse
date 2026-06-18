@@ -23,14 +23,16 @@
 #endif
 #include <omp.h>
 
+#define WORDS 12  // D=768 bits
+
 int main(int argc, char **argv) {
     size_t n; int reps;
     parse_args(argc, argv, &n, &reps);
     int nthreads = omp_get_max_threads();
 
-    uint64_t *dbT = alloc_codes(n);
+    uint64_t *dbT = alloc_codes(n, /*words=*/WORDS);
     if (!dbT) return 1;
-    fill_soa_parallel(dbT, n);
+    fill_soa_parallel(dbT, n, /*words=*/WORDS);
     uint64_t qs[NQ][WORDS];
     srand(7);
     for (int j = 0; j < NQ; j++)
@@ -40,7 +42,7 @@ int main(int argc, char **argv) {
     double tbest = 1e18;
     for (int r = 0; r < reps; r++) {
         double t0 = now();
-        scan_batch_parallel(dbT, n, qs, gd, gi);
+        scan_batch_parallel(dbT, n, /*words=*/WORDS, (const uint64_t *)qs, gd, gi);
         double dt = now() - t0;
         if (dt < tbest) tbest = dt;
     }

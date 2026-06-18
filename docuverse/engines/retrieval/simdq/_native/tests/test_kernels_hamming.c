@@ -26,6 +26,8 @@
 #error "tests need at least AVX2 (build with -march=native or -mavx2 -mpopcnt)"
 #endif
 
+#define WORDS 12  // D=768 bits (local constant; simdq_common.h is now WORDS-free)
+
 static int failures;
 
 #define CHECK(cond, ...) do { \
@@ -111,12 +113,12 @@ static const size_t SIZES[] = {1, 2, 7, 8, 9, 16, 17, 100, 1000, 1031};
 
 static void test_hamming_soa(void) {
     size_t n = 129;
-    uint64_t *dbT = alloc_codes(n);
+    uint64_t *dbT = alloc_codes(n, WORDS);
     uint64_t q[WORDS];
     fill_rnd64(dbT, n * WORDS);
     fill_rnd64(q, WORDS);
     for (size_t k = 0; k < n; k++)
-        CHECK(hamming_soa(dbT, n, k, q) == ref_dist_soa(dbT, n, k, q),
+        CHECK(hamming_soa(dbT, n, WORDS, k, q) == ref_dist_soa(dbT, n, k, q),
               "k=%zu", k);
     free(dbT);
 }
@@ -124,7 +126,7 @@ static void test_hamming_soa(void) {
 static void test_scan_scalar_aos(void) {
     for (size_t s = 0; s < NSIZES; s++) {
         size_t n = SIZES[s];
-        uint64_t *db = alloc_codes(n);
+        uint64_t *db = alloc_codes(n, WORDS);
         uint64_t q[WORDS];
         fill_rnd64(q, WORDS);
 
@@ -133,14 +135,14 @@ static void test_scan_scalar_aos(void) {
         fill_rnd64(db, n * WORDS);
         int rd;
         size_t ri = ref_scan_aos(db, n, q, &rd);
-        CHECK(scan_scalar_aos(db, n, q) == ri, "n=%zu", n);
+        CHECK(scan_scalar_aos(db, n, WORDS, q) == ri, "n=%zu", n);
 
         // planted unique best at the front, middle, and back
         size_t plants[3] = {0, n / 2, n - 1};
         for (int p = 0; p < 3; p++) {
             fill_rnd64(db, n * WORDS);
             plant_aos(db, plants[p], q, p);
-            CHECK(scan_scalar_aos(db, n, q) == plants[p],
+            CHECK(scan_scalar_aos(db, n, WORDS, q) == plants[p],
                   "n=%zu pos=%zu", n, plants[p]);
         }
         free(db);
@@ -162,7 +164,7 @@ static void test_min_lanes8(void) {
 static void test_scan_soa512(void) {
     for (size_t s = 0; s < NSIZES; s++) {
         size_t n = SIZES[s];
-        uint64_t *dbT = alloc_codes(n);
+        uint64_t *dbT = alloc_codes(n, WORDS);
         uint64_t q[WORDS];
         fill_rnd64(q, WORDS);
 
@@ -170,7 +172,7 @@ static void test_scan_soa512(void) {
         fill_rnd64(dbT, n * WORDS);
         int rd;
         ref_scan_soa(dbT, n, 0, n, q, &rd);
-        size_t idx = scan_soa512(dbT, n, q);
+        size_t idx = scan_soa512(dbT, n, WORDS, q);
         CHECK(idx < n && ref_dist_soa(dbT, n, idx, q) == rd,
               "n=%zu idx=%zu", n, idx);
 
@@ -180,7 +182,7 @@ static void test_scan_soa512(void) {
         for (int p = 0; p < 3; p++) {
             fill_rnd64(dbT, n * WORDS);
             plant_soa(dbT, n, plants[p], q, p);
-            CHECK(scan_soa512(dbT, n, q) == plants[p],
+            CHECK(scan_soa512(dbT, n, WORDS, q) == plants[p],
                   "n=%zu pos=%zu", n, plants[p]);
         }
         free(dbT);
@@ -210,7 +212,7 @@ static void test_popcnt_bytes(void) {
 static void test_scan_shard_full(void) {
     for (size_t s = 0; s < NSIZES; s++) {
         size_t n = SIZES[s];
-        uint64_t *dbT = alloc_codes(n);
+        uint64_t *dbT = alloc_codes(n, WORDS);
         uint64_t qs[NQ][WORDS];
         fill_rnd64(dbT, n * WORDS);
         fill_rnd64(&qs[0][0], NQ * WORDS);
@@ -223,7 +225,7 @@ static void test_scan_shard_full(void) {
                 plant_soa(dbT, n, (size_t)j * n / NQ, qs[j], j % 4);
 
         int64_t bd[NQ], bi[NQ];
-        scan_shard(dbT, n, 0, n, qs, bd, bi);
+        scan_shard(dbT, n, WORDS, 0, n, (const uint64_t *)qs, bd, bi);
         for (int j = 0; j < NQ; j++) {
             int rd;
             ref_scan_soa(dbT, n, 0, n, qs[j], &rd);
@@ -242,7 +244,7 @@ static void test_scan_shard_full(void) {
         // whenever n % LANES != 0
         fill_rnd64(dbT, n * WORDS);
         plant_soa(dbT, n, n - 1, qs[2], 1);
-        scan_shard(dbT, n, 0, n, qs, bd, bi);
+        scan_shard(dbT, n, WORDS, 0, n, (const uint64_t *)qs, bd, bi);
         CHECK(bi[2] == (int64_t)(n - 1) && bd[2] == 1,
               "n=%zu tail plant idx=%lld d=%lld",
               n, (long long)bi[2], (long long)bd[2]);
@@ -252,7 +254,7 @@ static void test_scan_shard_full(void) {
 
 static void test_scan_shard_ranges(void) {
     size_t n = 1000;
-    uint64_t *dbT = alloc_codes(n);
+    uint64_t *dbT = alloc_codes(n, WORDS);
     uint64_t qs[NQ][WORDS];
     fill_rnd64(dbT, n * WORDS);
     fill_rnd64(&qs[0][0], NQ * WORDS);
@@ -268,7 +270,7 @@ static void test_scan_shard_ranges(void) {
     for (int j = 0; j < NQ; j++) { bd[j] = INT64_MAX; bi[j] = 0; }
     for (size_t c = 0; c + 1 < ncuts; c++) {
         int64_t ld[NQ], li[NQ];
-        scan_shard(dbT, n, cuts[c], cuts[c + 1], qs, ld, li);
+        scan_shard(dbT, n, WORDS, cuts[c], cuts[c + 1], (const uint64_t *)qs, ld, li);
         for (int j = 0; j < NQ; j++) {
             int rd;
             ref_scan_soa(dbT, n, cuts[c], cuts[c + 1], qs[j], &rd);
@@ -288,7 +290,7 @@ static void test_scan_shard_ranges(void) {
 
     // empty range: bests must stay at the sentinel
     int64_t ed[NQ], ei[NQ];
-    scan_shard(dbT, n, 500, 500, qs, ed, ei);
+    scan_shard(dbT, n, WORDS, 500, 500, (const uint64_t *)qs, ed, ei);
     for (int j = 0; j < NQ; j++)
         CHECK(ed[j] == INT64_MAX, "empty range j=%d d=%lld",
               j, (long long)ed[j]);
@@ -298,7 +300,7 @@ static void test_scan_shard_ranges(void) {
 #ifdef _OPENMP
 static void test_scan_batch_parallel(void) {
     size_t n = 10000;
-    uint64_t *dbT = alloc_codes(n);
+    uint64_t *dbT = alloc_codes(n, WORDS);
     uint64_t qs[NQ][WORDS];
     fill_rnd64(dbT, n * WORDS);
     fill_rnd64(&qs[0][0], NQ * WORDS);
@@ -310,7 +312,7 @@ static void test_scan_batch_parallel(void) {
     for (size_t t = 0; t < sizeof tcs / sizeof *tcs; t++) {
         omp_set_num_threads(tcs[t]);
         int64_t gd[NQ], gi[NQ];
-        scan_batch_parallel(dbT, n, qs, gd, gi);
+        scan_batch_parallel(dbT, n, WORDS, (const uint64_t *)qs, gd, gi);
         for (int j = 0; j < NQ; j++)
             CHECK(gd[j] == j % 4 && gi[j] == (int64_t)((size_t)j * n / NQ),
                   "threads=%d j=%d d=%lld idx=%lld",
@@ -320,10 +322,10 @@ static void test_scan_batch_parallel(void) {
 
     // n far below the thread count: most threads get an empty shard
     size_t n2 = 5;
-    uint64_t *small = alloc_codes(n2);
+    uint64_t *small = alloc_codes(n2, WORDS);
     fill_rnd64(small, n2 * WORDS);
     int64_t gd[NQ], gi[NQ];
-    scan_batch_parallel(small, n2, qs, gd, gi);
+    scan_batch_parallel(small, n2, WORDS, (const uint64_t *)qs, gd, gi);
     for (int j = 0; j < NQ; j++) {
         int rd;
         ref_scan_soa(small, n2, 0, n2, qs[j], &rd);
@@ -338,7 +340,7 @@ static void test_scan_batch_parallel(void) {
 
 static void test_ties_and_uniform(void) {
     size_t n = 100;
-    uint64_t *dbT = alloc_codes(n);
+    uint64_t *dbT = alloc_codes(n, WORDS);
     uint64_t qs[NQ][WORDS];
     fill_rnd64(&qs[0][0], NQ * WORDS);
     const uint64_t *q = qs[0];
@@ -349,29 +351,29 @@ static void test_ties_and_uniform(void) {
     plant_soa(dbT, n, 3, q, 0);
     plant_soa(dbT, n, 77, q, 0);
 #ifdef __AVX512VPOPCNTDQ__
-    size_t ti = scan_soa512(dbT, n, q);
+    size_t ti = scan_soa512(dbT, n, WORDS, q);
     CHECK(ti == 3 || ti == 77, "tie idx=%zu", ti);
 #endif
     uint64_t tq[NQ][WORDS];
     for (int j = 0; j < NQ; j++) memcpy(tq[j], q, WORDS * 8);
     int64_t bd[NQ], bi[NQ];
-    scan_shard(dbT, n, 0, n, tq, bd, bi);
+    scan_shard(dbT, n, WORDS, 0, n, (const uint64_t *)tq, bd, bi);
     for (int j = 0; j < NQ; j++)
         CHECK(bd[j] == 0 && (bi[j] == 3 || bi[j] == 77),
               "tie j=%d d=%lld idx=%lld", j, (long long)bd[j],
               (long long)bi[j]);
 
     // the scalar kernel is strictly first-wins even on ties
-    uint64_t *db = alloc_codes(n);
+    uint64_t *db = alloc_codes(n, WORDS);
     memset(db, 0, n * WORDS * 8);
     plant_aos(db, 3, q, 0);
     plant_aos(db, 77, q, 0);
-    CHECK(scan_scalar_aos(db, n, q) == 3, "scalar tie not first-wins");
+    CHECK(scan_scalar_aos(db, n, WORDS, q) == 3, "scalar tie not first-wins");
     free(db);
 
     // uniform all-zero db: every code is at distance popcount(q_j)
     memset(dbT, 0, n * WORDS * 8);
-    scan_shard(dbT, n, 0, n, qs, bd, bi);
+    scan_shard(dbT, n, WORDS, 0, n, (const uint64_t *)qs, bd, bi);
     for (int j = 0; j < NQ; j++) {
         int T = 0;
         for (int w = 0; w < WORDS; w++) T += __builtin_popcountll(qs[j][w]);

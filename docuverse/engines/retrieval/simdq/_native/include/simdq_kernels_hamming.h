@@ -41,7 +41,7 @@ static inline void min_lanes8(__m512i vd, __m512i vi,
 
 /*
  * Single-query vertical AVX-512 scan; processes 8 codes per iteration.
- * For each of the WORDS words, one 512-bit load fetches word w of 8
+ * For each of the `words` words, one 512-bit load fetches word w of 8
  * consecutive codes, XORs it with the broadcast query word, popcounts
  * with _mm512_popcnt_epi64, and adds into a per-lane distance accumulator
  * — no horizontal reduction and no branch in the hot loop. The running
@@ -49,7 +49,7 @@ static inline void min_lanes8(__m512i vd, __m512i vi,
  * moves, reduced to scalar after the loop; the n % 8 tail runs scalar.
  * Returns the index of the closest code (top-1).
  */
-static inline size_t scan_soa512(const uint64_t *dbT, size_t n,
+static inline size_t scan_soa512(const uint64_t *dbT, size_t n, size_t words,
                                  const uint64_t *q) {
     __m512i bestd = _mm512_set1_epi64(INT64_MAX);
     __m512i besti = _mm512_setzero_si512();
@@ -57,8 +57,8 @@ static inline size_t scan_soa512(const uint64_t *dbT, size_t n,
     const __m512i step = _mm512_set1_epi64(LANES);
     for (size_t i = 0; i + LANES <= n; i += LANES) {
         __m512i acc = _mm512_setzero_si512();
-        for (int w = 0; w < WORDS; w++) {
-            __m512i d = _mm512_loadu_si512(dbT + (size_t)w * n + i);
+        for (size_t w = 0; w < words; w++) {
+            __m512i d = _mm512_loadu_si512(dbT + w * n + i);
             acc = _mm512_add_epi64(acc,
                   _mm512_popcnt_epi64(_mm512_xor_si512(d, _mm512_set1_epi64(q[w]))));
         }
@@ -70,7 +70,7 @@ static inline size_t scan_soa512(const uint64_t *dbT, size_t n,
     int64_t best, bi;
     min_lanes8(bestd, besti, &best, &bi);
     for (size_t k = n & ~(size_t)(LANES - 1); k < n; k++) {   // tail
-        int h = hamming_soa(dbT, n, k, q);
+        int h = hamming_soa(dbT, n, words, k, q);
         if (h < best) { best = h; bi = (int64_t)k; }
     }
     return (size_t)bi;
@@ -84,8 +84,11 @@ static inline size_t scan_soa512(const uint64_t *dbT, size_t n,
  * always n (the full database), so a shard is just an index range.
  * Writes the best distance and index per query to best_d / best_i.
  */
-static inline void scan_shard(const uint64_t *dbT, size_t n, size_t i0, size_t i1,
-                              const uint64_t qs[NQ][WORDS],
+/* qs is a flat array of NQ query codes, each `words` uint64_t.
+ * Access: query j word w -> qs[j * words + w]. */
+static inline void scan_shard(const uint64_t *dbT, size_t n, size_t words,
+                              size_t i0, size_t i1,
+                              const uint64_t *qs,
                               int64_t best_d[NQ], int64_t best_i[NQ]) {
     __m512i bd[NQ], bi[NQ];
     for (int j = 0; j < NQ; j++) {
@@ -99,12 +102,12 @@ static inline void scan_shard(const uint64_t *dbT, size_t n, size_t i0, size_t i
     for (; i + LANES <= i1; i += LANES) {
         __m512i acc[NQ];
         for (int j = 0; j < NQ; j++) acc[j] = _mm512_setzero_si512();
-        for (int w = 0; w < WORDS; w++) {
-            __m512i d = _mm512_loadu_si512(dbT + (size_t)w * n + i);  // one load,
-            for (int j = 0; j < NQ; j++)                              // NQ uses
+        for (size_t w = 0; w < words; w++) {
+            __m512i d = _mm512_loadu_si512(dbT + w * n + i);  // one load,
+            for (int j = 0; j < NQ; j++)                      // NQ uses
                 acc[j] = _mm512_add_epi64(acc[j],
                          _mm512_popcnt_epi64(_mm512_xor_si512(d,
-                             _mm512_set1_epi64(qs[j][w]))));
+                             _mm512_set1_epi64(qs[j * words + w]))));
         }
         for (int j = 0; j < NQ; j++) {
             __mmask8 lt = _mm512_cmplt_epi64_mask(acc[j], bd[j]);
@@ -116,7 +119,7 @@ static inline void scan_shard(const uint64_t *dbT, size_t n, size_t i0, size_t i
     for (int j = 0; j < NQ; j++) {
         min_lanes8(bd[j], bi[j], &best_d[j], &best_i[j]);
         for (size_t k = i; k < i1; k++) {                     // tail
-            int h = hamming_soa(dbT, n, k, qs[j]);
+            int h = hamming_soa(dbT, n, words, k, qs + j * words);
             if (h < best_d[j]) { best_d[j] = h; best_i[j] = (int64_t)k; }
         }
     }
@@ -141,16 +144,19 @@ static inline __m256i popcnt_bytes(__m256i x, __m256i lut, __m256i m0f) {
 
 /*
  * Batched AVX2 scan of codes [i0, i1) for NQ queries; 4 codes (256 bits)
- * per iteration. Distances accumulate as per-byte counts across all WORDS
- * words (at most 12 * 8 = 96 per byte, < 255, so the u8 accumulators
- * cannot overflow), then one vpsadbw per block reduces the byte counts to
- * 4 u64 distances. Best tracking per lane is scalar — there are no cheap
- * masked moves before AVX-512. Like the AVX-512 variant, each database
- * load is reused for all NQ queries.
+ * per iteration. Distances accumulate as per-byte counts across all `words`
+ * words (at most words * 8 ones per byte; <= 24*8=192 < 255, so the u8
+ * accumulators cannot overflow for words <= 23), then one vpsadbw per block
+ * reduces the byte counts to 4 u64 distances. Best tracking per lane is
+ * scalar — there are no cheap masked moves before AVX-512. Like the
+ * AVX-512 variant, each database load is reused for all NQ queries.
  * Writes the best distance and index per query to best_d / best_i.
  */
-static inline void scan_shard(const uint64_t *dbT, size_t n, size_t i0, size_t i1,
-                              const uint64_t qs[NQ][WORDS],
+/* qs is a flat array of NQ query codes, each `words` uint64_t.
+ * Access: query j word w -> qs[j * words + w]. */
+static inline void scan_shard(const uint64_t *dbT, size_t n, size_t words,
+                              size_t i0, size_t i1,
+                              const uint64_t *qs,
                               int64_t best_d[NQ], int64_t best_i[NQ]) {
     const __m256i lut = _mm256_setr_epi8(
         0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4,
@@ -165,14 +171,14 @@ static inline void scan_shard(const uint64_t *dbT, size_t n, size_t i0, size_t i
 
     size_t i = i0;
     for (; i + LANES <= i1; i += LANES) {
-        // byte-count accumulators: 12 words * max 8 ones per byte = 96 < 255
+        // byte-count accumulators: words * max 8 ones per byte < 255 for words <= 23
         __m256i accb[NQ];
         for (int j = 0; j < NQ; j++) accb[j] = zero;
-        for (int w = 0; w < WORDS; w++) {
+        for (size_t w = 0; w < words; w++) {
             __m256i d = _mm256_loadu_si256(
-                (const __m256i*)(dbT + (size_t)w * n + i));
+                (const __m256i*)(dbT + w * n + i));
             for (int j = 0; j < NQ; j++) {
-                __m256i x = _mm256_xor_si256(d, _mm256_set1_epi64x(qs[j][w]));
+                __m256i x = _mm256_xor_si256(d, _mm256_set1_epi64x(qs[j * words + w]));
                 accb[j] = _mm256_add_epi8(accb[j], popcnt_bytes(x, lut, m0f));
             }
         }
@@ -188,7 +194,7 @@ static inline void scan_shard(const uint64_t *dbT, size_t n, size_t i0, size_t i
         for (int l = 0; l < LANES; l++)
             if (bd[j][l] < best_d[j]) { best_d[j] = bd[j][l]; best_i[j] = bi[j][l]; }
         for (size_t k = i; k < i1; k++) {                     // tail
-            int h = hamming_soa(dbT, n, k, qs[j]);
+            int h = hamming_soa(dbT, n, words, k, qs + j * words);
             if (h < best_d[j]) { best_d[j] = h; best_i[j] = (int64_t)k; }
         }
     }
@@ -205,8 +211,9 @@ static inline void scan_shard(const uint64_t *dbT, size_t n, size_t i0, size_t i
  * into gd/gi (best distance and index per query). Resets gd/gi itself, so
  * each call is a complete top-1 search over [0, n).
  */
-static inline void scan_batch_parallel(const uint64_t *dbT, size_t n,
-                                       const uint64_t qs[NQ][WORDS],
+/* qs is a flat array of NQ query codes, each `words` uint64_t. */
+static inline void scan_batch_parallel(const uint64_t *dbT, size_t n, size_t words,
+                                       const uint64_t *qs,
                                        int64_t gd[NQ], int64_t gi[NQ]) {
     for (int j = 0; j < NQ; j++) { gd[j] = INT64_MAX; gi[j] = 0; }
     #pragma omp parallel
@@ -217,7 +224,7 @@ static inline void scan_batch_parallel(const uint64_t *dbT, size_t n,
         size_t i1 = i0 + chunk < n ? i0 + chunk : n;
         if (i0 < i1) {
             int64_t ld[NQ], li[NQ];
-            scan_shard(dbT, n, i0, i1, qs, ld, li);
+            scan_shard(dbT, n, words, i0, i1, qs, ld, li);
             #pragma omp critical
             for (int j = 0; j < NQ; j++)
                 if (ld[j] < gd[j]) { gd[j] = ld[j]; gi[j] = li[j]; }

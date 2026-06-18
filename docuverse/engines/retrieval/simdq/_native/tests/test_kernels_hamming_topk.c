@@ -11,6 +11,8 @@
 #error "tests need at least AVX2"
 #endif
 
+#define WORDS 12  // D=768 bits (local constant; simdq_common.h is now WORDS-free)
+
 static int failures;
 #define CHECK(cond, ...) do { \
     if (!(cond)) { failures++; printf("FAIL %s:%d: ", __func__, __LINE__); \
@@ -57,7 +59,7 @@ static void plant_ascending(uint64_t *dbT, size_t n, const uint64_t *q,
 static void test_topk_planted(void) {
     size_t n = 1000;
     int K = 5;
-    uint64_t *dbT = alloc_codes(n);
+    uint64_t *dbT = alloc_codes(n, WORDS);
     uint64_t q[WORDS];
     fill_rnd64(q, WORDS);
     fill_rnd64(dbT, n * WORDS);
@@ -65,7 +67,7 @@ static void test_topk_planted(void) {
     plant_ascending(dbT, n, q, pos, 5);
 
     int64_t out_d[5], out_i[5];
-    scan_shard_topk(dbT, n, 0, n, q, K, out_d, out_i);
+    scan_hamming_shard_topk(dbT, n, WORDS, 0, n, q, K, out_d, out_i);
 
     int64_t ref_d[5], ref_i[5];
     ref_topk(dbT, n, q, K, ref_d, ref_i);
@@ -81,13 +83,13 @@ static void test_topk_planted(void) {
 static void test_topk_random(void) {
     size_t n = 2000;
     int K = 10;
-    uint64_t *dbT = alloc_codes(n);
+    uint64_t *dbT = alloc_codes(n, WORDS);
     uint64_t q[WORDS];
     fill_rnd64(q, WORDS);
     fill_rnd64(dbT, n * WORDS);
 
     int64_t out_d[10], out_i[10];
-    scan_shard_topk(dbT, n, 0, n, q, K, out_d, out_i);
+    scan_hamming_shard_topk(dbT, n, WORDS, 0, n, q, K, out_d, out_i);
 
     int64_t ref_d[10], ref_i[10];
     ref_topk(dbT, n, q, K, ref_d, ref_i);
@@ -110,15 +112,15 @@ static void test_topk_random(void) {
 static void test_topk_K_eq_1(void) {
     // K=1 must agree with the existing top-1 kernel
     size_t n = 500;
-    uint64_t *dbT = alloc_codes(n);
+    uint64_t *dbT = alloc_codes(n, WORDS);
     uint64_t q[WORDS];
     fill_rnd64(q, WORDS);
     fill_rnd64(dbT, n * WORDS);
 
     int64_t out_d, out_i;
-    scan_shard_topk(dbT, n, 0, n, q, 1, &out_d, &out_i);
+    scan_hamming_shard_topk(dbT, n, WORDS, 0, n, q, 1, &out_d, &out_i);
 
-    int rd; size_t ri = ref_scan_soa_top1(dbT, n, 0, n, q, &rd);
+    int rd; size_t ri = ref_scan_soa_top1(dbT, n, WORDS, 0, n, q, &rd);
     CHECK(out_d == rd, "d=%lld ref=%d", (long long)out_d, rd);
     int h = 0;
     for (int w = 0; w < WORDS; w++)
@@ -130,7 +132,7 @@ static void test_topk_K_eq_1(void) {
 static void test_topk_threaded(void) {
     size_t n = 10000;
     int K = 8;
-    uint64_t *dbT = alloc_codes(n);
+    uint64_t *dbT = alloc_codes(n, WORDS);
     uint64_t q[WORDS];
     fill_rnd64(q, WORDS);
     fill_rnd64(dbT, n * WORDS);
@@ -141,7 +143,7 @@ static void test_topk_threaded(void) {
     plant_ascending(dbT, n, q, pos, 8);
 
     int64_t gd[8], gi[8];
-    scan_batch_parallel_topk(dbT, n, q, K, gd, gi);
+    scan_hamming_topk_parallel(dbT, n, WORDS, q, K, gd, gi);
     int64_t rd[8], ri[8];
     ref_topk(dbT, n, q, K, rd, ri);
 

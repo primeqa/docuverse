@@ -1,8 +1,8 @@
 // simdq_common.h — shared helpers for SIMD-quantized scan kernels.
 //
-// Each binary code is 768 bits = WORDS x uint64_t. Two layouts appear across
-// the kernels:
-//   AoS: db[i*WORDS + w] = word w of code i  — cache-friendly per code
+// Each binary code is D bits = words x uint64_t (words = D/64).
+// Two layouts appear across the kernels:
+//   AoS: db[i*words + w] = word w of code i  — cache-friendly per code
 //   SoA: dbT[w*n + i]    = word w of code i  — cache-friendly across codes;
 //        one wide SIMD load grabs word w of several consecutive codes.
 #pragma once
@@ -13,7 +13,6 @@
 #include <time.h>
 #include <nmmintrin.h>
 
-#define WORDS 12  // 768 bits
 #ifndef NQ
 #define NQ 8      // queries per batch (batched kernels; override with -DNQ=...)
 #endif
@@ -46,13 +45,14 @@ static inline void fill_rnd64(uint64_t *p, size_t count) {
 }
 
 /*
- * Allocates storage for n 768-bit codes (n * WORDS uint64_t), aligned to
- * 64 bytes so codes and SIMD loads sit on cache-line boundaries.
+ * Allocates storage for n binary codes of `words` uint64_t each
+ * (n * words * 8 bytes), aligned to 64 bytes so codes and SIMD loads
+ * sit on cache-line boundaries.
  * Returns NULL on failure; the caller releases it with free().
  */
-static inline uint64_t *alloc_codes(size_t n) {
+static inline uint64_t *alloc_codes(size_t n, size_t words) {
     void *p = NULL;
-    if (posix_memalign(&p, 64, n * WORDS * 8)) return NULL;
+    if (posix_memalign(&p, 64, n * words * 8)) return NULL;
     return (uint64_t *)p;
 }
 
@@ -68,31 +68,31 @@ static inline void parse_args(int argc, char **argv, size_t *n, int *reps) {
 
 /*
  * Scalar Hamming distance between query q and code k of an SoA database
- * (word stride n): sum over the WORDS words of popcnt(q[w] ^ d[w]).
+ * (word stride n): sum over `words` words of popcnt(q[w] ^ d[w]).
  * Used by the SIMD kernels for the n % LANES tail codes.
  */
-static inline int hamming_soa(const uint64_t *dbT, size_t n, size_t k,
-                              const uint64_t *q) {
+static inline int hamming_soa(const uint64_t *dbT, size_t n, size_t words,
+                              size_t k, const uint64_t *q) {
     int h = 0;
-    for (int w = 0; w < WORDS; w++)
-        h += (int)_mm_popcnt_u64(q[w] ^ dbT[(size_t)w * n + k]);
+    for (size_t w = 0; w < words; w++)
+        h += (int)_mm_popcnt_u64(q[w] ^ dbT[w * n + k]);
     return h;
 }
 
 /*
  * Baseline kernel: scalar linear scan of an AoS database. For each code,
- * XORs the WORDS word pairs with the query and sums hardware popcounts
+ * XORs the `words` word pairs with the query and sums hardware popcounts
  * (_mm_popcnt_u64, the single-cycle SSE4.2 POPCNT instruction):
  *   h = sum_w popcnt(q[w] ^ d[w])
  * Returns the index of the code with the smallest distance (top-1).
  */
-static inline size_t scan_scalar_aos(const uint64_t *db, size_t n,
+static inline size_t scan_scalar_aos(const uint64_t *db, size_t n, size_t words,
                                      const uint64_t *q) {
     int best = 1 << 30; size_t bi = 0;
     for (size_t i = 0; i < n; i++) {
-        const uint64_t *d = db + i * WORDS;
+        const uint64_t *d = db + i * words;
         int h = 0;
-        for (int w = 0; w < WORDS; w++)
+        for (size_t w = 0; w < words; w++)
             h += (int)_mm_popcnt_u64(q[w] ^ d[w]);
         if (h < best) { best = h; bi = i; }
     }
@@ -106,9 +106,9 @@ static inline size_t scan_scalar_aos(const uint64_t *db, size_t n,
  * count). First-touch places pages on the touching thread's NUMA node,
  * and parallel init is also just much faster for multi-GB arrays.
  */
-static inline void fill_soa_parallel(uint64_t *dbT, size_t n) {
+static inline void fill_soa_parallel(uint64_t *dbT, size_t n, size_t words) {
     #pragma omp parallel for schedule(static)
-    for (size_t w = 0; w < WORDS; w++) {
+    for (size_t w = 0; w < words; w++) {
         unsigned int seed = 42 + (unsigned)w;
         for (size_t i = 0; i < n; i++) {
             uint64_t a = (uint64_t)rand_r(&seed) << 42;

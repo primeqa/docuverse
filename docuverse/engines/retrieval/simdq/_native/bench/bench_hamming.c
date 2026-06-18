@@ -9,6 +9,8 @@
 #include "simdq_kernels_hamming_topk.h"
 #include <stdio.h>
 
+#define WORDS 12  // D=768 bits
+
 int main(int argc, char **argv) {
     size_t n;
     int reps;
@@ -17,20 +19,20 @@ int main(int argc, char **argv) {
     if (K < 1 || K > 256) { fprintf(stderr, "K must be in [1,256]\n"); return 2; }
     srand(42);
 
-    uint64_t *dbT = alloc_codes(n);
+    uint64_t *dbT = alloc_codes(n, /*words=*/WORDS);
     uint64_t q[WORDS];
     if (!dbT) { fprintf(stderr, "alloc failed\n"); return 1; }
-    fill_soa_parallel(dbT, n);
+    fill_soa_parallel(dbT, n, /*words=*/WORDS);
     fill_rnd64(q, WORDS);
 
     int64_t out_d[256], out_i[256];
     // warmup
-    scan_batch_parallel_topk(dbT, n, q, K, out_d, out_i);
+    scan_hamming_topk_parallel(dbT, n, /*words=*/WORDS, q, K, out_d, out_i);
 
     double tmin = 1e30;
     for (int r = 0; r < reps; r++) {
         double t0 = now();
-        scan_batch_parallel_topk(dbT, n, q, K, out_d, out_i);
+        scan_hamming_topk_parallel(dbT, n, /*words=*/WORDS, q, K, out_d, out_i);
         double dt = now() - t0;
         if (dt < tmin) tmin = dt;
     }
