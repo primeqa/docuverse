@@ -1,6 +1,6 @@
 # `simdq` — plan & implementation status
 
-**Last updated:** 2026-06-17
+**Last updated:** 2026-06-18
 **Branch:** `v0.1.2`
 **Spec:** [`docs/superpowers/specs/2026-06-15-simdq-engine-design.md`](../specs/2026-06-15-simdq-engine-design.md)
 
@@ -12,7 +12,7 @@ working, testable software on its own.
 | Plan | Scope | Status |
 |---|---|---|
 | **Plan 1** — kernels & standalone benches | C/SIMD kernels, top-K, asymmetric `b∈{1,2,4}` for D=768, ctest, benchmark binaries. No Python. | **Complete** ([plan](2026-06-15-simdq-plan-1-kernels.md)) |
-| **Plan 2** — Python integration | CPython C-API binding, `SimdqIndex` class, numpy ingest (quantization + random-orthogonal projection), on-disk format, mmap rescore tier, threaded asymmetric scan driver. End-to-end at D=768. | Not started |
+| **Plan 2** — Python integration | CPython C-API binding, `SimdqIndex` class, numpy ingest (quantization + random-orthogonal projection), on-disk format, mmap rescore tier, threaded asymmetric scan driver. End-to-end at D=768. | **Complete** ([plan](2026-06-17-simdq-plan-2-python.md)) |
 | **Plan 3** — engine + multi-D + BEIR sweep | `SimdqEngine` (DocUVerse `SearchEngine` subclass), factory dispatch, config dataclass, kernel templates for `D ∈ {384, 1024, 1536}`, recipe sweep script producing R0–R6 CSV. | Not started |
 
 ## Plan 1 — final status
@@ -103,80 +103,138 @@ Full sweep at 500k / 1M / 50M is captured in
 
 ### Known follow-ups (deferred to Plan 2 / 3)
 
-1. **AVX2 b=1 unpack bottleneck** — the asymmetric b=1 AVX2 path
-   expands packed bits via a per-iteration 8-step scalar loop. Replace
-   with `_mm256_set1_epi8(bits)` + `vpshufb` / movemask trick. Plan 2
-   should fix this before benchmarking R1/R2 recipes.
+1. ~~**AVX2 b=1 unpack bottleneck**~~ — resolved in Plan 2 T2 (commit
+   `51eb47a`). AVX2 b=1 inner loop now uses `_mm256_set1_epi8 +
+   cmpeq_epi8 + cvtepi8_epi32 + blendv_ps`; bench at n=50M went from
+   0.55 M cmp/s → 8.44 M cmp/s on the AVX2 dev box.
 
-2. **AVX-512F throughput numbers** — the dev host lacks AVX-512F, so the
-   AVX-512 inline kernel paths are correctness-tested but not measured.
-   Re-run `scripts/run_sweep.sh` on an AVX-512F-capable box (e.g. Zen 4
-   or Skylake-X) to populate the missing rows.
+2. **AVX-512F throughput numbers** — still open. The dev host lacks
+   AVX-512F, so the AVX-512 inline kernel paths are correctness-tested
+   but not measured. Re-run `scripts/run_sweep.sh` on an AVX-512F-capable
+   box (e.g. Zen 4 or Skylake-X) to populate the missing rows.
 
-3. **Threaded asymmetric driver** — Plan 1 ships the asymmetric scans
-   single-threaded only. Plan 2 will add a `scan_asym_b<b>_d768_topk_parallel`
-   wrapper following the existing T3 OpenMP pattern (per-thread top-K
-   heap + `omp critical` merge with `INT64_MAX`/-1 init for partial-fill
-   safety).
+3. ~~**Threaded asymmetric driver**~~ — resolved in Plan 2 T3 (commit
+   `df76441`). Each `scan_asym_b{1,2,4}_d768_topk_parallel` mirrors the
+   Hamming top-K pattern (per-thread heap + `omp critical` merge with
+   `idx=-1` init for partial-fill safety). 1/2/8-thread parity verified
+   in `tests/test_kernels_asym_parallel.c`.
 
-4. **Macro renames for Python binding** — `KERNEL_NAME`, `LANES`,
-   `ASYM_KERNEL_NAME`, `ASYM_LANES` are defined in multiple kernel
-   headers with the same names. Plan 1 binaries each include only one
-   header; Plan 2's Python binding will pull all four into a single
-   translation unit and must rename them (e.g. `HAMMING_TOPK_LANES`,
-   `ASYM_B2_LANES`) first.
+4. ~~**Macro renames for Python binding**~~ — resolved in Plan 2 T1
+   (commits `8c81fa7` and `83140cb`). All four kernel headers now use
+   per-kernel-prefixed macros (`HAMMING_TOPK_*`, `ASYM_B{1,2,4}_*`) and
+   compose cleanly in `bindings/module.c`.
 
-5. **Code-review cleanups deferred from T1** — `-O3 -march=native` is
-   set on every target unconditionally; gating `-O3` to release/relwithdebinfo
-   would unblock future Debug/ASAN builds. No urgency for Plan 1.
+5. **Code-review cleanups deferred from T1** — still open. `-O3
+   -march=native` is set on every target unconditionally; gating `-O3`
+   to release/relwithdebinfo would unblock future Debug/ASAN builds.
 
-## Plan 2 — preview (not started)
+## Plan 2 — final status
 
-From the spec, Plan 2 will deliver:
+### Tasks
+
+| # | Task | Commit(s) | Status |
+|---|------|-----------|--------|
+| T1 | Rename per-kernel macros (`HAMMING_TOPK_*`, `ASYM_B{1,2,4}_*`) | `8c81fa7`, `83140cb` | ✅ |
+| T2 | AVX2 b=1 SIMD bit-to-float unpack | `51eb47a` | ✅ |
+| T3 | `(i0,i1)` shard refactor + `scan_asym_b{1,2,4}_d768_topk_parallel` | `df76441` | ✅ |
+| T4 | CPython C-API binding `_simdq_native` | `7362b42` | ✅ |
+| T5 | `setup.py` shim wiring the extension | `fa320e3` | ✅ |
+| T6 | `projection.py` (identity / random_orthogonal) | `2f525c1` | ✅ |
+| T7 | `quantization.py` (numpy `fit_scales` / `pack`) | `4733270` | ✅ |
+| T8 | `SimdqIndex` (build/save/load/search) | `187c3dd` | ✅ |
+| T9 | Status doc update | (this commit) | ✅ |
+
+**9 commits across `_native/`, `bindings/`, and the new
+`docuverse/engines/retrieval/simdq/` Python package.**
+
+### What's in the tree
 
 ```
 docuverse/engines/retrieval/simdq/
-├── __init__.py
-├── simdq_index.py            # Python wrapper around the C extension
-├── projection.py             # identity / random-orthogonal W ∈ R^{d×D}
-├── quantization.py           # numpy-side scale fitting + b-bit pack call
+├── __init__.py                    # public re-export of SimdqIndex
+├── simdq_index.py                 # build/save/load/search, mmap'd rescore
+├── projection.py                  # identity, random_orthogonal, apply
+├── quantization.py                # fit_scales, pack, unpack_levels
 └── _native/
-    └── bindings/             # CPython C-API ext (no pybind11 dep)
+    └── bindings/
+        └── module.c               # CPython C-API: 7 entry points
+
+setup.py                            # setuptools shim declaring the Extension
+
+tests/
+├── test_simdq_projection.py       # 7 tests
+├── test_simdq_quantization.py     # 6 tests
+└── test_simdq_index.py            # 6 tests (round-trip, mode parity, etc.)
 ```
 
-Public API (deferred design — exact shape may shift after Plan 1 review):
+Plus 1 new ctest target (`kernels_asym_parallel_native` /
+`kernels_asym_parallel_avx2`) and modifications to the three asym
+kernel headers, three asym bench drivers, `CMakeLists.txt`,
+`run_sweep.sh`, and `BENCHMARKS.md`.
+
+### Test coverage
+
+- **C ctest** — 14 targets (12 from Plan 1 + 2 new parallel-parity tests),
+  all passing on every clean build.
+- **Python pytest** — 19 tests across the three new files, all passing.
+
+### Headline benchmark numbers (AVX2-only host, K=100)
+
+| Bench | n | threads | cmp/s | GB/s | Notes |
+|---|---|---|---|---|---|
+| `bench_asym_b1` (Plan 2 T2 fix) | 50M | 1 | 8.44 M | 0.8 | 15× speedup vs Plan 1's 0.55 M |
+| `bench_asym_b1` (Plan 2 T3 threaded) | 50M | 32 | 73 M | 7.0 | ~8.6× over single-thread |
+| `bench_asym_b2` (Plan 2 T3 threaded) | 50M | 32 | 28 M | 5.4 | memory-bound |
+| `bench_asym_b4` (Plan 2 T3 threaded) | 50M | 32 | 27 M | 10.5 | memory-bound, larger codes |
+
+Single-threaded baselines and full sweep at 500k / 1M / 50M live in
+[`_native/BENCHMARKS.md`](../../../docuverse/engines/retrieval/simdq/_native/BENCHMARKS.md).
+
+### Public API shipped
 
 ```python
+import numpy as np
 from docuverse.engines.retrieval.simdq import SimdqIndex
 
-index = SimdqIndex.build(
-    vectors=Y,                 # numpy (N, D) fp32
-    b=2, d=384,                # halve dims, double bits
-    projection="random_orthogonal", projection_seed=42,
-    store_floats=True,         # mmap'd fp16 rescore tier
-)
-index.save("/scratch/idx-b2-d384")
+# build
+Y = ...                                                # (N, 768) fp32
+idx = SimdqIndex.build(vectors=Y, b=2, store_floats=True)
+idx.save("/scratch/myindex")
 
-index = SimdqIndex.load("/scratch/idx-b2-d384")
-indices, scores = index.search(query_fp32, K=100, K_prime=1000)  # two-stage
-indices, scores = index.search(query_fp32, K=100, K_prime=100)   # codes-only
+# load and search
+idx = SimdqIndex.load("/scratch/myindex")
+indices, scores = idx.search(query_fp32, K=10, K_prime=100)   # two-stage
+indices, scores = idx.search(query_fp32, K=10, K_prime=10)    # codes-only
 ```
 
-On-disk index layout (per the spec):
+### Open for Plan 3
 
-```
-<index_path>/
-├── meta.json
-├── W.npy
-├── codes.bin           # SoA-packed codes
-├── scales.bin          # per-vector fp16
-└── floats.bin          # optional fp16 rescore tier, mmap'd at search time
-```
-
-Plan-2 scope also includes the threaded asymmetric driver (item 3 above)
-and the macro renames (item 4). The AVX2 b=1 unpack fix (item 1) should
-land here too — or earlier as a stand-alone hotfix if it blocks
-benchmarking decisions.
+- **`d` fixed at 768.** Plan 2's `SimdqIndex.build` rejects `d != D`
+  with a clear message. Plan 3 will template the kernels for
+  `D ∈ {384, 1024, 1536}` and enable `d = D/2` (the "halve dims, double
+  bits" recipe).
+- **No `SimdqEngine`/factory dispatch yet.** `simdq` is not registered
+  in `create_retrieval_engine`; YAML configs cannot select it. Plan 3
+  adds the `SearchEngine` subclass + factory entry + `SimdqConfig`.
+- **No NQ-batched scan kernel.** `search_batch` will be a Python loop in
+  Plan 3 until the batched kernel lands.
+- **Per-vector scale applied post-scan in Python.** Codes-only mode
+  ranks by raw `<q', v_i>` then multiplies by `scales[idx]`; for
+  near-uniform per-vector norms (unit-norm embeddings) the ranking is
+  unchanged. For variable-norm corpora, two-stage rescore with
+  `K_prime > K` is the documented mitigation. Kernel-side scale
+  application is a Plan 3 follow-up if BEIR sweep shows it matters.
+- **`global` quantization mode deferred.** Spec section 6 mentions
+  `per_vector` (shipped) and `global` (one fp32 in metadata). Plan 2
+  ships only `per_vector`; `global` not implemented.
+- **b=4 quantizer step-size mismatch with N(0,1) per-dim
+  distributions.** The `simdq_pack_b4` formula uses a step-2 grid in
+  `yn` units and is well-tuned for embeddings with heavier-tailed
+  per-dim distributions; for isotropic unit-norm Gaussians it
+  under-utilizes its 16 levels (most values land in {-1, +1}). Recall
+  on the test's synthetic Gaussian inputs caps around 50% even at
+  `K_prime=256`. Real embeddings (granite, ST) exercise the range
+  better — Plan 3's BEIR sweep will measure this directly.
 
 ## Plan 3 — preview (not started)
 
