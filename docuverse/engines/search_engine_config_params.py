@@ -141,7 +141,8 @@ class RetrievalArguments(GenericArguments):
                        'chromadb', 'faiss',
                        'milvus', 'milvus-dense', 'milvus-sparse', 'milvus-bm25',
                        'milvus-hybrid', 'milvus-splade',
-                       'lancedb', 'lance'],
+                       'lancedb', 'lance',
+                       'simdq'],
             "help": "Path to pretrained model or model identifier from huggingface.co/models"
         }
     )
@@ -498,6 +499,69 @@ class RetrievalArguments(GenericArguments):
                     "data, so no extra input is needed. Ensure your dataset has enough "
                     "examples for the post-warmup measurements to be meaningful."
         }
+    )
+
+    # ----- simdq engine -----
+
+    simdq_b: int = field(
+        default=2,
+        metadata={
+            "choices": [1, 2, 4],
+            "help": "simdq: bits per dim in the asymmetric scan (1, 2, or 4). "
+                    "Ignored when simdq_family='hamming'."
+        }
+    )
+
+    simdq_family: str = field(
+        default="asymmetric",
+        metadata={
+            "choices": ["asymmetric", "hamming"],
+            "help": "simdq scan family: 'asymmetric' (float query × b-bit codes) or "
+                    "'hamming' (1-bit symmetric, both query and code sign-quantized)."
+        }
+    )
+
+    simdq_d: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "simdq: reduced dimension. None means d=D (encoder dim). "
+                    "Otherwise must equal D or D/2."
+        }
+    )
+
+    simdq_projection: str = field(
+        default="identity",
+        metadata={
+            "choices": ["identity", "random_orthogonal"],
+            "help": "simdq: projection W applied to encoder output. "
+                    "Must be 'random_orthogonal' when simdq_d != D."
+        }
+    )
+
+    simdq_projection_seed: int = field(
+        default=42,
+        metadata={"help": "simdq: rng seed for random_orthogonal projection."}
+    )
+
+    simdq_store_floats: bool = field(
+        default=True,
+        metadata={
+            "help": "simdq: store fp16 reduced vectors on disk for the rescore tier. "
+                    "Disable to halve index size at the cost of recall."
+        }
+    )
+
+    simdq_rescore_alpha: int = field(
+        default=10,
+        metadata={
+            "help": "simdq: K' = alpha * top_k when rescoring against floats.bin. "
+                    "Set to 1 to disable rescore (codes-only mode)."
+        }
+    )
+
+    simdq_num_threads: int = field(
+        default=0,
+        metadata={"help": "simdq: OpenMP thread count for the scan kernel; 0 = OMP default."}
     )
 
     def __post_init__(self):
