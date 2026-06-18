@@ -171,3 +171,5 @@ examples/tmp.ipynb
 /notebooks/*.pt
 *.onnx
 
+/research/ash-paper-internal-copy.pdf
+/research/papers/16-ASH-Tepper-Willke-IBM-2026.md
