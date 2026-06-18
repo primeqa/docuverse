@@ -1,0 +1,29 @@
+# Base YAML the sweep script overrides per-recipe. Required
+# command-line --dataset overrides input_passages / input_queries /
+# data via the existing {{var}} resolver in DocUVerse's config loader.
+
+search_engine:
+  db_engine: simdq
+  model_name: ibm-granite/granite-embedding-278m-multilingual-r2
+  index_name: "{{dataset}}_simdq_{{recipe_id}}"
+  project_dir: "{{project_dir}}"
+  top_k: 100
+  ingestion_batch_size: 256
+  max_doc_length: 512
+  # simdq fields are filled in per-recipe by bench_simdq_beir.py
+  simdq_family: asymmetric
+  simdq_b: 2
+  simdq_d: null
+  simdq_projection: identity
+  simdq_projection_seed: 42
+  simdq_store_floats: true
+  simdq_rescore_alpha: 10
+  simdq_num_threads: 0
+
+retrieval:
+  input_passages: "{{passages}}"
+  input_queries: "{{queries}}"
+
+evaluation:
+  metric: "ndcg,recall@100"
+  qrels: "{{qrels}}"
