@@ -1,8 +1,5 @@
-"""simdq — SIMD-quantized in-process retrieval engine.
-
-Plan 2 ships SimdqIndex (the storage + scan layer). Plan 3 will add
-SimdqEngine (the DocUVerse SearchEngine wrapper) and the recipe sweep.
-"""
+"""simdq — SIMD-quantized in-process retrieval engine."""
 from docuverse.engines.retrieval.simdq.simdq_index import SimdqIndex
+from docuverse.engines.retrieval.simdq.simdq_engine import SimdqEngine
 
-__all__ = ["SimdqIndex"]
+__all__ = ["SimdqIndex", "SimdqEngine"]
