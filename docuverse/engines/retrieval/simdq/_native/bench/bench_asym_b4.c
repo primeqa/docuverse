@@ -32,12 +32,12 @@ int main(int argc, char **argv) {
     for (size_t w = 0; w < 768; w++) q[w] = ((float)rand() / RAND_MAX) - 0.5f;
 
     float out_s[256]; int64_t out_i[256];
-    scan_asym_b4_d768_topk_parallel(codes, n, q, K, out_s, out_i);
+    scan_asym_b4_topk_parallel(codes, n, /*d=*/768, q, K, out_s, out_i);
 
     double tmin = 1e30;
     for (int r = 0; r < reps; r++) {
         double t0 = now();
-        scan_asym_b4_d768_topk_parallel(codes, n, q, K, out_s, out_i);
+        scan_asym_b4_topk_parallel(codes, n, /*d=*/768, q, K, out_s, out_i);
         double dt = now() - t0;
         if (dt < tmin) tmin = dt;
     }

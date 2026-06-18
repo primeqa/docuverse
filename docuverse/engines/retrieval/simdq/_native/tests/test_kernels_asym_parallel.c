@@ -1,4 +1,4 @@
-// test_kernels_asym_parallel.c — verify scan_asym_b{1,2,4}_d768_topk_parallel
+// test_kernels_asym_parallel.c — verify scan_asym_b{1,2,4}_topk_parallel
 // produces identical top-K (scores + indices) to the single-threaded
 // _shard_topk over the full range [0, N), for both SIMD paths and across
 // 1, 2, 8 OpenMP threads.
@@ -67,11 +67,11 @@ static void test_one_b(int b) {
     float ps[K]; int64_t pi[K];
 
     if (b == 1) {
-        scan_asym_b1_d768_shard_topk(codes, N, 0, N, q, K, ss, si);
+        scan_asym_b1_shard_topk(codes, N, /*d=*/D, 0, N, q, K, ss, si);
     } else if (b == 2) {
-        scan_asym_b2_d768_shard_topk(codes, N, 0, N, q, K, ss, si);
+        scan_asym_b2_shard_topk(codes, N, /*d=*/D, 0, N, q, K, ss, si);
     } else {
-        scan_asym_b4_d768_shard_topk(codes, N, 0, N, q, K, ss, si);
+        scan_asym_b4_shard_topk(codes, N, /*d=*/D, 0, N, q, K, ss, si);
     }
 
     int thread_counts[] = {1, 2, 8};
@@ -80,11 +80,11 @@ static void test_one_b(int b) {
         char label[64];
         snprintf(label, sizeof(label), "b=%d threads=%d", b, thread_counts[ti]);
         if (b == 1) {
-            scan_asym_b1_d768_topk_parallel(codes, N, q, K, ps, pi);
+            scan_asym_b1_topk_parallel(codes, N, /*d=*/D, q, K, ps, pi);
         } else if (b == 2) {
-            scan_asym_b2_d768_topk_parallel(codes, N, q, K, ps, pi);
+            scan_asym_b2_topk_parallel(codes, N, /*d=*/D, q, K, ps, pi);
         } else {
-            scan_asym_b4_d768_topk_parallel(codes, N, q, K, ps, pi);
+            scan_asym_b4_topk_parallel(codes, N, /*d=*/D, q, K, ps, pi);
         }
         check_match(label, ss, si, ps, pi, K);
     }

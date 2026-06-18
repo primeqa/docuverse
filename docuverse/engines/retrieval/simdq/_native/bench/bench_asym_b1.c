@@ -34,12 +34,12 @@ int main(int argc, char **argv) {
 
     float out_s[256]; int64_t out_i[256];
     // warmup
-    scan_asym_b1_d768_topk_parallel(codes, n, q, K, out_s, out_i);
+    scan_asym_b1_topk_parallel(codes, n, /*d=*/768, q, K, out_s, out_i);
 
     double tmin = 1e30;
     for (int r = 0; r < reps; r++) {
         double t0 = now();
-        scan_asym_b1_d768_topk_parallel(codes, n, q, K, out_s, out_i);
+        scan_asym_b1_topk_parallel(codes, n, /*d=*/768, q, K, out_s, out_i);
         double dt = now() - t0;
         if (dt < tmin) tmin = dt;
     }

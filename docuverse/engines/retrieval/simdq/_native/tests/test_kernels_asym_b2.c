@@ -52,7 +52,7 @@ static void test_random_b2(void) {
 
     int K = 10;
     float ks[10]; int64_t kis[10];
-    scan_asym_b2_d768_topk(codes, N, q, K, ks, kis);
+    scan_asym_b2_topk(codes, N, /*d=*/768, q, K, ks, kis);
 
     float rs[10]; int64_t ris[10];
     ref_topk_asym_b2(codes, N, d, q, K, rs, ris);
@@ -84,7 +84,7 @@ static void test_planted_b2(void) {
     simdq_pack_b2(Y, N, d, scales, codes);
 
     float ks[3]; int64_t kis[3];
-    scan_asym_b2_d768_topk(codes, N, q, 3, ks, kis);
+    scan_asym_b2_topk(codes, N, /*d=*/768, q, 3, ks, kis);
     CHECK(kis[0] == 42, "planted top idx=%lld (want 42)", (long long)kis[0]);
     free(Y); free(scales); free(codes);
 }

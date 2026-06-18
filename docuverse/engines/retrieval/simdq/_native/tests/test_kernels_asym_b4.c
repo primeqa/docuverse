@@ -51,7 +51,7 @@ static void test_random_b4(void) {
 
     int K = 10;
     float ks[10]; int64_t kis[10];
-    scan_asym_b4_d768_topk(codes, N, q, K, ks, kis);
+    scan_asym_b4_topk(codes, N, /*d=*/768, q, K, ks, kis);
     float rs[10]; int64_t ris[10];
     ref_topk_asym_b4(codes, N, d, q, K, rs, ris);
     for (int r = 0; r < K; r++) {
@@ -77,7 +77,7 @@ static void test_planted_b4(void) {
     uint8_t *codes = malloc(d * row_bytes);
     simdq_pack_b4(Y, N, d, scales, codes);
     float ks[3]; int64_t kis[3];
-    scan_asym_b4_d768_topk(codes, N, q, 3, ks, kis);
+    scan_asym_b4_topk(codes, N, /*d=*/768, q, 3, ks, kis);
     CHECK(kis[0] == 42, "planted top idx=%lld (want 42)", (long long)kis[0]);
     free(Y); free(scales); free(codes);
 }
