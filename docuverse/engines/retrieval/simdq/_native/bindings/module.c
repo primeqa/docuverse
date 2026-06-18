@@ -268,7 +268,13 @@ static PyObject *py_pack_hamming(PyObject *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "O", &y_obj)) return NULL;
     Py_buffer y_view;
     if (get_buffer(y_obj, &y_view, 'f', 0) != 0) return NULL;
-    Py_ssize_t d = (y_view.ndim == 2) ? y_view.shape[1] : -1;
+    if (y_view.ndim != 2) {
+        PyErr_Format(PyExc_ValueError,
+                     "Y must be 2-D, got ndim=%d", y_view.ndim);
+        PyBuffer_Release(&y_view);
+        return NULL;
+    }
+    Py_ssize_t d = y_view.shape[1];
     if (simdq_check_d(d) != 0) { PyBuffer_Release(&y_view); return NULL; }
     if ((d % 64) != 0) {
         PyErr_Format(PyExc_ValueError,
