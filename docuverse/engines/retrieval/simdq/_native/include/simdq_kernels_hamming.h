@@ -5,8 +5,8 @@
 //     popcounted with _mm512_popcnt_epi64. Best distance/index tracked per
 //     lane via compare-mask + masked moves, reduced to scalar at the end.
 //   AVX2 (Zen 1-3, Haswell+) : vpshufb nibble-LUT popcount, 4 codes/iter;
-//     byte counts accumulate across all 12 words (max 12*8 = 96 < 255, no
-//     overflow), then one vpsadbw reduction per block.
+//     byte counts accumulate across all `words` words (at most words*8 ones
+//     per byte; < 255 for words <= 23), then one vpsadbw reduction per block.
 //
 // Batched kernels service NQ queries per database load: each chunk is loaded
 // once and reused for all NQ queries, cutting memory traffic by NQ x.

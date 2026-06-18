@@ -42,6 +42,8 @@ static inline size_t ref_scan_soa_top1(const uint64_t *dbT, size_t n,
  * per-lane distances, compare against the heap threshold, and offer the
  * survivors. Returns the K smallest distances (ascending) and their
  * indices in out_d / out_i.
+ * words is the number of 64-bit words per code (inner-loop bound; = D / 64).
+ * i0/i1 define the code range to scan.
  */
 static inline void scan_hamming_shard_topk(const uint64_t *dbT, size_t n,
                                            size_t words, size_t i0, size_t i1,
@@ -88,6 +90,12 @@ static inline __m256i popcnt_bytes_avx2(__m256i x, __m256i lut, __m256i m0f) {
                            _mm256_shuffle_epi8(lut, hi));
 }
 
+/*
+ * words is the number of 64-bit words per code (inner-loop bound; = D / 64).
+ * Byte-count accumulators overflow at words >= 24 (words * 8 < 255);
+ * callers must ensure words <= 23.
+ * i0/i1 define the code range to scan.
+ */
 static inline void scan_hamming_shard_topk(const uint64_t *dbT, size_t n,
                                            size_t words, size_t i0, size_t i1,
                                            const uint64_t *q, int K,

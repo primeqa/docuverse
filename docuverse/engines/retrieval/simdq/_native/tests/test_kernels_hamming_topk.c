@@ -1,7 +1,7 @@
 // test_kernels_hamming_topk.c — correctness for top-K Hamming scans on
 // both SIMD paths. Same shape as test_kernels_hamming.c (planted-best
 // cases at boundaries, randomized + scalar reference) but exercising
-// scan_shard_topk and scan_batch_parallel_topk over K > 1.
+// scan_hamming_shard_topk and scan_hamming_topk_parallel over K > 1.
 
 #include "simdq_kernels_hamming_topk.h"
 #include <stdio.h>
