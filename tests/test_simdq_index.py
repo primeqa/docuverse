@@ -156,3 +156,57 @@ def test_search_rejects_bad_K(tmp_index_dir):
         idx.search(np.zeros(768, dtype=np.float32), K=300)   # K > 256
     with pytest.raises(ValueError):
         idx.search(np.zeros(768, dtype=np.float32), K=10, K_prime=5)  # K' < K
+
+
+# ---------------------------------------------------------------------------
+# Parametrized multi-D + hamming family tests (Task 6)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("D,d,projection", [
+    (384, 384, "identity"),
+    (384, 192, "random_orthogonal"),
+    (1024, 1024, "identity"),
+    (1024, 512, "random_orthogonal"),
+    (1536, 768, "random_orthogonal"),
+])
+def test_asym_build_save_load_search_multi_D(D, d, projection, tmp_path):
+    rng = np.random.RandomState(D)
+    Y = rng.randn(2048, D).astype(np.float32)
+    Y /= np.linalg.norm(Y, axis=1, keepdims=True)
+    idx = SimdqIndex.build(
+        Y, family="asymmetric", b=2, d=d,
+        projection=projection, projection_seed=7, store_floats=True,
+    )
+    p = tmp_path / f"idx_{D}_{d}"
+    idx.save(p)
+    idx2 = SimdqIndex.load(p)
+    assert idx2.D_orig == D and idx2.d == d and idx2.family == "asymmetric"
+
+    # Smoke-test search: any well-defined query returns K finite indices in [0, N)
+    q_v = rng.randn(D).astype(np.float32)
+    iN, sN = idx2.search(q_v, K=10, K_prime=100)
+    assert iN.shape == (10,) and sN.shape == (10,)
+    assert iN.min() >= 0 and iN.max() < 2048
+    assert np.all(np.isfinite(sN))
+
+
+@pytest.mark.parametrize("D", [384, 768, 1024, 1536])
+def test_hamming_family_round_trip(D, tmp_path):
+    rng = np.random.RandomState(D + 1)
+    Y = rng.randn(1024, D).astype(np.float32)
+    idx = SimdqIndex.build(
+        Y, family="hamming", d=D, projection="identity", store_floats=False,
+    )
+    p = tmp_path / f"idx_h_{D}"
+    idx.save(p)
+    idx2 = SimdqIndex.load(p)
+    assert idx2.family == "hamming"
+    assert idx2.b is None
+    assert idx2.scales is None
+
+    q_v = rng.randn(D).astype(np.float32)
+    iN, sN = idx2.search(q_v, K=10, K_prime=10)
+    assert iN.shape == (10,) and sN.shape == (10,)
+    # Hamming "scores" are -distance; descending order means smaller distances first.
+    assert np.all(np.diff(sN) <= 1e-6)

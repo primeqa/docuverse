@@ -80,3 +80,45 @@ def test_pack_rejects_bad_dim():
     Y = _gaussian(8, 500, seed=5)  # 500 not in SUPPORTED_d -> rejected
     with pytest.raises(ValueError):
         fit_scales(Y)
+
+
+# ---------------------------------------------------------------------------
+# Parametrized multi-d tests (Task 6)
+# ---------------------------------------------------------------------------
+
+import docuverse.engines.retrieval.simdq.quantization as q  # noqa: E402
+from docuverse.engines.retrieval.simdq.projection import SUPPORTED_d  # noqa: E402
+
+
+@pytest.mark.parametrize("d", SUPPORTED_d)
+@pytest.mark.parametrize("b", [1, 2, 4])
+def test_pack_round_trip_at_each_d(d, b):
+    rng = np.random.RandomState(d * 100 + b)
+    Y = rng.randn(64, d).astype(np.float32)
+    scales = q.fit_scales(Y)
+    codes = q.pack(Y, scales, b=b)
+    levels = q.unpack_levels(codes, N=64, D=d, b=b)
+    # Reconstruct quantized Y and check signs match (asymmetric ranks robustly to
+    # quantization at the b=2 level).
+    s = scales.reshape(-1, 1).astype(np.float32)
+    yhat = levels.astype(np.float32) * s / float(2 ** b - 1) * np.sqrt(d)
+    # Spot-check: sign agreement on at least 70% of dims (a generous floor).
+    sign_match = (np.sign(yhat) == np.sign(Y)).mean()
+    assert sign_match > 0.70, f"sign agreement only {sign_match:.2%} at d={d} b={b}"
+
+
+@pytest.mark.parametrize("d", [384, 768, 1024, 1536])
+def test_pack_hamming_round_trip(d):
+    rng = np.random.RandomState(d)
+    Y = rng.randn(32, d).astype(np.float32)
+    codes = q.pack_hamming(Y)
+    assert codes.dtype == np.uint8
+    assert codes.size == 32 * d // 8
+    # Unpack one row and confirm the sign matches.
+    words = d // 64
+    code0 = codes[:words * 8].view(np.uint64)
+    for w in range(words):
+        for b in range(64):
+            bit = bool((code0[w] >> np.uint64(b)) & np.uint64(1))
+            assert bit == (Y[0, w * 64 + b] >= 0.0), \
+                f"bit mismatch at w={w} b={b}"
