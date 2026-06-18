@@ -17,6 +17,7 @@
 
 /*
  * N stays (needed for row_bytes = (N + 1) / 2, the dim-stride).
+ * d is the number of dimensions (inner-loop bound; replaces compile-time D).
  * i0/i1 define the code range to scan.
  */
 static inline void scan_asym_b4_shard_topk(const uint8_t *codes, size_t N, size_t d,
@@ -85,6 +86,11 @@ static inline void scan_asym_b4_topk(const uint8_t *codes, size_t N, size_t d,
 #define ASYM_B4_KERNEL_NAME "AVX2-FMA"
 #define ASYM_B4_LANES 8
 
+/*
+ * N stays (needed for row_bytes = (N + 1) / 2, the dim-stride).
+ * d is the number of dimensions (inner-loop bound; replaces compile-time D).
+ * i0/i1 define the code range to scan.
+ */
 static inline void scan_asym_b4_shard_topk(const uint8_t *codes, size_t N, size_t d,
                                            size_t i0, size_t i1,
                                            const float *q, int K,
