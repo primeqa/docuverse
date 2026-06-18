@@ -1,6 +1,6 @@
 # `simdq` — plan & implementation status
 
-**Last updated:** 2026-06-18
+**Last updated:** 2026-06-18 (Plan 3 complete)
 **Branch:** `v0.1.2`
 **Spec:** [`docs/superpowers/specs/2026-06-15-simdq-engine-design.md`](../specs/2026-06-15-simdq-engine-design.md)
 
@@ -13,7 +13,7 @@ working, testable software on its own.
 |---|---|---|
 | **Plan 1** — kernels & standalone benches | C/SIMD kernels, top-K, asymmetric `b∈{1,2,4}` for D=768, ctest, benchmark binaries. No Python. | **Complete** ([plan](2026-06-15-simdq-plan-1-kernels.md)) |
 | **Plan 2** — Python integration | CPython C-API binding, `SimdqIndex` class, numpy ingest (quantization + random-orthogonal projection), on-disk format, mmap rescore tier, threaded asymmetric scan driver. End-to-end at D=768. | **Complete** ([plan](2026-06-17-simdq-plan-2-python.md)) |
-| **Plan 3** — engine + multi-D + BEIR sweep | `SimdqEngine` (DocUVerse `SearchEngine` subclass), factory dispatch, config dataclass, kernel templates for `D ∈ {384, 1024, 1536}`, recipe sweep script producing R0–R6 CSV. | Not started |
+| **Plan 3** — engine + multi-D + BEIR sweep | `SimdqEngine` (DocUVerse `SearchEngine` subclass), factory dispatch, config dataclass, runtime-`d` generalization for `D ∈ {384, 768, 1024, 1536}` with `d ∈ {D, D/2}`, recipe sweep script producing R0–R6 CSV. | **Complete** ([plan](2026-06-18-simdq-plan-3-engine.md)) |
 
 ## Plan 1 — final status
 
@@ -236,17 +236,96 @@ indices, scores = idx.search(query_fp32, K=10, K_prime=10)    # codes-only
   `K_prime=256`. Real embeddings (granite, ST) exercise the range
   better — Plan 3's BEIR sweep will measure this directly.
 
-## Plan 3 — preview (not started)
+## Plan 3 — final status
 
-- `SimdqEngine(SearchEngine)` — DocUVerse `SearchEngine` subclass.
-- `SimdqConfig` dataclass added to `search_engine_config_params.py`.
-- Factory dispatch: `"simdq"` registered in `create_retrieval_engine`.
-- Kernel templates for `D ∈ {384, 1024, 1536}`.
-- `scripts/bench_simdq_beir.py` — runs the R0–R6 recipe sweep through
-  the existing `ingest_and_test` CLI on BEIR datasets, captures
-  NDCG@10 / recall@100 / latency / index size in CSV.
+### Tasks
 
-The headline research question Plan 3 answers:
+| # | Task | Commit(s) | Status |
+|---|------|-----------|--------|
+| T1 | Generalize asym kernels for runtime `d` | `ff6d73f`, `8f7dd7f` | ✅ |
+| T2 | Generalize Hamming kernels for runtime `words` | `3ad02a2`, `c8210cb` | ✅ |
+| T3 | Multi-D ctest spot-check | `c6a598f` | ✅ |
+| T4 | CPython binding: runtime `d` + Hamming entry points | `fa31feb`, `1b06fd0` | ✅ |
+| T5 | `SimdqIndex`: `D ∈ {384,768,1024,1536}`, `family` axis | `77288cf` | ✅ |
+| T6 | Pytest parametrize multi-D + hamming family | `c73ba9f` | ✅ |
+| T7 | `simdq_*` fields on `RetrievalArguments` | `324a6a9` | ✅ |
+| T8 | `SimdqEngine` `SearchEngine` subclass | `bf4bd20` | ✅ |
+| T9 | Factory dispatch for `simdq` | `c816469` | ✅ |
+| T10 | End-to-end `SimdqEngine` pytest | `ab05fd9` | ✅ |
+| T11 | `scripts/bench_simdq_beir.py` R0–R6 sweep | `67fce62` | ✅ |
+| T12 | Status doc update | (this commit) | ✅ |
+
+**14 commits across `_native/` (kernel headers, bindings, multi-D ctest), the
+Python `simdq/` package (`projection.py`, `quantization.py`, `simdq_index.py`,
+new `simdq_engine.py`), `RetrievalArguments`, `create_retrieval_engine`,
+three updated pytests + one new pytest, and the new `scripts/bench_simdq_beir.py`
++ `config/beir_simdq_base.yaml`.**
+
+### What's in the tree (added this plan)
+
+```
+docuverse/engines/retrieval/simdq/
+├── simdq_engine.py                  # NEW: SimdqEngine(RetrievalEngine)
+├── simdq_index.py                   # rewritten: family axis, D ∈ supported set
+├── projection.py                    # SUPPORTED_D, SUPPORTED_d, validate_D_d
+├── quantization.py                  # pack_hamming wrapper; D_FIXED removed
+└── _native/
+    ├── include/                     # all kernel headers: runtime d / words
+    ├── bindings/module.c            # runtime d on every entry; pack/scan_hamming
+    └── tests/test_kernels_multi_D.c # NEW: spot-check all (d, words) variants
+
+docuverse/engines/search_engine_config_params.py    # +8 simdq_* fields
+docuverse/utils/retrievers.py                       # +simdq factory branch
+
+tests/
+├── test_simdq_projection.py         # +parametrize over (D, d)
+├── test_simdq_quantization.py       # +multi-d round-trip + hamming round-trip
+├── test_simdq_index.py              # +multi-D asym + hamming family
+└── test_simdq_engine.py             # NEW: dispatch + ingest + search
+
+scripts/bench_simdq_beir.py          # NEW: R0–R6 recipe sweep driver
+config/beir_simdq_base.yaml          # NEW: base YAML for the sweep
+```
+
+### Test coverage
+
+- **C ctest** — 16 targets (14 from Plan 2 + 2 new `kernels_multi_D_*`),
+  all passing on every clean build.
+- **Python pytest** — 64 tests across the four simdq test files
+  (61 from `test_simdq_{projection,quantization,index}.py` after
+  parametrization + 3 from new `test_simdq_engine.py`), all passing.
+  `test_simdq_engine.py` `pytest.importorskip`s if sentence-transformers
+  is unavailable.
+
+### Architectural deviations from spec
+
+- **Runtime-`d` kernel parameterization** rather than compile-time-D
+  templates (spec §6). Justification: at `d ≥ 384` the inner loop is too
+  long for full unroll; benchmark-driven follow-up if perf shows otherwise.
+  The macro template re-include path remains a clean deferred follow-up.
+- **`SimdqConfig` realized as `simdq_*` fields on `RetrievalArguments`**
+  rather than a standalone dataclass (spec §8). Matches existing engine
+  conventions (`milvus_*`, `lancedb_*`, …).
+
+### Headline benchmark numbers
+
+To be populated after running `scripts/bench_simdq_beir.py` on a real
+BEIR dataset. Suggested first run: FiQA (~57k passages, encoder =
+granite-embedding-278m).
+
+### Open for v2 / Plan 3.5
+
+- Streaming-build path (avoids `4·N·D` peak RAM at ingest time).
+- Compile-time D templates if BEIR sweep shows runtime-d loses ≥10%
+  on memory-bound recipes.
+- Learned projection (full ASH training loop).
+- `global` quantization mode (one fp32 in metadata header) — Plan 2
+  shipped only `per_vector`.
+
+### The headline research question Plan 3 answers
 
 > **R0 vs R3 at the same byte budget** — does asymmetric b=2 alone
 > match or beat 1-bit Hamming + float rescore?
+
+Awaits the first `bench_simdq_beir.py` run on a real dataset to
+populate the answer in the recipe-sweep CSV.
