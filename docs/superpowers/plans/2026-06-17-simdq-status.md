@@ -329,3 +329,47 @@ granite-embedding-278m).
 
 Awaits the first `bench_simdq_beir.py` run on a real dataset to
 populate the answer in the recipe-sweep CSV.
+
+
+---
+
+## Test pyramid — final status (Phase A of 2026-06-18 test+docs plan)
+
+| # | Task | Commit | Status |
+|---|------|--------|--------|
+| T1 | Register pytest markers + hypothesis dev-dep | `ea2bbf2` | ✅ |
+| T2 | T3 gap-fill `test_simdq_index.py` (1 xfail follow-up) | `9aeb376` | ✅ |
+| T3 | T3 gap-fill `test_simdq_engine.py` | `deca8b5` | ✅ |
+| T4 | T3 gap-fill `test_simdq_quantization.py` | `a2953c6` | ✅ |
+| T5 | T3 gap-fill `test_simdq_projection.py` | `47352e4` | ✅ |
+| T6 | T4 Hypothesis property-based fuzz | `6a689c3` | ✅ |
+| T7 | T2 cross-SIMD parity test source | `220ffc0` | ✅ |
+| T8 | T2 ctest targets (3 new, 19/19 green) | `45e9b75` | ✅ |
+| T9 | SciFact baseline scaffold (null values) | `39213a2` | ✅ |
+| T10 | T5 SciFact recall regression (dormant gate) | `ae6f265` | ✅ |
+| T11 | T6 large-N stress tests | `19ee296` | ✅ |
+| T12 | TESTING.md runbook | `5a1a0e5` | ✅ |
+
+**Headline acceptance:**
+- `pytest tests/test_simdq_*` (fast lane, simdq-only): 90 passed, 1 xfailed
+  (`test_empty_corpus_rejected` — `SimdqIndex.build` accepts N=0 silently;
+  documented as a follow-up bug).
+- `cd _native/build && ctest`: 19/19 PASS (16 existing + 3 new parity tests).
+- `pytest -m slow`: SciFact recall test SKIPs cleanly until baseline is
+  populated via `SIMDQ_UPDATE_BASELINE=1` (one-shot granite-team run).
+- `pytest -m bench`: 4 stress tests in place (sigkill + concurrent verified
+  locally; RAM/throughput tests need 30GB+ fixture, exercised by the
+  granite-team bench-lane run).
+
+**Follow-ups captured in xfails or test comments:**
+- `SimdqIndex.build` should reject N=0 with a clear error rather than
+  building an empty index that crashes on `search`.
+- `simd_parity_dlopen` strict byte-equality may fail on AVX-512 hosts if
+  asym FP scores diverge in low bits; CMakeLists.txt block has a fallback
+  plan to a tolerant Python diff helper.
+- `SimdqIndex.save()` could grow a `pre_rename_hook=callable` parameter
+  to retire the `slow_save` monkey-patch in `test_save_sigkill_mid_build_atomic`.
+- `match[K]` in `EvaluationOutput` is "any-relevant-found-at-K"; for the
+  SciFact gate it stands in for Recall@100 and is self-consistent
+  (baseline + measured both come from the same scorer).
+
