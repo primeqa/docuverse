@@ -117,3 +117,47 @@ def test_validate_D_d_rejects_unsupported():
         validate_D_d(768, 256)
     with pytest.raises(ValueError, match="d must be"):
         validate_D_d(384, 768)
+
+
+# ---------------------------------------------------------------------------
+# T3 gap-fill: idempotence (W @ W.T == I_d) + cross-process seed determinism
+# ---------------------------------------------------------------------------
+
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+
+
+@pytest.mark.parametrize("D, d", [
+    (384, 384), (768, 768), (1024, 1024), (1536, 1536),
+    (768, 384), (1024, 512), (1536, 768),
+])
+def test_random_orthogonal_idempotence(D, d):
+    """W (d x D) from random_orthogonal must satisfy W @ W.T == I_d to 1e-5.
+
+    This is the Johnson-Lindenstrauss-flavored property the spec relies on:
+    rows of W are an orthonormal frame in R^D restricted to a d-dim subspace.
+    """
+    W = random_orthogonal(D=D, d=d, seed=42)
+    assert W.shape == (d, D)
+    gram = W @ W.T
+    np.testing.assert_allclose(gram, np.eye(d, dtype=W.dtype), atol=1e-5)
+
+
+def test_random_orthogonal_seed_deterministic_cross_process():
+    """Same seed in two separate Python processes must produce byte-identical W.
+
+    Catches RNG state leak through environment / module-level random state.
+    """
+    cmd = [
+        sys.executable, "-c",
+        "import sys; "
+        "from docuverse.engines.retrieval.simdq.projection import random_orthogonal; "
+        "W = random_orthogonal(D=768, d=384, seed=42); "
+        "sys.stdout.buffer.write(W.tobytes())",
+    ]
+    out1 = subprocess.check_output(cmd)
+    out2 = subprocess.check_output(cmd)
+    assert out1 == out2, "random_orthogonal not deterministic across processes"
+    # Also assert deterministic vs an in-process call.
+    W_inproc = random_orthogonal(D=768, d=384, seed=42)
+    assert out1 == W_inproc.tobytes()
