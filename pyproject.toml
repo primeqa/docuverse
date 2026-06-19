@@ -47,7 +47,8 @@ dependencies = [
     "jinja2>=3.1.6",
     "grpcio>=1.60",
     "scipy>=1.16",
-    "matplotlib>=3.7"
+    "matplotlib>=3.7",
+    "datasets>=2.14",
 ]
 
 [project.optional-dependencies]

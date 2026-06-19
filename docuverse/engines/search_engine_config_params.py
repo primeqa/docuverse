@@ -981,6 +981,40 @@ class DocUVerseConfig(GenericArguments):
         )
 
         self.ingest_params()
+        self._set_default_output_file()
+
+    def _set_default_output_file(self):
+        """Set a default output_file when none is provided.
+
+        Priority:
+        1. Already set in config — leave it alone.
+        2. index_name defined → ``output/<index_name>.jsonl``
+        3. Otherwise → ``output/<short_model>_<max_doc_length>_<stride>_<date>.jsonl``
+
+        Also syncs the value back to run_config so that a subsequent
+        ingest_params() call does not overwrite it with None.
+        """
+        if self.output_file:
+            return
+        from datetime import date
+        today = date.today().strftime("%Y%m%d")
+        if getattr(self, "index_name", None):
+            result = f"output/{self.index_name}.jsonl"
+        else:
+            short_model = (getattr(self, "model_name", None) or "unknown").split("/")[-1]
+            parts = [short_model]
+            max_len = getattr(self, "max_doc_length", None)
+            stride = getattr(self, "stride", None)
+            if max_len is not None:
+                parts.append(str(max_len))
+            if stride is not None:
+                parts.append(str(stride))
+            parts.append(today)
+            result = f"output/{'_'.join(parts)}.jsonl"
+        self.output_file = result
+        # Keep run_config in sync so re-ingestion cannot overwrite with None
+        if self.run_config is not None:
+            self.run_config.output_file = result
 
     def ingest_params(self):
         for _dict in [self.retriever_config, self.reranker_config, self.eval_config, self.run_config]:
@@ -1106,6 +1140,7 @@ class DocUVerseConfig(GenericArguments):
             # DocUVerseConfig._update(config1.run_config, config.run_config, DocUVerseConfig.default_run_config)
             config = config1
             config.ingest_params()
+        config._set_default_output_file()
         if config.retriever_config.num_preprocessor_threads > 1:
             os.environ['TOKENIZERS_PARALLELISM'] = "false"
         return config

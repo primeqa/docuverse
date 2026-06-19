@@ -241,9 +241,11 @@ class SearchEngine:
         import json
         if not self.write_necessary:
             return
-        prepare_for_save_and_backup(self.config.output_file, overwrite)
         if output_file is None:
             output_file = self.config.output_file
+        if output_file is None:
+            return
+        prepare_for_save_and_backup(output_file, overwrite)
         if not os.path.exists(os.path.dirname(output_file)):
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
         if file_is_of_type(output_file, extensions=".json"):

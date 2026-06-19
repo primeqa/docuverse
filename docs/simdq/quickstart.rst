@@ -29,7 +29,7 @@ Save the following as ``beir_scifact_simdq.yaml``:
 
     search_engine:
       db_engine: simdq
-      model_name: ibm-granite/granite-embedding-278m-multilingual-r2
+      model_name: ibm-granite/granite-embedding-278m-multilingual
       index_name: scifact_simdq_b2
       project_dir: /tmp/simdq_quickstart
       top_k: 100
@@ -45,12 +45,13 @@ Save the following as ``beir_scifact_simdq.yaml``:
       simdq_num_threads: 0
 
     retrieval:
-      input_passages: BeIR/scifact
-      input_queries: BeIR/scifact
+      input_passages: ds:BeIR/scifact:corpus
+      input_queries: ds:BeIR/scifact:queries
+      ignore_empty_questions: true
 
     evaluation:
-      metric: "ndcg,recall@100"
-      qrels: BeIR/scifact
+      eval_measure: "ndcg"
+      ranks: "10"
 
 See :doc:`parameters` for full ``simdq_*`` field reference.
 

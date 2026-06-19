@@ -2,6 +2,7 @@ import glob as glob_module
 import itertools
 import os
 import orjson
+from datasets import load_dataset
 import csv
 import re
 import time
@@ -501,11 +502,14 @@ class SearchData:
         # Expand globs / braces  (e.g. "data*.jsonl", "data{1,2,3}.jsonl.bz2")
         files = cls._expand_file_globs(files)
 
-        # Strip optional "product:" prefix from each entry
+        # Strip optional "product:" prefix from each entry (skip ds: specs)
         productId = uniform_product_name
         resolved_files = []
         for f in files:
-            if isinstance(f, str) and ":" in f and not f.startswith("/") and not os.path.exists(f):
+            if (isinstance(f, str) and ":" in f
+                    and not f.startswith("/")
+                    and not cls._is_hf_dataset_spec(f)
+                    and not os.path.exists(f)):
                 productId, f = f.split(":", 1)
             resolved_files.append(f)
         files = resolved_files
@@ -733,6 +737,11 @@ class SearchData:
                 expanded.append(f)
                 continue
 
+            # HuggingFace dataset specs are opaque — don't glob-expand them
+            if cls._is_hf_dataset_spec(f):
+                expanded.append(f)
+                continue
+
             # Strip the optional "product:" prefix before glob-testing
             prefix = ""
             raw = f
@@ -828,7 +837,95 @@ class SearchData:
         return results
 
     @staticmethod
+    def _is_hf_dataset_spec(s) -> bool:
+        return isinstance(s, str) and s.startswith("ds:")
+
+    @staticmethod
+    def _load_hf_dataset(spec: str) -> list:
+        """Load a HuggingFace dataset from a ``ds:<dataset>[:<subset>[:<split>]]`` spec.
+
+        Format examples::
+
+            ds:BeIR/scifact:corpus            # corpus, defaults to 'train' split
+            ds:BeIR/scifact:queries           # all queries; qrels auto-merged from 'test'
+            ds:BeIR/scifact:queries:test      # queries whose qrels live in 'test'
+            ds:BeIR/scifact:qrels:test        # raw qrels rows
+
+        When *subset* is ``queries``, the loader automatically tries to fetch the
+        matching qrels and merges relevance labels into each query dict under the
+        ``relevant`` key (list of corpus IDs).  It first tries a ``qrels`` subset
+        of the same dataset; if that fails it tries ``<dataset>-qrels`` (the BEIR
+        convention, e.g. ``BeIR/scifact-qrels``).  Queries that appear in no qrel
+        row get an empty list; set ``ignore_empty_questions: true`` in the config
+        to skip them during evaluation.
+
+        Field normalisation: BEIR records use ``_id`` rather than ``id``.  The
+        loader adds ``id`` as an alias so the standard data template works without
+        setting ``data_type: beir``.
+        """
+        rest = spec[3:]  # strip leading "ds:"
+        parts = rest.split(":")
+        dataset_name = parts[0]
+        subset = parts[1] if len(parts) > 1 else None
+        split = parts[2] if len(parts) > 2 else None
+
+        load_kwargs = {}
+        if subset:
+            load_kwargs["name"] = subset
+        if split:
+            load_kwargs["split"] = split
+
+        label = dataset_name + (f":{subset}" if subset else "") + (f":{split}" if split else "")
+        print(f"Loading HuggingFace dataset '{label}'...")
+
+        ds = load_dataset(dataset_name, **load_kwargs)
+
+        # No split given → DatasetDict; default to 'train'
+        if split is None and hasattr(ds, "keys"):
+            avail = list(ds.keys())
+            chosen = "train" if "train" in avail else avail[0]
+            print(f"  No split specified; using '{chosen}' (available: {avail})")
+            ds = ds[chosen]
+
+        records = [dict(row) for row in ds]
+
+        # Normalise BEIR's _id → id so the default data template resolves it
+        for rec in records:
+            if "_id" in rec and "id" not in rec:
+                rec["id"] = rec["_id"]
+
+        # For 'queries' subset: auto-merge qrels into a 'relevant' field
+        if subset == "queries":
+            qrels_split = split if split else "test"
+            try:
+                print(f"  Auto-loading qrels (split='{qrels_split}') for evaluation...")
+                # Some BEIR datasets embed qrels as a subset; others publish them as a
+                # separate dataset named <dataset>-qrels (e.g. BeIR/scifact-qrels).
+                try:
+                    qrels_ds = load_dataset(dataset_name, name="qrels", split=qrels_split)
+                except Exception:
+                    qrels_ds = load_dataset(f"{dataset_name}-qrels", split=qrels_split)
+                qrels_map: dict = {}
+                for row in qrels_ds:
+                    qid = str(row["query-id"])
+                    qrels_map.setdefault(qid, []).append(str(row["corpus-id"]))
+                for rec in records:
+                    qid = str(rec.get("_id", rec.get("id", "")))
+                    rec["relevant"] = qrels_map.get(qid, [])
+                print(f"  Merged qrels for {len(qrels_map)} queries.")
+            except Exception as exc:
+                print(f"  Warning: could not load qrels ({exc}); queries will have no relevance labels.")
+
+        return records
+
+    @staticmethod
     def _read_data(filename, max_num_docs=-1) -> List[Dict[str, str]]:
+        if SearchData._is_hf_dataset_spec(filename):
+            data = SearchData._load_hf_dataset(filename)
+            if max_num_docs > 0:
+                data = data[:max_num_docs]
+            return data
+
         data = None
 
         try:

@@ -8,12 +8,26 @@ Welcome to DocUVerse's documentation!
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :caption: Getting started:
 
    quickstart
    presets
    cli
-   simdq/index
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Reference:
+
+   config
+   data-formats
+   evaluation
+   reranking
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Backends:
+
+   backends/index
 
 Indices and tables
 ==================
