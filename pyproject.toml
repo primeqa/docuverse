@@ -92,6 +92,11 @@ dev = [
     "pytest-cov>=4",
     "ruff>=0.4",
 ]
+# `test` provides hypothesis for property-based testing of markers (slow, bench).
+test = [
+    "pytest>=8",
+    "hypothesis>=6.100",
+]
 all = [
     "pymilvus[model]>=2.5,<3",
     "chromadb>=1.0",
@@ -130,3 +135,11 @@ version = {file = "VERSION"}
 [tool.setuptools.package-data]
 "*" = ["*.cpp", "*.cu"]
 "docuverse" = ["presets/recipes/*.yaml", "resources/*.json"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: tests that take >10s (SciFact recall regression). Run via `pytest -m slow`.",
+    "bench: stress / large-N tests (50M vectors). Run via `pytest -m bench`.",
+]
+# Default `pytest tests/` excludes both — fast lane stays under 30s.
+addopts = "-m 'not slow and not bench'"
