@@ -1,9 +1,10 @@
 """T5 - SciFact recall regression: ingest + R0..R5 search, gate on baseline JSON.
 
 Skips when the baseline contains nulls (the dormant CI gate). Populated by
-running the test once with the SIMDQ_UPDATE_BASELINE=1 env var:
+running the test once with the --update-baseline CLI flag (registered in
+tests/conftest.py):
 
-    SIMDQ_UPDATE_BASELINE=1 pytest tests/test_simdq_recall.py -m slow
+    pytest tests/test_simdq_recall.py -m slow --update-baseline
 
 After that run, tests/fixtures/simdq_scifact_baseline.json is rewritten with
 measured values; commit it together with the kernel/encoder change that
@@ -18,7 +19,6 @@ same scorer.
 from __future__ import annotations
 
 import json
-import os
 import platform
 import time
 from pathlib import Path
@@ -154,16 +154,16 @@ def _run_recipe(recipe_id, overrides, passages, queries, project_dir: Path):
 
 
 @pytest.mark.slow
-def test_scifact_recall_baseline(scifact, tmp_path_factory):
+def test_scifact_recall_baseline(scifact, tmp_path_factory, request):
     passages, queries = scifact
     baseline = _load_baseline()
-    update = os.environ.get("SIMDQ_UPDATE_BASELINE", "") == "1"
+    update = request.config.getoption("--update-baseline")
     project_dir = tmp_path_factory.mktemp("scifact_simdq")
 
     if not update and not _baseline_complete(baseline):
         pytest.skip(
             "SciFact baseline contains null values. Populate with: "
-            "SIMDQ_UPDATE_BASELINE=1 pytest tests/test_simdq_recall.py -m slow"
+            "pytest tests/test_simdq_recall.py -m slow --update-baseline"
         )
 
     measured = {}
@@ -176,7 +176,7 @@ def test_scifact_recall_baseline(scifact, tmp_path_factory):
         baseline["captured_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         baseline["captured_on"] = platform.processor() or platform.machine()
         _save_baseline(baseline)
-        pytest.skip("Baseline updated; re-run without SIMDQ_UPDATE_BASELINE=1 to gate.")
+        pytest.skip("Baseline updated; re-run without --update-baseline to gate.")
 
     tol = baseline["tolerance"]
     failures = []

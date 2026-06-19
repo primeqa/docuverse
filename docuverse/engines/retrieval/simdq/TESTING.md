@@ -28,17 +28,14 @@ populate (or refresh after a kernel/encoder change that legitimately moves
 NDCG@10 or Recall@100):
 
 ```bash
-SIMDQ_UPDATE_BASELINE=1 pytest tests/test_simdq_recall.py -m slow
+pytest tests/test_simdq_recall.py -m slow --update-baseline
 git diff tests/fixtures/simdq_scifact_baseline.json
 git commit tests/fixtures/simdq_scifact_baseline.json -m "Update SciFact baseline: <one-line reason>"
 ```
 
 The commit message must name the kernel/encoder change that justified the
 move. The baseline JSON is the single source of truth for the recall gate.
-
-`SIMDQ_UPDATE_BASELINE=1` is an environment variable, not a CLI flag —
-the test file lives in `tests/` and there's no `tests/conftest.py` to
-register a custom `--update-baseline` argument.
+The `--update-baseline` CLI flag is registered in `tests/conftest.py`.
 
 ## Cross-SIMD parity (T2)
 
