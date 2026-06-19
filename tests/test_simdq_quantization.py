@@ -122,3 +122,66 @@ def test_pack_hamming_round_trip(d):
             bit = bool((code0[w] >> np.uint64(b)) & np.uint64(1))
             assert bit == (Y[0, w * 64 + b] >= 0.0), \
                 f"bit mismatch at w={w} b={b}"
+
+
+# ---------------------------------------------------------------------------
+# T3 gap-fill: heavy-tailed inputs, all-zero rows, b=4 saturation
+# ---------------------------------------------------------------------------
+
+
+def test_cauchy_distributed_inputs():
+    """Heavy-tailed inputs (Cauchy) must not produce NaN scales or codes."""
+    rng = np.random.default_rng(42)
+    Y = rng.standard_cauchy(size=(256, 768)).astype(np.float32)
+    # Clamp to finite to avoid pathological infinities (Cauchy can produce them):
+    Y = np.clip(Y, -1e6, 1e6)
+    scales = fit_scales(Y)
+    assert np.all(np.isfinite(scales))
+    assert np.all(scales > 0)
+    codes = pack(Y, scales, b=2)
+    assert codes.dtype == np.uint8
+    levels = unpack_levels(codes, N=Y.shape[0], D=Y.shape[1], b=2)
+    assert np.all(np.isfinite(levels))
+
+
+def test_all_zero_vector():
+    """A row of all zeros must produce a finite scale and a code (no NaN)."""
+    Y = np.zeros((4, 768), dtype=np.float32)
+    Y[1] = 1.0  # one non-zero row to keep the corpus non-degenerate
+    scales = fit_scales(Y)
+    # Per fit_scales docstring: zero-norm rows get scale 1.0 so divide-by-scale
+    # during pack does not blow up.
+    assert np.all(np.isfinite(scales))
+    assert scales[0] == 1.0
+    assert scales[2] == 1.0
+    assert scales[3] == 1.0
+    codes = pack(Y, scales, b=2)
+    assert codes.dtype == np.uint8
+    levels = unpack_levels(codes, N=Y.shape[0], D=Y.shape[1], b=2)
+    assert np.all(np.isfinite(levels))
+
+
+def test_b4_saturation_at_extreme_magnitudes():
+    """b=4 has 16 levels in {-15,-13,...,15}; values whose normalized magnitude
+    exceeds the dynamic range must saturate to +/-15, not wrap.
+
+    Multiplying a whole row by a constant doesn't force saturation -- fit_scales
+    is per-vector RMS, so y/scale is scale-invariant. To produce a per-element
+    value that exceeds b=4's range we use a single-spike row: Y[0,0]=1 with
+    other elements tiny. Then scale_0 = 1/sqrt(D), and Y[0,0]/scale_0 = sqrt(D)
+    which is ~27.7 for D=768 -- well outside b=4's [-15, 15], must saturate.
+    """
+    D = 768
+    rng = np.random.default_rng(99)
+    Y = (rng.standard_normal(size=(64, D)) * 1e-3).astype(np.float32)
+    Y[0, 0] = 1.0  # dominant single element
+    Y[1, 0] = -1.0  # negative dominant element to test saturation at -15
+    scales = fit_scales(Y)
+    codes = pack(Y, scales, b=4)
+    levels = unpack_levels(codes, N=Y.shape[0], D=D, b=4)
+    valid_b4 = set(range(-15, 16, 2))
+    extras = set(np.unique(levels).tolist()) - valid_b4
+    assert not extras, f"levels outside b=4 set (wrap-around?): extras={extras}"
+    # Dominant elements must saturate at the endpoints, not at a mid-range value.
+    assert levels[0, 0] == 15, f"+ saturation failed: levels[0,0]={levels[0, 0]}"
+    assert levels[1, 0] == -15, f"- saturation failed: levels[1,0]={levels[1, 0]}"
