@@ -110,3 +110,78 @@ def test_dispatch_raises_for_bad_family():
         eng = create_retrieval_engine(cfg)
         with pytest.raises(ValueError, match="family must be"):
             eng.ingest(FakeCorpus(_planted_corpus_docs()), update=False)
+
+
+# ---------------------------------------------------------------------------
+# T3 gap-fill: factory dispatch over recipes, delete+reingest, missing encoder
+# ---------------------------------------------------------------------------
+
+# Recipes mirror scripts/bench_simdq_beir.py. R4/R5 (random_orthogonal at d=D/2)
+# need a real-D encoder; they're covered end-to-end in T10 (recall regression).
+RECIPE_CONFIGS = [
+    ("R0", {"simdq_family": "hamming",    "simdq_b": 1,
+            "simdq_projection": "identity", "simdq_d": None,
+            "simdq_store_floats": True,  "simdq_rescore_alpha": 10}),
+    ("R1", {"simdq_family": "asymmetric", "simdq_b": 1,
+            "simdq_projection": "identity", "simdq_d": None,
+            "simdq_store_floats": False, "simdq_rescore_alpha": 1}),
+    ("R2", {"simdq_family": "asymmetric", "simdq_b": 1,
+            "simdq_projection": "identity", "simdq_d": None,
+            "simdq_store_floats": True,  "simdq_rescore_alpha": 10}),
+    ("R3", {"simdq_family": "asymmetric", "simdq_b": 2,
+            "simdq_projection": "identity", "simdq_d": None,
+            "simdq_store_floats": False, "simdq_rescore_alpha": 1}),
+]
+
+
+@pytest.mark.parametrize(
+    "recipe_id, overrides", RECIPE_CONFIGS, ids=[r[0] for r in RECIPE_CONFIGS]
+)
+def test_factory_dispatch_per_recipe(recipe_id, overrides):
+    """create_retrieval_engine resolves to a SimdqEngine for every recipe."""
+    pytest.importorskip("sentence_transformers")
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _make_config(td)
+        for k, v in overrides.items():
+            setattr(cfg, k, v)
+        eng = create_retrieval_engine(cfg)
+        assert type(eng).__name__ == "SimdqEngine"
+
+
+def test_delete_then_reingest(fake_corpus):
+    """delete_index then re-ingest must rebuild a working index."""
+    pytest.importorskip("sentence_transformers")
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _make_config(td)
+        eng = create_retrieval_engine(cfg)
+        eng.ingest(fake_corpus, update=False)
+        assert eng.has_index(cfg.index_name)
+        eng.delete_index(cfg.index_name)
+        assert not eng.has_index(cfg.index_name)
+        # Second ingest should rebuild cleanly.
+        eng2 = create_retrieval_engine(cfg)
+        eng2.ingest(fake_corpus, update=False)
+        assert eng2.has_index(cfg.index_name)
+
+
+def test_missing_encoder_raises_clean_error(fake_corpus):
+    """A non-existent HF model id must produce a clean error from a known
+    family (OSError/RuntimeError/ValueError), not an opaque AttributeError
+    from inside DenseEmbeddingFunction's lazy attrs."""
+    pytest.importorskip("sentence_transformers")
+    bad_id = "this/definitely-does-not-exist-on-hf-12345"
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _make_config(td)
+        cfg.model_name = bad_id
+        with pytest.raises((OSError, RuntimeError, ValueError)) as ei:
+            eng = create_retrieval_engine(cfg)
+            # Loader is lazy; ingest forces the encoder download.
+            eng.ingest(fake_corpus, update=False)
+        msg = str(ei.value).lower()
+        assert (bad_id in str(ei.value)
+                or "not a valid" in msg
+                or "not found" in msg
+                or "is not a local folder" in msg
+                or "couldn't connect" in msg
+                or "huggingface" in msg), \
+            f"missing-encoder error message not informative: {ei.value!r}"
