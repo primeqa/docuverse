@@ -210,3 +210,101 @@ def test_hamming_family_round_trip(D, tmp_path):
     assert iN.shape == (10,) and sN.shape == (10,)
     # Hamming "scores" are -distance; descending order means smaller distances first.
     assert np.all(np.diff(sN) <= 1e-6)
+
+
+# ---------------------------------------------------------------------------
+# T3 gap-fill: empty corpus, N=1, K=1, K_prime extremes, save->load->save,
+# corrupted meta.json, format_version mismatch.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    reason="SimdqIndex.build silently accepts N=0; search later crashes with "
+           "IndexError. Build should validate N>=1 up front. Follow-up bug.",
+    strict=True,
+)
+def test_empty_corpus_rejected(tmp_index_dir):
+    """Building from a (0, D) array must error cleanly, not segfault."""
+    Y = np.zeros((0, 768), dtype=np.float32)
+    with pytest.raises((ValueError, RuntimeError)):
+        SimdqIndex.build(vectors=Y, b=2, store_floats=False)
+
+
+def test_single_vector_corpus(tmp_index_dir):
+    """N=1 must round-trip and search must return idx=0."""
+    Y = _gaussian(1, 768, seed=11)
+    idx = SimdqIndex.build(vectors=Y, b=2, store_floats=True)
+    idx.save(tmp_index_dir)
+    loaded = SimdqIndex.load(tmp_index_dir)
+    q = Y[0]
+    indices, _ = loaded.search(q, K=1, K_prime=1)
+    assert int(indices[0]) == 0
+
+
+def test_k_equals_one(tmp_index_dir):
+    """K=1 codes-only must return exactly 1 index."""
+    Y = _gaussian(512, 768, seed=12)
+    idx = SimdqIndex.build(vectors=Y, b=2, store_floats=False)
+    indices, scores = idx.search(Y[0], K=1, K_prime=1)
+    assert len(indices) == 1
+    assert len(scores) == 1
+
+
+def test_kprime_max_256(tmp_index_dir):
+    """K_prime=256 must work; K_prime=257 must raise."""
+    Y = _gaussian(1024, 768, seed=13)
+    idx = SimdqIndex.build(vectors=Y, b=2, store_floats=True)
+    indices, _ = idx.search(Y[0], K=10, K_prime=256)
+    assert len(indices) == 10
+    with pytest.raises(ValueError):
+        idx.search(Y[0], K=10, K_prime=257)
+
+
+def test_save_load_save_metadata_stable(tmp_index_dir):
+    """save -> load -> save -> load: meta.json content must match between saves."""
+    Y = _gaussian(256, 768, seed=14)
+    idx1 = SimdqIndex.build(vectors=Y, b=2, store_floats=True)
+    idx1.save(tmp_index_dir)
+    meta1 = (tmp_index_dir / "meta.json").read_text()
+
+    idx2 = SimdqIndex.load(tmp_index_dir)
+    other = tmp_index_dir.parent / "idx2"
+    idx2.save(other)
+    meta2 = (other / "meta.json").read_text()
+
+    # Drop fields that legitimately may move between saves (e.g. timestamps);
+    # for now there are none, so the parsed JSON must match exactly.
+    assert json.loads(meta1) == json.loads(meta2)
+
+
+def test_corrupted_meta_json_rejected(tmp_index_dir):
+    """A meta.json that doesn't parse as JSON must produce a clear error."""
+    Y = _gaussian(64, 768, seed=15)
+    idx = SimdqIndex.build(vectors=Y, b=2, store_floats=False)
+    idx.save(tmp_index_dir)
+    (tmp_index_dir / "meta.json").write_text("{not valid json")
+    with pytest.raises(Exception) as ei:
+        SimdqIndex.load(tmp_index_dir)
+    # Don't pin the exact exception type (json.JSONDecodeError vs ValueError);
+    # require the message is informative about the JSON parse failure.
+    msg = str(ei.value).lower()
+    assert "json" in msg or "decode" in msg or "expecting" in msg
+
+
+def test_format_version_mismatch_rejected(tmp_index_dir):
+    """Loader rejects a future format_version with a message naming both versions."""
+    Y = _gaussian(64, 768, seed=16)
+    idx = SimdqIndex.build(vectors=Y, b=2, store_floats=False)
+    idx.save(tmp_index_dir)
+
+    meta_path = tmp_index_dir / "meta.json"
+    meta = json.loads(meta_path.read_text())
+    meta["format_version"] = 999
+    meta_path.write_text(json.dumps(meta))
+
+    with pytest.raises(ValueError) as ei:
+        SimdqIndex.load(tmp_index_dir)
+    msg = str(ei.value)
+    assert "format_version" in msg
+    assert "999" in msg
+    assert "1" in msg  # the current version must be named too
