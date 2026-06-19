@@ -369,3 +369,24 @@ populate the answer in the recipe-sweep CSV.
   SciFact gate it stands in for Recall@100 and is self-consistent
   (baseline + measured both come from the same scorer).
 
+
+---
+
+## Practitioner docs — final status (Phase B of 2026-06-18 test+docs plan)
+
+| # | Task | Commit | Status |
+|---|------|--------|--------|
+| T14 | `docs/simdq/index.rst` landing page | `fb70845` | ✅ |
+| T15 | `docs/simdq/quickstart.rst` | `aeca8df` | ✅ |
+| T16 | `docs/simdq/parameters.rst` | `3ef312a` | ✅ |
+| T17 | `docs/simdq/tuning.rst` | `9308058` | ✅ |
+| T18 | `docs/simdq/adapting.rst` | `0bf4435` | ✅ |
+| T19 | `docs/simdq/troubleshooting.rst` | `73e574e` | ✅ |
+| T20 | Wire `simdq/index` into top-level toctree | `7091b36` | ✅ |
+| T21 | `.github/workflows/docs.yml` (Sphinx CI, `-W`) | `c054119` | ✅ |
+
+**Headline acceptance:** `cd docs && make html SPHINXOPTS=-W` exits 0
+on a clean build (no warnings → CI gate is green); `docs/simdq/`
+renders as a sidebar section in the rendered site; CI builds docs on
+`docs/**`-only PRs without dragging in the full pytest suite.
+
