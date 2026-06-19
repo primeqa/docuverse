@@ -1,0 +1,18 @@
+{
+  "encoder": "ibm-granite/granite-embedding-278m-multilingual-r2",
+  "scifact_revision": null,
+  "captured_at": null,
+  "captured_on": null,
+  "tolerance": {
+    "ndcg10": 0.005,
+    "recall100": 0.01
+  },
+  "recipes": {
+    "R0": {"ndcg10": null, "recall100": null},
+    "R1": {"ndcg10": null, "recall100": null},
+    "R2": {"ndcg10": null, "recall100": null},
+    "R3": {"ndcg10": null, "recall100": null},
+    "R4": {"ndcg10": null, "recall100": null},
+    "R5": {"ndcg10": null, "recall100": null}
+  }
+}
