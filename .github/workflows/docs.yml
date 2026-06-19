@@ -1,0 +1,22 @@
+name: Sphinx docs
+on:
+  push:
+    branches: [main, "v*"]
+    paths: ["docs/**"]
+  pull_request:
+    paths: ["docs/**"]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install Sphinx + theme
+        run: |
+          pip install sphinx sphinx_rtd_theme
+      - name: Build with warnings-as-errors
+        run: |
+          cd docs
+          make html SPHINXOPTS="-W"
