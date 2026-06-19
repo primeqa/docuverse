@@ -13,6 +13,7 @@ Welcome to DocUVerse's documentation!
    quickstart
    presets
    cli
+   simdq/index
 
 Indices and tables
 ==================
