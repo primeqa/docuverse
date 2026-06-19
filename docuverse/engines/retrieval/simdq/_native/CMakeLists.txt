@@ -132,3 +132,44 @@ target_compile_options(test_kernels_multi_D_avx2 PRIVATE -O3 -mavx2 -mfma -mpopc
 target_include_directories(test_kernels_multi_D_avx2 PRIVATE include)
 target_link_libraries(test_kernels_multi_D_avx2 PRIVATE OpenMP::OpenMP_C m)
 add_test(NAME kernels_multi_D_avx2 COMMAND test_kernels_multi_D_avx2)
+
+# ---- T2: cross-SIMD parity ----
+#
+# Same source compiled twice. simd_parity_native runs whichever SIMD path
+# -march=native picks (AVX-512 on Sapphire Rapids / AMD Zen4+, AVX2 on
+# older AMD/Intel). simd_parity_avx2 forces the AVX2 fallback. Each
+# binary writes simd_parity_<arg>.out; simd_parity_dlopen byte-diffs
+# the pair via cmake -E compare_files.
+#
+# Note: cmake -E compare_files is strict byte-equality. Hamming is
+# integer-only and bit-identical across paths; asym scores may differ
+# in low FP bits on hosts where AVX-512 actually changes the reduction
+# order. If simd_parity_dlopen fails on a host that has AVX-512, the
+# fix is to replace the diff command with a tolerant Python helper
+# (tools/parity_check.py) that strict-checks the hamming section and
+# tolerance-checks the asym section. Until that happens, the strict
+# diff is the simpler and tighter assertion.
+
+add_executable(test_simd_parity_native tests/test_simd_parity.c)
+target_compile_options(test_simd_parity_native PRIVATE ${COMMON_FLAGS})
+target_include_directories(test_simd_parity_native PRIVATE include)
+target_link_libraries(test_simd_parity_native PRIVATE OpenMP::OpenMP_C m)
+
+add_executable(test_simd_parity_avx2 tests/test_simd_parity.c)
+target_compile_options(test_simd_parity_avx2 PRIVATE
+    -O3 -mavx2 -mfma -mpopcnt -mno-avx512f)
+target_include_directories(test_simd_parity_avx2 PRIVATE include)
+target_link_libraries(test_simd_parity_avx2 PRIVATE OpenMP::OpenMP_C m)
+
+# Per-binary smoke (writes its output file with no assertions; the diff
+# happens in simd_parity_dlopen).
+add_test(NAME simd_parity_native COMMAND test_simd_parity_native native)
+add_test(NAME simd_parity_avx2   COMMAND test_simd_parity_avx2   avx2)
+set_tests_properties(simd_parity_native simd_parity_avx2
+    PROPERTIES FIXTURES_SETUP simd_parity_outputs)
+
+add_test(NAME simd_parity_dlopen
+    COMMAND ${CMAKE_COMMAND} -E compare_files
+        simd_parity_native.out simd_parity_avx2.out)
+set_tests_properties(simd_parity_dlopen
+    PROPERTIES FIXTURES_REQUIRED simd_parity_outputs)
