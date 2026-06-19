@@ -338,7 +338,7 @@ populate the answer in the recipe-sweep CSV.
 | # | Task | Commit | Status |
 |---|------|--------|--------|
 | T1 | Register pytest markers + hypothesis dev-dep | `ea2bbf2` | ✅ |
-| T2 | T3 gap-fill `test_simdq_index.py` (1 xfail follow-up) | `9aeb376` | ✅ |
+| T2 | T3 gap-fill `test_simdq_index.py` | `9aeb376` | ✅ |
 | T3 | T3 gap-fill `test_simdq_engine.py` | `deca8b5` | ✅ |
 | T4 | T3 gap-fill `test_simdq_quantization.py` | `a2953c6` | ✅ |
 | T5 | T3 gap-fill `test_simdq_projection.py` | `47352e4` | ✅ |
@@ -351,9 +351,7 @@ populate the answer in the recipe-sweep CSV.
 | T12 | TESTING.md runbook | `5a1a0e5` | ✅ |
 
 **Headline acceptance:**
-- `pytest tests/test_simdq_*` (fast lane, simdq-only): 90 passed, 1 xfailed
-  (`test_empty_corpus_rejected` — `SimdqIndex.build` accepts N=0 silently;
-  documented as a follow-up bug).
+- `pytest tests/test_simdq_*` (fast lane, simdq-only): 91 passed, 0 xfail.
 - `cd _native/build && ctest`: 19/19 PASS (16 existing + 3 new parity tests).
 - `pytest -m slow`: SciFact recall test SKIPs cleanly until baseline is
   populated via `SIMDQ_UPDATE_BASELINE=1` (one-shot granite-team run).
@@ -361,9 +359,7 @@ populate the answer in the recipe-sweep CSV.
   locally; RAM/throughput tests need 30GB+ fixture, exercised by the
   granite-team bench-lane run).
 
-**Follow-ups captured in xfails or test comments:**
-- `SimdqIndex.build` should reject N=0 with a clear error rather than
-  building an empty index that crashes on `search`.
+**Follow-ups captured in test comments:**
 - `simd_parity_dlopen` strict byte-equality may fail on AVX-512 hosts if
   asym FP scores diverge in low bits; CMakeLists.txt block has a fallback
   plan to a tolerant Python diff helper.

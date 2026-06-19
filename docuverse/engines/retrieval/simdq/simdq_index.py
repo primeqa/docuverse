@@ -80,6 +80,11 @@ class SimdqIndex:
     ) -> "SimdqIndex":
         if vectors.ndim != 2:
             raise ValueError(f"simdq build: vectors must be 2-D; got {vectors.shape}")
+        if vectors.shape[0] == 0:
+            raise ValueError(
+                f"simdq build: N must be >= 1; got an empty corpus with shape "
+                f"{vectors.shape}"
+            )
         D = int(vectors.shape[1])
         if D not in SUPPORTED_D:
             raise ValueError(f"simdq build: D must be one of {SUPPORTED_D}; got {D}")

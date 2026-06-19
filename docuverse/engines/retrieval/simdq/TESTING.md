@@ -118,7 +118,7 @@ pip install datasets
 - **`pytest -m bench` OOMs** — `SIMDQ_STRESS_N=10000000` is the default;
   drop to `1000000` if 30GB fp32 doesn't fit. The throughput floor of 10M
   cmp/s/thread is independent of N within reasonable ranges.
-- **`pytest tests/test_simdq_index.py::test_empty_corpus_rejected` is XFAIL** —
-  expected. `SimdqIndex.build` currently accepts `(0, D)` arrays silently
-  and the later `search` crashes with `IndexError`. Build should validate
-  `N >= 1` up front; the xfail captures the follow-up.
+- **`pytest tests/test_simdq_index.py::test_empty_corpus_rejected`** —
+  asserts that `SimdqIndex.build` rejects `(0, D)` arrays with a clear
+  ValueError ("N must be >= 1"). If it ever fails, build silently
+  accepted an empty corpus again — fix in `simdq_index.py:build()`.

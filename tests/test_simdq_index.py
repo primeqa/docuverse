@@ -218,15 +218,10 @@ def test_hamming_family_round_trip(D, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="SimdqIndex.build silently accepts N=0; search later crashes with "
-           "IndexError. Build should validate N>=1 up front. Follow-up bug.",
-    strict=True,
-)
 def test_empty_corpus_rejected(tmp_index_dir):
-    """Building from a (0, D) array must error cleanly, not segfault."""
+    """Building from a (0, D) array must error cleanly with a clear message."""
     Y = np.zeros((0, 768), dtype=np.float32)
-    with pytest.raises((ValueError, RuntimeError)):
+    with pytest.raises(ValueError, match="N must be >= 1"):
         SimdqIndex.build(vectors=Y, b=2, store_floats=False)
 
 
