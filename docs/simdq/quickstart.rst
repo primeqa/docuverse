@@ -69,9 +69,21 @@ Run it
 Expected output
 ---------------
 
-After embedding and indexing (a few minutes on first run) you should see::
+After embedding and indexing (a few minutes on first run) you should see
+approximately::
 
-    ndcg@10: 0.693
+    ndcg@10: 0.487
+
+This reflects 2-bit asymmetric quantisation with a two-stage float16
+rescore over 256 candidates (``simdq_rescore_alpha: 10``, ``top_k: 100``).
+Exact float16 retrieval on this corpus gives ~0.526; the ~0.04 gap is the
+approximation cost of the quantised scan capped at K'=256.
+
+.. note::
+
+   ``ibm-granite/granite-embedding-278m-multilingual`` scores lower on
+   SciFact than a model tuned for biomedical English text. The simdq
+   numbers reflect model quality, not a bug in the index.
 
 The on-disk index lives at::
 
