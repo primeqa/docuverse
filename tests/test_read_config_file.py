@@ -111,3 +111,5 @@ def test_build_render_context_does_not_mutate_input():
     ctx = _build_render_context(cfg)
     ctx["new_key"] = "x"
     assert "new_key" not in cfg
+    # Pin the shallow-copy contract: nested dicts are shared by design.
+    assert ctx["a"] is cfg["a"]
