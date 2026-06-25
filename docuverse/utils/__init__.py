@@ -268,6 +268,8 @@ def _apply_overrides(config: dict[str, Any],
     - **Dotted path** (key contains "."): target exactly one nested location,
       creating intermediate dicts as needed. The value is assigned at the
       target location (dict/list values REPLACE rather than deep-merge).
+      If an intermediate segment exists but is not a dict, it is replaced
+      with a fresh dict (matching ``deep_merge_overrides``).
     - **Leaf-key match** (no "."): every leaf in the tree whose key matches
       is replaced. Preserves the historical ``_replace_leaf_keys`` behavior.
 

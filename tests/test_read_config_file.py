@@ -76,3 +76,11 @@ def test_apply_overrides_non_scalar_leaf_via_dotted_path():
     base = {"retriever": {"params": {"a": 1}}}
     out = _apply_overrides(base, {"retriever.params": {"b": 2}})
     assert out == {"retriever": {"params": {"b": 2}}}
+
+
+def test_apply_overrides_dotted_overwrites_non_dict_intermediate():
+    """When an intermediate segment is not a dict, the dotted path replaces it
+    with a fresh dict and assigns the leaf. Matches deep_merge_overrides."""
+    base = {"retriever": "scalar_value"}
+    out = _apply_overrides(base, {"retriever.model_name": "x"})
+    assert out == {"retriever": {"model_name": "x"}}
