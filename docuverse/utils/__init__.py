@@ -259,6 +259,48 @@ def _replace_leaf_keys(config: dict[str, Any], override_vals: dict[str, str]) ->
     return config
 
 
+def _apply_overrides(config: dict[str, Any],
+                     override_vals: dict[str, Any] | None) -> dict[str, Any]:
+    """Return a new dict with override_vals applied to a deep copy of config.
+
+    Override keys are interpreted in two modes:
+
+    - **Dotted path** (key contains "."): target exactly one nested location,
+      creating intermediate dicts as needed. The value is assigned at the
+      target location (dict/list values REPLACE rather than deep-merge).
+    - **Leaf-key match** (no "."): every leaf in the tree whose key matches
+      is replaced. Preserves the historical ``_replace_leaf_keys`` behavior.
+
+    Both forms may be mixed in the same call. The base dict is never mutated.
+    """
+    if not override_vals:
+        return copy.deepcopy(config)
+
+    dotted = {k: v for k, v in override_vals.items() if "." in k}
+    flat   = {k: v for k, v in override_vals.items() if "." not in k}
+
+    result = copy.deepcopy(config)
+
+    # Dotted-path overrides: walk to the target, creating intermediate dicts,
+    # and replace the value at the leaf segment.
+    for dotted_key, value in dotted.items():
+        segments = dotted_key.split(".")
+        cursor = result
+        for segment in segments[:-1]:
+            existing = cursor.get(segment)
+            if not isinstance(existing, dict):
+                existing = {}
+                cursor[segment] = existing
+            cursor = existing
+        cursor[segments[-1]] = value
+
+    # Leaf-key match for non-dotted keys, recursively replacing matching leaves.
+    if flat:
+        result = _replace_leaf_keys(result, flat)
+
+    return result
+
+
 def read_config_file(config_file, override_vals: dict[str, str]=None) -> dict[str, Any]:
     """
     Reads a configuration file, resolves templated variables within the file, and returns the
