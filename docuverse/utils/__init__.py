@@ -131,8 +131,12 @@ MAX_RESOLUTION_ITERATIONS = 10
 
 def _resolve_variable(global_dict, variable_name, parent_key):
     """
+    [Deprecated as of the Jinja2 redesign. Retained for backward compatibility but
+    no longer called by read_config_file. Use the Jinja2 pipeline (StrictUndefined +
+    top-level context) instead.]
+
     Resolve a variable by searching through parent keys in the configuration.
-    
+
     Args:
         global_dict (dict): The full configuration dictionary
         variable_name (str): The variable name to resolve. The key can be multi-level - levels are split with '.'.
@@ -162,8 +166,12 @@ def _resolve_variable(global_dict, variable_name, parent_key):
 
 def _process_dictionary(local_dict, global_dict, parent_key=""):
     """
+    [Deprecated as of the Jinja2 redesign. Retained for backward compatibility but
+    no longer called by read_config_file. Use the Jinja2 pipeline (StrictUndefined +
+    top-level context) instead.]
+
     Process a dictionary to resolve templated variables.
-    
+
     Args:
         local_dict (dict): The dictionary to process
         global_dict (dict): The full configuration dictionary
@@ -426,9 +434,12 @@ def read_config_file(config_file, override_vals: dict[str, Any] = None) -> dict[
                                    os.path.basename(config_file))
 
     config = load_config_from_file(config_file)
-    config = _apply_overrides(config, override_vals)
     if not isinstance(config, dict):
-        return config  # Non-dict YAML (e.g., list at root) — nothing to render.
+        raise RuntimeError(
+            f"Config file {config_file!r} must have a mapping (dict) at the root, "
+            f"got {type(config).__name__}"
+        )
+    config = _apply_overrides(config, override_vals)
     ctx = _build_render_context(config)
     return _render_with_jinja2(config, ctx)
 

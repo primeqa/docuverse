@@ -272,3 +272,50 @@ def test_read_config_file_undefined_variable_raises(tmp_path):
         read_config_file(path)
     assert "retriever.input" in str(excinfo.value)
     assert "benchmar_dir" in str(excinfo.value)
+
+
+def test_read_config_file_non_dict_root_raises(tmp_path):
+    """Root must be a mapping; lists/scalars at the top are rejected explicitly."""
+    path = _write_yaml(tmp_path, "list_root.yaml", """
+        - one
+        - two
+    """)
+    with pytest.raises(RuntimeError) as excinfo:
+        read_config_file(path)
+    assert "mapping" in str(excinfo.value).lower() or "dict" in str(excinfo.value).lower()
+
+
+def test_read_config_file_json_with_template(tmp_path):
+    """JSON configs render through the same Jinja2 pipeline as YAML."""
+    import json
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps({"name": "granite", "model": "{{ name }}-base"}))
+    out = read_config_file(str(path))
+    assert out == {"name": "granite", "model": "granite-base"}
+
+
+def test_read_config_file_no_parent_scope_lookup(tmp_path):
+    """Variables resolve from the top level (or via dotted path), not from sibling/parent scope.
+
+    The legacy resolver walked up the parent dotted path to find a matching key. Jinja2
+    only resolves against the top-level context, so a sibling-scoped reference must be
+    written with an explicit dotted path.
+    """
+    # `name` exists ONLY inside `retriever`; the bare `{{ name }}` no longer resolves.
+    path = _write_yaml(tmp_path, "c.yaml", """
+        retriever:
+            name: granite
+            label: "{{ name }}"
+    """)
+    with pytest.raises(RuntimeError) as excinfo:
+        read_config_file(path)
+    assert "name" in str(excinfo.value)
+
+    # The dotted form works:
+    path2 = _write_yaml(tmp_path, "c2.yaml", """
+        retriever:
+            name: granite
+            label: "{{ retriever.name }}"
+    """)
+    out = read_config_file(path2)
+    assert out["retriever"]["label"] == "granite"
