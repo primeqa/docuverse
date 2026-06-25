@@ -4,7 +4,7 @@ retriever:
     # input_passages: "benchmark/ibm_search/selected_docs.jsonl.bz2"
     input_passages: "benchmark/ibm_search/selected_docs.jsonl"
     input_queries: "benchmark/ibm_search/filtered_questions_combined_labels_with_dccs.csv"
-    cache_dir: "{{project_dir}}/cache"
+    cache_dir: "{{retriever.project_dir}}/cache"
     db_engine: milvus-hybrid
     top_k: 100
     actions: ire
@@ -18,7 +18,7 @@ retriever:
         shared_tokenizer: true
         model_name: /home/raduf/mnlp-models-rag/06302024/slate.30m.english.rtrvr
         short_model_name: slate30-weighted
-        index_name: "{{corpus}}-{{db_engine}}-{{short_model_name}}-{{max_doc_length}}-{{stride}}-{{date}}"
+        index_name: "{{retriever.corpus}}-{{retriever.db_engine}}-{{retriever.hybrid.short_model_name}}-{{retriever.max_doc_length}}-{{retriever.stride}}-{{retriever.date}}"
         title_handling: all
         num_preprocessor_threads: -1
         combination: weighted
@@ -27,15 +27,15 @@ retriever:
                 weight: 0.1
                 top_k: 100
                 db_engine: milvus_bm25
-                milvus_idf_file: "{{project_dir}}/{{corpus}}-{{db_engine}}-{{retriever.hybrid.short_model_name}}.idf"
+                milvus_idf_file: "{{retriever.project_dir}}/{{retriever.corpus}}-{{retriever.hybrid.models['bm25-model'].db_engine}}-{{retriever.hybrid.short_model_name}}.idf"
             slate-dense-model:
                 weight: 9
                 top_k: 100
                 storage_size: fp32
                 db_engine: milvus_dense
 
-    index_name: "{{hybrid.index_name}}"
-    output_file: "output/{{index_name}}.json"
+    index_name: "{{retriever.hybrid.index_name}}"
+    output_file: "output/{{retriever.index_name}}.json"
     data_format: config/ibm_search_data.yml
     bulk_batch: 128
     num_search_threads: -1

@@ -1,9 +1,9 @@
 retriever:
     corpus: sap
     project_dir: /home/raduf/sandbox2/docuverse/experiments/milvus_bm25
-    input_passages: "benchmark/{{corpus}}/fixed-en-sap.jsonl"
-    input_queries: "benchmark/{{corpus}}/benchmark_v2_en.non0.jsonl"
-    cache_dir: "{{project_dir}}/cache"
+    input_passages: "benchmark/{{retriever.corpus}}/fixed-en-sap.jsonl"
+    input_queries: "benchmark/{{retriever.corpus}}/benchmark_v2_en.non0.jsonl"
+    cache_dir: "{{retriever.project_dir}}/cache"
     db_engine: milvus-hybrid
     actions: ire
     data_format: config/sap_data_format.yml
@@ -17,7 +17,7 @@ retriever:
     bulk_batch: 128
     max_doc_length: 512
     stride: 100
-    index_name: "beir-{{corpus}}-new-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
+    index_name: "beir-{{retriever.corpus}}-new-{{retriever.db_engine}}-{{retriever.max_doc_length}}-{{retriever.stride}}-{{retriever.date}}"
     server: "localhost"
     hybrid:
         shared_tokenizer: true
@@ -32,14 +32,14 @@ retriever:
                 weight: 1
                 top_k: 100
                 db_engine: milvus_bm25
-                milvus_idf_file: "{{project_dir}}/{{index_name}}.idf"
+                milvus_idf_file: "{{retriever.project_dir}}/{{retriever.index_name}}.idf"
             slate-dense-model:
                 weight: 9
                 top_k: 100
                 storage_size: fp32
                 db_engine: milvus_dense
 
-    output_file: "output/beir-{{corpus}}-{{db_engine}}-bm25-{{max_doc_length}}-{{stride}}.json"
+    output_file: "output/beir-{{retriever.corpus}}-{{retriever.db_engine}}-bm25-{{retriever.max_doc_length}}-{{retriever.stride}}.json"
     # max_num_documents: 1000
 reranker: null
 evaluate:

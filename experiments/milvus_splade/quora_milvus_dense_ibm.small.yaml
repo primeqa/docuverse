@@ -1,9 +1,9 @@
 retriever:
     corpus: quora
     project_dir: /home/raduf/sandbox2/docuverse/experiments/milvus_splade
-    input_passages: "benchmark/beir_dev/{{corpus}}//en/corpus.small.jsonl"
-    input_queries: "benchmark/beir_dev/{{corpus}}/queries_conf.small.json"
-    cache_dir: "{{project_dir}}/cache"
+    input_passages: "benchmark/beir_dev/{{retriever.corpus}}//en/corpus.small.jsonl"
+    input_queries: "benchmark/beir_dev/{{retriever.corpus}}/queries_conf.small.json"
+    cache_dir: "{{retriever.project_dir}}/cache"
     db_engine: milvus-splade
     storage_size: fp32
     actions: ire
@@ -23,8 +23,8 @@ retriever:
     bulk_batch: 128
     max_doc_length: 512
     stride: 100
-    index_name: "beir-{{corpus}}-small-{{short_model_name}}-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
-    output_file: "output/{{index_name}}.json"
+    index_name: "beir-{{retriever.corpus}}-small-{{retriever.short_model_name}}-{{retriever.db_engine}}-{{retriever.max_doc_length}}-{{retriever.stride}}-{{retriever.date}}"
+    output_file: "output/{{retriever.index_name}}.json"
     # max_num_documents: 100
 reranker: null
 evaluate:
