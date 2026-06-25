@@ -311,10 +311,10 @@ class SearchEngine:
             if not self.config.hybrid['shared_tokenizer']:
                 data = []
                 for m in self.retriever.models:
-                    tiler = self.create_tiler(m.config.retriever_config)
+                    tiler = self.create_tiler(m.config)
                     data.append(self._read_data(file, no_cache=no_cache,
                                                 tiler=tiler,
-                                                retriever_config=m.config.retriever_config)
+                                                retriever_config=m.config)
                                 )
             else: # Use the first hybrid model
                 return self._read_data(file, no_cache=no_cache,

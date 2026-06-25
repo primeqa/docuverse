@@ -62,7 +62,8 @@ class MilvusBM25Engine(MilvusEngine):
     def get_search_params(self):
         search_params = get_param(self.config, 'search_params',
                                   self.milvus_defaults['search_params']["BM25"])
-
+        if search_params is None:
+            search_params = self.milvus_defaults['search_params']["BM25"]
         return search_params
 
     def _analyze_data(self, texts):
@@ -78,7 +79,9 @@ class MilvusBM25Engine(MilvusEngine):
         print(f" done in {tm.time_since_beginning()}.", flush=True)
         self.save_idf_index()
 
-    def encode_data(self, texts, batch_size, show_progress_bar=True, tqdm_instance=None):
+    def encode_data(self, texts, batch_size, show_progress_bar=True,
+                    tqdm_instance=None,
+                    tm=None):
         # print("Computing embeddings for the input.")
         embeddings = []
         if tqdm_instance is None:
@@ -87,7 +90,11 @@ class MilvusBM25Engine(MilvusEngine):
             t=tqdm_instance
         for i in range(0, len(texts), batch_size):
             last = min(i + batch_size, len(texts))
+            if tm is not None:
+                tm.mark()
             encs = self.bm25_ef.encode_documents(texts[i:last])
+            if tm is not None:
+                tm.add_timing("encode::bm25it's")
             # embeddings.extend([v for v in list(encs) if v.getnnz()>0])
             # embeddings.extend(list(encs))
             embeddings.extend(convert_to_single_vectors(encs))
@@ -95,7 +102,7 @@ class MilvusBM25Engine(MilvusEngine):
         #embeddings = self.bm25_ef.encode_documents(texts)
         return embeddings
 
-    def encode_query(self, question):
+    def encode_query(self, question, tm=None):
         return self.bm25_ef.encode_queries([question.text])[[0],:]
 
     def get_search_request(self, text):

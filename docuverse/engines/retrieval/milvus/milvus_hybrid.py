@@ -177,6 +177,8 @@ class MilvusHybridEngine(MilvusEngine):
         connections.connect(host=self.server.host, port=self.server.port,
                             secure=get_param(self.server, "secure", False),
                             server_pem_path=get_param(self.server, "server_pem_path", None))
+        for m in self.models:
+            m.check_client()
         if self.has_index(self.config.index_name):
             self.collection = Collection(name=self.config.index_name)
 
@@ -253,9 +255,6 @@ class MilvusHybridEngine(MilvusEngine):
     def prepare_index_params(self, embeddings_name="embeddings"):
         raise NotImplementedError
 
-    def check_client(self):
-        return True
-
     # def ingest(self, corpus: SearchCorpus, update: bool = False):
 
 
@@ -263,11 +262,11 @@ class MilvusHybridEngine(MilvusEngine):
         # data_ingested = super().ingest(corpus=corpus, update=update)
         texts = self._check_index_creation_and_get_text(corpus, update)
 
-        for m in self.models:
-            m._analyze_data(texts)
-
         if texts is None:
             return False
+
+        for m in self.models:
+            m._analyze_data(texts)
         main_tqdm = tqdm(desc="Processing documents:", total=len(texts), smoothing=0.9)
         tqdms = []
         for m, name in zip(self.models, self.model_names):

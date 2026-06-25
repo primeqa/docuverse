@@ -613,7 +613,7 @@ class RetrievalArguments(GenericArguments):
             self.sparse_config = SparseConfig()
         elif isinstance(self.sparse_config, dict):
             self.sparse_config = SparseConfig(**self.sparse_config)
-        else:
+        elif not isinstance(self.sparse_config, SparseConfig):
             raise NotImplementedError
         if self.trim_text_to is not None:
             if isinstance(self.trim_text_to, str):

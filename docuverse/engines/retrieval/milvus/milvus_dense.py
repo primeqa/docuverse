@@ -125,6 +125,8 @@ class MilvusDenseEngine(MilvusEngine):
         else:
             _default_search = self.milvus_defaults['search_params']["HNSW"]
         search_params = get_param(self.config, 'search_params', _default_search)
+        if search_params is None:
+            search_params = _default_search
         if isinstance(search_params, str):
             search_params = get_param(self.milvus_defaults, "search_params." + search_params)
         return search_params
