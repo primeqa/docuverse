@@ -10,12 +10,12 @@ retriever:
     max_doc_length: 512
     stride: 100
     date: 08232024
-    index_name: "beir-nq-{{db_engine}}-{{max_doc_length}}-{{stride}}-{{date}}"
+    index_name: "beir-nq-{{retriever.db_engine}}-{{retriever.max_doc_length}}-{{retriever.stride}}-{{retriever.date}}"
     server: "local"
     doc_based: True
     verbose: True
     title_handling: "all"
-    output_file: "output/beir-nq-{{db_engine}}-bm25only-{{max_doc_length}}-{{stride}}.json"
+    output_file: "output/beir-nq-{{retriever.db_engine}}-bm25only-{{retriever.max_doc_length}}-{{retriever.stride}}.json"
     output_name: "BEIR_MSMarco_dev_BM25"
     data_format: "config/beir_data_format.yml"
     bulk_batch: 128
