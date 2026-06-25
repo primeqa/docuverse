@@ -323,6 +323,68 @@ def _build_render_context(config: dict[str, Any]) -> dict[str, Any]:
     return dict(config)
 
 
+_MODEL_FAMILY_PREFIXES = ("granite", "slate", "MiniLM", "bge", "e5", "gte",
+                          "mpnet", "roberta", "bert", "llama", "mistral",
+                          "qwen", "phi", "falcon", "gemma")
+_MODEL_SIZE_PATTERN = re.compile(r"(?<![a-z0-9])(\d+(?:\.\d+)?)([mbk])(?![a-z0-9])", re.IGNORECASE)
+
+
+def short_model(name: str | None, style: str = "basename") -> str:
+    """Jinja2 filter: derive a short identifier from a HuggingFace model name.
+
+    Styles
+    ------
+    "basename" (default)
+        Drop the ``org/`` prefix.
+        ``ibm-granite/granite-embedding-30m-english`` → ``granite-embedding-30m-english``
+
+    "compact"
+        Pull out the family name (granite, slate, MiniLM, bge, e5, ...) and the
+        size token (``\\d+[mbk]``) and concatenate without separators. Falls
+        back to the basename if either is missing.
+        ``ibm-granite/granite-embedding-30m-english`` → ``granite30m``
+        ``sentence-transformers/all-MiniLM-L6-v2`` → ``MiniLM`` (no size token)
+        ``BAAI/bge-large-en-v1.5`` → ``bge`` (no size token)
+
+    "slug"
+        Basename with every non-alphanumeric run collapsed to a single ``_``.
+        Safe for use in filenames and index names.
+        ``ibm-granite/granite-embedding-30m-english`` → ``granite_embedding_30m_english``
+
+    A ``None`` or empty input returns ``"unknown"`` (matches the behavior of
+    ``DocUVerseConfig._set_default_output_file``).
+    """
+    if not name:
+        return "unknown"
+    base = name.split("/")[-1]
+
+    if style == "basename":
+        return base
+
+    if style == "slug":
+        return re.sub(r"[^A-Za-z0-9]+", "_", base).strip("_")
+
+    if style == "compact":
+        family = None
+        for prefix in _MODEL_FAMILY_PREFIXES:
+            if prefix.lower() in base.lower():
+                family = prefix
+                break
+        size_match = _MODEL_SIZE_PATTERN.search(base)
+        size = (size_match.group(1) + size_match.group(2).lower()) if size_match else None
+        if family and size:
+            return f"{family}{size}"
+        if family:
+            return family
+        if size:
+            return size
+        return base
+
+    raise ValueError(
+        f"short_model: unknown style {style!r} (expected basename, compact, or slug)"
+    )
+
+
 def _render_with_jinja2(config: dict[str, Any],
                         ctx: dict[str, Any]) -> dict[str, Any]:
     """Render every string leaf with Jinja2 against ``ctx``.
@@ -337,6 +399,7 @@ def _render_with_jinja2(config: dict[str, Any],
     full dotted key path of the offending leaf.
     """
     env = Environment(undefined=StrictUndefined, autoescape=False)
+    env.filters["short_model"] = short_model
 
     def render_node(node, path):
         if isinstance(node, dict):

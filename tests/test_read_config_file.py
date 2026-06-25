@@ -14,6 +14,7 @@ from docuverse.utils import (
     _build_render_context,
     _render_with_jinja2,
     read_config_file,
+    short_model,
 )
 
 
@@ -326,3 +327,70 @@ def test_read_config_file_empty_yaml_returns_empty_dict(tmp_path):
     path = tmp_path / "empty.yaml"
     path.write_text("# just a comment\n")
     assert read_config_file(str(path)) == {}
+
+
+# ---------- short_model filter ----------
+
+
+def test_short_model_basename_strips_org_prefix():
+    assert short_model("ibm-granite/granite-embedding-30m-english") == \
+        "granite-embedding-30m-english"
+    assert short_model("sentence-transformers/all-MiniLM-L6-v2") == "all-MiniLM-L6-v2"
+
+
+def test_short_model_basename_handles_no_slash():
+    assert short_model("granite-embedding-30m-english") == "granite-embedding-30m-english"
+
+
+def test_short_model_none_or_empty_returns_unknown():
+    assert short_model(None) == "unknown"
+    assert short_model("") == "unknown"
+
+
+def test_short_model_compact_granite():
+    assert short_model("ibm-granite/granite-embedding-30m-english", "compact") == "granite30m"
+    assert short_model("ibm-granite/granite-embedding-149m-english", "compact") == "granite149m"
+    assert short_model("ibm-granite/granite-embedding-311m-multilingual-r2", "compact") == "granite311m"
+
+
+def test_short_model_compact_other_families():
+    assert short_model("sentence-transformers/all-MiniLM-L6-v2", "compact") == "MiniLM"
+    assert short_model("intfloat/e5-base-v2", "compact") == "e5"
+    assert short_model("BAAI/bge-large-en-v1.5", "compact") == "bge"
+
+
+def test_short_model_compact_falls_back_to_basename_when_no_family_or_size():
+    assert short_model("custom-org/weirdname", "compact") == "weirdname"
+
+
+def test_short_model_slug_replaces_non_alphanum():
+    assert short_model("ibm-granite/granite-embedding-30m-english", "slug") == \
+        "granite_embedding_30m_english"
+    assert short_model("BAAI/bge-large-en-v1.5", "slug") == "bge_large_en_v1_5"
+
+
+def test_short_model_unknown_style_raises():
+    with pytest.raises(ValueError) as excinfo:
+        short_model("a/b", "weird")
+    assert "weird" in str(excinfo.value)
+
+
+def test_short_model_works_in_jinja2_template(tmp_path):
+    """End-to-end: the filter is registered on the renderer and usable from YAML."""
+    path = tmp_path / "c.yaml"
+    path.write_text(
+        "model_name: ibm-granite/granite-embedding-30m-english\n"
+        "index_name: \"corpus-{{ model_name | short_model('compact') }}-idx\"\n"
+    )
+    out = read_config_file(str(path))
+    assert out["index_name"] == "corpus-granite30m-idx"
+
+
+def test_short_model_default_style_works_in_jinja2_template(tmp_path):
+    path = tmp_path / "c.yaml"
+    path.write_text(
+        "model_name: ibm-granite/granite-embedding-30m-english\n"
+        "label: \"{{ model_name | short_model }}\"\n"
+    )
+    out = read_config_file(str(path))
+    assert out["label"] == "granite-embedding-30m-english"
