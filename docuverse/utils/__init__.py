@@ -392,55 +392,45 @@ def _render_with_jinja2(config: dict[str, Any],
     )
 
 
-def read_config_file(config_file, override_vals: dict[str, str]=None) -> dict[str, Any]:
-    """
-    Reads a configuration file, resolves templated variables within the file, and returns the
-    parsed configuration as a dictionary.
+def read_config_file(config_file, override_vals: dict[str, Any] = None) -> dict[str, Any]:
+    """Read a YAML/JSON config file, apply overrides, render Jinja2 templates.
 
-    The function supports YAML and JSON configuration files. Variables within the configuration
-    file are expressed using the syntax `{{variable}}` and are resolved by recursively searching
-    through the configuration dictionary, considering the current and parent keys.
+    Pipeline:
+      1. Resolve config path (search ``get_config_dir`` if missing).
+      2. Load YAML or JSON via ``load_config_from_file``.
+      3. Apply ``override_vals`` via ``_apply_overrides`` (dotted-path
+         + leaf-key match).
+      4. Build a render context with ``_build_render_context``.
+      5. Render every string leaf through Jinja2 (StrictUndefined,
+         multi-pass) via ``_render_with_jinja2``.
 
     Args:
-        override_vals:
-        config_file (str): Path to the configuration file to read. The file may contain
-            variables to be resolved.
+        config_file: Path to the YAML/JSON file. Relative paths are resolved
+            via ``get_config_dir``.
+        override_vals: Optional dict whose keys may be dotted paths
+            (``"retriever.top_k"``) or bare leaf names (``"top_k"``).
+            Dotted keys target one location; bare keys replace every
+            matching leaf in the tree.
 
     Returns:
-        dict: A dictionary representation of the processed and resolved configuration file.
+        The fully-rendered config as a dict (or whatever YAML produced).
 
     Raises:
-        RuntimeError: If the file type is not supported or if variable resolution exceeds the
-            allowed number of iterations (10).
+        FileNotFoundError: if the file cannot be located.
+        RuntimeError: on Jinja2 ``UndefinedError`` / ``TemplateSyntaxError``
+            (with the field path in the message), or if templates fail to
+            converge within ``MAX_RESOLUTION_ITERATIONS`` passes.
     """
-    # Resolve file path if it doesn't exist
     if not os.path.exists(config_file):
         config_file = os.path.join(get_config_dir(os.path.dirname(config_file)),
                                    os.path.basename(config_file))
 
-    # Load configuration from file
     config = load_config_from_file(config_file)
-    if override_vals is not None:
-        config = _replace_leaf_keys(config, override_vals)
-
-    # Resolve variables in the configuration
-    iterations = 0
-    has_unresolved = True
-
-    while has_unresolved and iterations < MAX_RESOLUTION_ITERATIONS:
-        previous_config = copy.deepcopy(config)
-        has_unresolved = _process_dictionary(config, config)
-        iterations += 1
-
-        # If no changes were made in this iteration, we're done
-        if previous_config == config:
-            break
-
-    # Check if we hit the maximum number of iterations
-    if iterations >= MAX_RESOLUTION_ITERATIONS and has_unresolved:
-        raise RuntimeError(f"Could not resolve the variables in {config_file}")
-
-    return config
+    config = _apply_overrides(config, override_vals)
+    if not isinstance(config, dict):
+        return config  # Non-dict YAML (e.g., list at root) — nothing to render.
+    ctx = _build_render_context(config)
+    return _render_with_jinja2(config, ctx)
 
 class Limiter:
     def __init__(self, _obj, max_num_docs):

@@ -13,6 +13,7 @@ from docuverse.utils import (
     _apply_overrides,
     _build_render_context,
     _render_with_jinja2,
+    read_config_file,
 )
 
 
@@ -204,3 +205,70 @@ def test_render_does_not_mutate_input():
     ctx = _build_render_context(cfg)
     _render_with_jinja2(cfg, ctx=ctx)
     assert cfg == {"a": "{{ b }}", "b": "x"}
+
+
+# ---------- read_config_file end-to-end ----------
+
+
+def _write_yaml(tmp_path, name, content):
+    p = tmp_path / name
+    p.write_text(textwrap.dedent(content))
+    return str(p)
+
+
+def test_read_config_file_plain_yaml_unchanged(tmp_path):
+    path = _write_yaml(tmp_path, "c.yaml", """
+        a: 1
+        b: hello
+    """)
+    assert read_config_file(path) == {"a": 1, "b": "hello"}
+
+
+def test_read_config_file_resolves_template_via_self(tmp_path):
+    path = _write_yaml(tmp_path, "c.yaml", """
+        name: granite
+        model: "{{ name }}-base"
+    """)
+    assert read_config_file(path) == {"name": "granite", "model": "granite-base"}
+
+
+def test_read_config_file_nested_template_dot_access(tmp_path):
+    path = _write_yaml(tmp_path, "c.yaml", """
+        retriever:
+            model_name: granite
+        index: "{{ retriever.model_name }}_idx"
+    """)
+    out = read_config_file(path)
+    assert out["index"] == "granite_idx"
+
+
+def test_read_config_file_leaf_key_override_then_render(tmp_path):
+    path = _write_yaml(tmp_path, "c.yaml", """
+        name: from-file
+        model: "{{ name }}-base"
+    """)
+    out = read_config_file(path, override_vals={"name": "from-cli"})
+    assert out["model"] == "from-cli-base"
+
+
+def test_read_config_file_dotted_override_targets_nested_only(tmp_path):
+    path = _write_yaml(tmp_path, "c.yaml", """
+        retriever:
+            model_name: orig-r
+        reranker:
+            model_name: orig-rr
+    """)
+    out = read_config_file(path, override_vals={"retriever.model_name": "new-r"})
+    assert out["retriever"]["model_name"] == "new-r"
+    assert out["reranker"]["model_name"] == "orig-rr"
+
+
+def test_read_config_file_undefined_variable_raises(tmp_path):
+    path = _write_yaml(tmp_path, "c.yaml", """
+        retriever:
+            input: "{{ benchmar_dir }}/x"
+    """)
+    with pytest.raises(RuntimeError) as excinfo:
+        read_config_file(path)
+    assert "retriever.input" in str(excinfo.value)
+    assert "benchmar_dir" in str(excinfo.value)
