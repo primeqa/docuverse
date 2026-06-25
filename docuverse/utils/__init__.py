@@ -14,7 +14,7 @@ else:
     import multiprocessing as mp
 
 from typing import List, Union, Any
-from jinja2 import Template, Undefined
+from jinja2 import Environment, StrictUndefined, Template, Undefined, UndefinedError, TemplateSyntaxError
 
 # from .embedding_function import DenseEmbeddingFunction
 import yaml
@@ -127,6 +127,7 @@ class NullUndefined(Undefined):
     return ''
 
 # Constants
+MAX_RESOLUTION_ITERATIONS = 10
 
 def _resolve_variable(global_dict, variable_name, parent_key):
     """
@@ -327,9 +328,6 @@ def _render_with_jinja2(config: dict[str, Any],
     template syntax errors are wrapped in ``RuntimeError`` with the
     full dotted key path of the offending leaf.
     """
-    from jinja2 import Environment, StrictUndefined
-    from jinja2 import UndefinedError, TemplateSyntaxError
-
     env = Environment(undefined=StrictUndefined, autoescape=False)
 
     def render_node(node, path):
@@ -360,24 +358,37 @@ def _render_with_jinja2(config: dict[str, Any],
             return "{{" in node or "{%" in node
         return False
 
-    MAX_ITER = 10
+    def _collect_unresolved(node, path, unresolved_paths):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                _collect_unresolved(v, f"{path}.{k}" if path else k, unresolved_paths)
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                _collect_unresolved(v, f"{path}[{i}]", unresolved_paths)
+        elif isinstance(node, str) and ("{{" in node or "{%" in node):
+            unresolved_paths.append(path)
+
     current = config
-    for _ in range(MAX_ITER):
+    for _ in range(MAX_RESOLUTION_ITERATIONS):
         rendered = render_node(current, path="")
         if rendered == current:
             if has_unresolved(rendered):
+                unresolved_paths = []
+                _collect_unresolved(current, path="", unresolved_paths=unresolved_paths)
                 raise RuntimeError(
-                    f"Could not resolve template variables after reaching a "
-                    f"fixpoint (possible circular reference)"
+                    f"Could not resolve template variables (possible circular reference) "
+                    f"in: {', '.join(unresolved_paths)}"
                 )
             return rendered
         # Re-build the context against the partially-rendered config so
         # later passes see the resolved values.
         ctx = {**ctx, **{k: v for k, v in rendered.items() if k in ctx}}
         current = rendered
+    unresolved_paths = []
+    _collect_unresolved(current, path="", unresolved_paths=unresolved_paths)
     raise RuntimeError(
-        f"Could not resolve template variables after {MAX_ITER} iterations "
-        f"(possible circular reference)"
+        f"Could not resolve template variables after {MAX_RESOLUTION_ITERATIONS} "
+        f"iterations (possible circular reference) in: {', '.join(unresolved_paths)}"
     )
 
 
@@ -402,8 +413,6 @@ def read_config_file(config_file, override_vals: dict[str, str]=None) -> dict[st
         RuntimeError: If the file type is not supported or if variable resolution exceeds the
             allowed number of iterations (10).
     """
-    MAX_RESOLUTION_ITERATIONS = 10
-
     # Resolve file path if it doesn't exist
     if not os.path.exists(config_file):
         config_file = os.path.join(get_config_dir(os.path.dirname(config_file)),

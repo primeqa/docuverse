@@ -185,7 +185,10 @@ def test_render_circular_reference_raises_after_max_iterations():
     ctx = _build_render_context(cfg)
     with pytest.raises(RuntimeError) as excinfo:
         _render_with_jinja2(cfg, ctx=ctx)
-    assert "iteration" in str(excinfo.value).lower() or "resolve" in str(excinfo.value).lower()
+    msg = str(excinfo.value)
+    assert "iteration" in msg.lower() or "resolve" in msg.lower()
+    # The error should name at least one of the offending paths.
+    assert "a" in msg and "b" in msg, f"error must name the offending key(s): {msg}"
 
 
 def test_render_template_syntax_error_names_field_path():
