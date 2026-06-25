@@ -94,7 +94,7 @@ class MilvusBM25Engine(MilvusEngine):
                 tm.mark()
             encs = self.bm25_ef.encode_documents(texts[i:last])
             if tm is not None:
-                tm.add_timing("encode::bm25it's")
+                tm.add_timing("encode::bm251")
             # embeddings.extend([v for v in list(encs) if v.getnnz()>0])
             # embeddings.extend(list(encs))
             embeddings.extend(convert_to_single_vectors(encs))
