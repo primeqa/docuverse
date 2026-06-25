@@ -12,6 +12,7 @@ import pytest
 from docuverse.utils import (
     _apply_overrides,
     _build_render_context,
+    _render_with_jinja2,
 )
 
 
@@ -113,3 +114,90 @@ def test_build_render_context_does_not_mutate_input():
     assert "new_key" not in cfg
     # Pin the shallow-copy contract: nested dicts are shared by design.
     assert ctx["a"] is cfg["a"]
+
+
+# ---------- _render_with_jinja2 ----------
+
+
+def test_render_passes_through_when_no_templates():
+    cfg = {"a": 1, "b": "hello", "c": [1, 2], "d": {"e": "x"}}
+    out = _render_with_jinja2(cfg, ctx={})
+    assert out == cfg
+
+
+def test_render_resolves_simple_var():
+    cfg = {"name": "granite", "model": "{{ name }}-base"}
+    ctx = _build_render_context(cfg)
+    out = _render_with_jinja2(cfg, ctx=ctx)
+    assert out["model"] == "granite-base"
+
+
+def test_render_resolves_nested_var_via_dot():
+    cfg = {"retriever": {"model_name": "granite"},
+           "index": "{{ retriever.model_name }}_idx"}
+    ctx = _build_render_context(cfg)
+    out = _render_with_jinja2(cfg, ctx=ctx)
+    assert out["index"] == "granite_idx"
+
+
+def test_render_multipass_chains_resolution():
+    cfg = {"a": "{{ b }}", "b": "{{ c }}", "c": "hello"}
+    ctx = _build_render_context(cfg)
+    out = _render_with_jinja2(cfg, ctx=ctx)
+    assert out["a"] == "hello"
+    assert out["b"] == "hello"
+    assert out["c"] == "hello"
+
+
+def test_render_jinja2_filter():
+    cfg = {"name": "granite", "upper": "{{ name | upper }}"}
+    ctx = _build_render_context(cfg)
+    out = _render_with_jinja2(cfg, ctx=ctx)
+    assert out["upper"] == "GRANITE"
+
+
+def test_render_jinja2_conditional():
+    cfg = {"env": "prod", "host": "{% if env == 'prod' %}prod.example.com{% else %}dev.example.com{% endif %}"}
+    ctx = _build_render_context(cfg)
+    out = _render_with_jinja2(cfg, ctx=ctx)
+    assert out["host"] == "prod.example.com"
+
+
+def test_render_strings_inside_lists():
+    cfg = {"base": "/data", "paths": ["{{ base }}/x", "{{ base }}/y", 42]}
+    ctx = _build_render_context(cfg)
+    out = _render_with_jinja2(cfg, ctx=ctx)
+    assert out["paths"] == ["/data/x", "/data/y", 42]
+
+
+def test_render_strict_undefined_raises_with_field_path():
+    cfg = {"retriever": {"input": "{{ benchmar_dir }}/file"}}  # typo
+    ctx = _build_render_context(cfg)
+    with pytest.raises(RuntimeError) as excinfo:
+        _render_with_jinja2(cfg, ctx=ctx)
+    msg = str(excinfo.value)
+    assert "retriever.input" in msg, "error must name the offending field path"
+    assert "benchmar_dir" in msg, "error must name the missing variable"
+
+
+def test_render_circular_reference_raises_after_max_iterations():
+    cfg = {"a": "{{ b }}", "b": "{{ a }}"}
+    ctx = _build_render_context(cfg)
+    with pytest.raises(RuntimeError) as excinfo:
+        _render_with_jinja2(cfg, ctx=ctx)
+    assert "iteration" in str(excinfo.value).lower() or "resolve" in str(excinfo.value).lower()
+
+
+def test_render_template_syntax_error_names_field_path():
+    cfg = {"a": {"b": "{{ unclosed"}}
+    ctx = _build_render_context(cfg)
+    with pytest.raises(RuntimeError) as excinfo:
+        _render_with_jinja2(cfg, ctx=ctx)
+    assert "a.b" in str(excinfo.value)
+
+
+def test_render_does_not_mutate_input():
+    cfg = {"a": "{{ b }}", "b": "x"}
+    ctx = _build_render_context(cfg)
+    _render_with_jinja2(cfg, ctx=ctx)
+    assert cfg == {"a": "{{ b }}", "b": "x"}

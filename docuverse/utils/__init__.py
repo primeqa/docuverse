@@ -314,6 +314,73 @@ def _build_render_context(config: dict[str, Any]) -> dict[str, Any]:
     return dict(config)
 
 
+def _render_with_jinja2(config: dict[str, Any],
+                        ctx: dict[str, Any]) -> dict[str, Any]:
+    """Render every string leaf with Jinja2 against ``ctx``.
+
+    Walks ``config`` recursively. Each string passes through a Jinja2
+    Environment with ``StrictUndefined``. Lists and dicts are recursed.
+    Non-string scalars pass through unchanged.
+
+    The walk repeats until the rendered tree stops changing or
+    ``MAX_RESOLUTION_ITERATIONS`` is reached. Undefined variables and
+    template syntax errors are wrapped in ``RuntimeError`` with the
+    full dotted key path of the offending leaf.
+    """
+    from jinja2 import Environment, StrictUndefined
+    from jinja2 import UndefinedError, TemplateSyntaxError
+
+    env = Environment(undefined=StrictUndefined, autoescape=False)
+
+    def render_node(node, path):
+        if isinstance(node, dict):
+            return {k: render_node(v, f"{path}.{k}" if path else k)
+                    for k, v in node.items()}
+        if isinstance(node, list):
+            return [render_node(v, f"{path}[{i}]") for i, v in enumerate(node)]
+        if isinstance(node, str) and ("{{" in node or "{%" in node):
+            try:
+                return env.from_string(node).render(**ctx)
+            except UndefinedError as e:
+                raise RuntimeError(
+                    f"Undefined variable while rendering {path!r}: {e}"
+                ) from e
+            except TemplateSyntaxError as e:
+                raise RuntimeError(
+                    f"Template syntax error in {path!r}: {e}"
+                ) from e
+        return node
+
+    def has_unresolved(node) -> bool:
+        if isinstance(node, dict):
+            return any(has_unresolved(v) for v in node.values())
+        if isinstance(node, list):
+            return any(has_unresolved(v) for v in node)
+        if isinstance(node, str):
+            return "{{" in node or "{%" in node
+        return False
+
+    MAX_ITER = 10
+    current = config
+    for _ in range(MAX_ITER):
+        rendered = render_node(current, path="")
+        if rendered == current:
+            if has_unresolved(rendered):
+                raise RuntimeError(
+                    f"Could not resolve template variables after reaching a "
+                    f"fixpoint (possible circular reference)"
+                )
+            return rendered
+        # Re-build the context against the partially-rendered config so
+        # later passes see the resolved values.
+        ctx = {**ctx, **{k: v for k, v in rendered.items() if k in ctx}}
+        current = rendered
+    raise RuntimeError(
+        f"Could not resolve template variables after {MAX_ITER} iterations "
+        f"(possible circular reference)"
+    )
+
+
 def read_config_file(config_file, override_vals: dict[str, str]=None) -> dict[str, Any]:
     """
     Reads a configuration file, resolves templated variables within the file, and returns the
