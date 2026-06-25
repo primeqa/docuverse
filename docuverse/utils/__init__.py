@@ -303,6 +303,17 @@ def _apply_overrides(config: dict[str, Any],
     return result
 
 
+def _build_render_context(config: dict[str, Any]) -> dict[str, Any]:
+    """Build a Jinja2 render context from a config dict.
+
+    Returns a shallow copy so the caller can mutate the context (e.g., to
+    add CLI-only variables) without affecting the source config. Nested
+    dicts are not deep-copied: Jinja2 only reads them, and the renderer is
+    in the same process.
+    """
+    return dict(config)
+
+
 def read_config_file(config_file, override_vals: dict[str, str]=None) -> dict[str, Any]:
     """
     Reads a configuration file, resolves templated variables within the file, and returns the

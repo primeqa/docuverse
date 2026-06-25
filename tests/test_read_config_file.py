@@ -9,7 +9,10 @@ import textwrap
 
 import pytest
 
-from docuverse.utils import _apply_overrides
+from docuverse.utils import (
+    _apply_overrides,
+    _build_render_context,
+)
 
 
 # ---------- _apply_overrides ----------
@@ -84,3 +87,27 @@ def test_apply_overrides_dotted_overwrites_non_dict_intermediate():
     base = {"retriever": "scalar_value"}
     out = _apply_overrides(base, {"retriever.model_name": "x"})
     assert out == {"retriever": {"model_name": "x"}}
+
+
+# ---------- _build_render_context ----------
+
+
+def test_build_render_context_exposes_top_level_keys():
+    ctx = _build_render_context({"a": 1, "b": "hello"})
+    assert ctx["a"] == 1
+    assert ctx["b"] == "hello"
+
+
+def test_build_render_context_exposes_nested_dicts_for_dot_access():
+    """Jinja2 supports `{{ retriever.model_name }}` if context has a dict value."""
+    cfg = {"retriever": {"model_name": "granite", "top_k": 10}}
+    ctx = _build_render_context(cfg)
+    # Access pattern Jinja2 will use:
+    assert ctx["retriever"]["model_name"] == "granite"
+
+
+def test_build_render_context_does_not_mutate_input():
+    cfg = {"a": {"b": 1}}
+    ctx = _build_render_context(cfg)
+    ctx["new_key"] = "x"
+    assert "new_key" not in cfg
