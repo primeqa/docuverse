@@ -43,8 +43,6 @@ if [[ -n "$config_file" ]]; then
     eval "$(load_yaml_config "$config_file")" || exit 1
 fi
 
-echo $field_path
-
 extra_args=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
