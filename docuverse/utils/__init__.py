@@ -422,18 +422,24 @@ def read_config_file(config_file, override_vals: dict[str, Any] = None) -> dict[
 
     Returns:
         The fully-rendered config as a dict (or whatever YAML produced).
+        Empty / comment-only YAML files yield ``{}`` so callers that wrote
+        ``read_config_file(path) or {}`` defensively continue to behave the same.
 
     Raises:
         FileNotFoundError: if the file cannot be located.
         RuntimeError: on Jinja2 ``UndefinedError`` / ``TemplateSyntaxError``
-            (with the field path in the message), or if templates fail to
-            converge within ``MAX_RESOLUTION_ITERATIONS`` passes.
+            (with the field path in the message), if templates fail to
+            converge within ``MAX_RESOLUTION_ITERATIONS`` passes, or if the
+            file's root is a non-dict, non-None value (e.g. a top-level list
+            or scalar).
     """
     if not os.path.exists(config_file):
         config_file = os.path.join(get_config_dir(os.path.dirname(config_file)),
                                    os.path.basename(config_file))
 
     config = load_config_from_file(config_file)
+    if config is None:
+        return {}
     if not isinstance(config, dict):
         raise RuntimeError(
             f"Config file {config_file!r} must have a mapping (dict) at the root, "

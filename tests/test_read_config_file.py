@@ -319,3 +319,10 @@ def test_read_config_file_no_parent_scope_lookup(tmp_path):
     """)
     out = read_config_file(path2)
     assert out["retriever"]["label"] == "granite"
+
+
+def test_read_config_file_empty_yaml_returns_empty_dict(tmp_path):
+    """Empty / comment-only YAML files yield {} for back-compat with `or {}` callers."""
+    path = tmp_path / "empty.yaml"
+    path.write_text("# just a comment\n")
+    assert read_config_file(str(path)) == {}
