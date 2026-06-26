@@ -343,7 +343,7 @@ On disk — a directory, not a single file:
   "code_bytes_per_vector": 192,
   "has_floats": true,
   "float_dtype": "float16",
-  "encoder_id": "ibm-granite/granite-embedding-278m-multilingual-r2",
+  "encoder_id": "ibm-granite/granite-embedding-311m-multilingual-r2",
   "build_timestamp": "2026-06-15T14:30:00Z"
 }
 ```

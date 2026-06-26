@@ -1875,7 +1875,7 @@ planted-relevant doc in top-5 for a 'neural networks' query."
 
 search_engine:
   db_engine: simdq
-  model_name: ibm-granite/granite-embedding-278m-multilingual-r2
+  model_name: ibm-granite/granite-embedding-311m-multilingual-r2
   index_name: "{{dataset}}_simdq_{{recipe_id}}"
   project_dir: "{{project_dir}}"
   top_k: 100

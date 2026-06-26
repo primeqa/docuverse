@@ -976,7 +976,7 @@ mkdir -p tests/fixtures
 
 ```json
 {
-  "encoder": "ibm-granite/granite-embedding-278m-multilingual-r2",
+  "encoder": "ibm-granite/granite-embedding-311m-multilingual-r2",
   "scifact_revision": null,
   "captured_at": null,
   "captured_on": null,

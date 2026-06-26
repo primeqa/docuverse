@@ -144,7 +144,7 @@ Fixture: SciFact corpus + queries + qrels, downloaded from BEIR's HF
 mirror to `~/.cache/docuverse/beir/scifact` on first run; cached
 afterwards.
 
-Encoder: `ibm-granite/granite-embedding-278m-multilingual-r2` (D=768).
+Encoder: `ibm-granite/granite-embedding-311m-multilingual-r2` (D=768).
 Pinned via `pytest.importorskip("sentence_transformers")` and a
 module-level model-name constant.
 
@@ -154,7 +154,7 @@ are *illustrative shape only*, not measured):
 
 ```json
 {
-  "encoder": "ibm-granite/granite-embedding-278m-multilingual-r2",
+  "encoder": "ibm-granite/granite-embedding-311m-multilingual-r2",
   "scifact_revision": "<HF dataset SHA from datasets.load_dataset>",
   "captured_at": "<ISO-8601, set on baseline update>",
   "captured_on": "<host CPU model, AVX-512 yes/no>",
