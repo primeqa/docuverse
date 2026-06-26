@@ -12,7 +12,13 @@ BUILDDIR      = _build
 help:
 	@$(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
 
-.PHONY: help Makefile
+SLIDES_SRC = slides_bit_hashing.tex
+
+slides: $(SLIDES_SRC)
+	pdflatex -interaction=nonstopmode $<
+	pdflatex -interaction=nonstopmode $<
+
+.PHONY: help slides Makefile
 
 # Catch-all target: route all unknown targets to Sphinx using the new
 # "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
