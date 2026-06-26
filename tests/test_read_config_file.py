@@ -13,6 +13,7 @@ from docuverse.utils import (
     _apply_overrides,
     _build_render_context,
     _render_with_jinja2,
+    _scope_unscoped_variables,
     read_config_file,
     short_model,
 )
@@ -295,31 +296,94 @@ def test_read_config_file_json_with_template(tmp_path):
     assert out == {"name": "granite", "model": "granite-base"}
 
 
-def test_read_config_file_no_parent_scope_lookup(tmp_path):
-    """Variables resolve from the top level (or via dotted path), not from sibling/parent scope.
-
-    The legacy resolver walked up the parent dotted path to find a matching key. Jinja2
-    only resolves against the top-level context, so a sibling-scoped reference must be
-    written with an explicit dotted path.
-    """
-    # `name` exists ONLY inside `retriever`; the bare `{{ name }}` no longer resolves.
+def test_read_config_file_unscoped_var_auto_resolved(tmp_path):
+    """An unscoped {{name}} that lives in exactly one nested scope is auto-rewritten."""
     path = _write_yaml(tmp_path, "c.yaml", """
         retriever:
             name: granite
             label: "{{ name }}"
     """)
-    with pytest.raises(RuntimeError) as excinfo:
-        read_config_file(path)
-    assert "name" in str(excinfo.value)
+    out = read_config_file(path)
+    assert out["retriever"]["label"] == "granite"
 
-    # The dotted form works:
+    # Explicit dotted form continues to work:
     path2 = _write_yaml(tmp_path, "c2.yaml", """
         retriever:
             name: granite
             label: "{{ retriever.name }}"
     """)
-    out = read_config_file(path2)
-    assert out["retriever"]["label"] == "granite"
+    out2 = read_config_file(path2)
+    assert out2["retriever"]["label"] == "granite"
+
+
+def test_read_config_file_unscoped_var_cross_section(tmp_path):
+    """An unscoped var defined in one section can be referenced from another section."""
+    path = _write_yaml(tmp_path, "c.yaml", """
+        retriever:
+            model_name: granite
+        index: "{{ model_name }}_idx"
+    """)
+    out = read_config_file(path)
+    assert out["index"] == "granite_idx"
+
+
+def test_read_config_file_ambiguous_var_raises(tmp_path):
+    """An unscoped var that appears in multiple nested scopes raises RuntimeError."""
+    path = _write_yaml(tmp_path, "c.yaml", """
+        retriever:
+            model_name: granite
+        reranker:
+            model_name: cross-enc
+        index: "{{ model_name }}_idx"
+    """)
+    with pytest.raises(RuntimeError) as excinfo:
+        read_config_file(path)
+    msg = str(excinfo.value)
+    assert "model_name" in msg
+    assert "Ambiguous" in msg or "ambiguous" in msg
+
+
+def test_scope_unscoped_variables_rewrites_nested_var():
+    cfg = {"retriever": {"model_name": "granite"},
+           "index": "{{ model_name }}_idx"}
+    out = _scope_unscoped_variables(cfg)
+    assert out["index"] == "{{ retriever.model_name }}_idx"
+    assert out["retriever"]["model_name"] == "granite"  # untouched
+
+
+def test_scope_unscoped_variables_leaves_top_level_var_alone():
+    cfg = {"model_name": "granite", "index": "{{ model_name }}_idx"}
+    out = _scope_unscoped_variables(cfg)
+    assert out["index"] == "{{ model_name }}_idx"  # top-level: no rewrite
+
+
+def test_scope_unscoped_variables_leaves_already_scoped_var_alone():
+    cfg = {"retriever": {"model_name": "granite"},
+           "index": "{{ retriever.model_name }}_idx"}
+    out = _scope_unscoped_variables(cfg)
+    assert out["index"] == "{{ retriever.model_name }}_idx"
+
+
+def test_scope_unscoped_variables_ambiguous_raises():
+    cfg = {"retriever": {"model_name": "a"},
+           "reranker": {"model_name": "b"},
+           "index": "{{ model_name }}"}
+    with pytest.raises(RuntimeError, match="Ambiguous"):
+        _scope_unscoped_variables(cfg)
+
+
+def test_scope_unscoped_variables_var_with_filter():
+    cfg = {"retriever": {"model_name": "ibm/granite-30m"},
+           "index": "{{ model_name | short_model }}_idx"}
+    out = _scope_unscoped_variables(cfg)
+    assert out["index"] == "{{ retriever.model_name | short_model }}_idx"
+
+
+def test_scope_unscoped_variables_deep_nesting():
+    cfg = {"section": {"sub": {"val": "x"}},
+           "label": "{{ val }}-label"}
+    out = _scope_unscoped_variables(cfg)
+    assert out["label"] == "{{ section.sub.val }}-label"
 
 
 def test_read_config_file_empty_yaml_returns_empty_dict(tmp_path):
