@@ -1,18 +1,52 @@
 {
-  "encoder": "ibm-granite/granite-embedding-278m-multilingual-r2",
-  "scifact_revision": null,
-  "captured_at": null,
-  "captured_on": null,
+  "encoder": "ibm-granite/granite-embedding-311m-multilingual-r2",
+  "scifact_revision": "BeIR/scifact",
+  "captured_at": "2026-06-26T21:49:19Z",
+  "captured_on": "x86_64",
   "tolerance": {
     "ndcg10": 0.005,
     "recall100": 0.01
   },
   "recipes": {
-    "R0": {"ndcg10": null, "recall100": null},
-    "R1": {"ndcg10": null, "recall100": null},
-    "R2": {"ndcg10": null, "recall100": null},
-    "R3": {"ndcg10": null, "recall100": null},
-    "R4": {"ndcg10": null, "recall100": null},
-    "R5": {"ndcg10": null, "recall100": null}
+    "R0": {
+      "ndcg10": 0.6539852902351301,
+      "recall100": 0.9333333333333333
+    },
+    "R1": {
+      "ndcg10": 0.332261172106707,
+      "recall100": 0.5133333333333333
+    },
+    "R2": {
+      "ndcg10": 0.384608750976703,
+      "recall100": 0.5433333333333333
+    },
+    "R3": {
+      "ndcg10": 0.5936868361161503,
+      "recall100": 0.91
+    },
+    "R4": {
+      "ndcg10": 0.3739247722469748,
+      "recall100": 0.81
+    },
+    "R5": {
+      "ndcg10": 0.37246345995245755,
+      "recall100": 0.8133333333333334
+    },
+    "R6": {
+      "ndcg10": 0.6222612329567997,
+      "recall100": 0.9366666666666666
+    },
+    "R7": {
+      "ndcg10": 0.580640427569406,
+      "recall100": 0.9233333333333333
+    },
+    "R8": {
+      "ndcg10": 0.6211571600958133,
+      "recall100": 0.9466666666666667
+    },
+    "R9": {
+      "ndcg10": 0.5986038799330722,
+      "recall100": 0.93
+    }
   }
 }

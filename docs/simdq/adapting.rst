@@ -19,6 +19,22 @@ optionally living anywhere on disk.
    queries.jsonl   — one JSON object per line: {"id": "...", "text": "..."}
    qrels.tsv       — tab-separated: query-id <TAB> corpus-id <TAB> relevance-score
 
+.. note::
+
+   **The qrels file is optional.**  You only need it when the queries file does
+   **not** carry its relevance judgements inline.  If each query object already
+   has a ``relevant`` key listing its relevant corpus-ids, evaluation reads the
+   judgements straight from the queries file and no separate ``qrels`` file is
+   required:
+
+   .. code-block:: text
+
+      queries.jsonl   — {"id": "...", "text": "...", "relevant": ["corpus-id-1", "corpus-id-2"]}
+
+   (The key name follows the template's ``relevant_header``, which defaults to
+   ``relevant``.)  Supply ``qrels`` only as the external alternative, for
+   BEIR-style datasets that ship judgements in a separate file.
+
 **Pointing the config at your files**
 
 In ``config/beir_simdq_base.yaml`` (or a copy you derive from it), set
@@ -31,10 +47,11 @@ the three path keys under ``retrieval`` and ``evaluation``:
      input_queries:  data/mydata/queries.jsonl
 
    evaluation:
-     qrels: data/mydata/qrels.tsv
+     qrels: data/mydata/qrels.tsv   # omit if queries.jsonl has a "relevant" key
 
 The benchmark script fills these in from CLI flags, so for a sweep you
-rarely need to edit the base YAML directly.
+rarely need to edit the base YAML directly.  Leave ``qrels`` unset when your
+queries file already carries inline relevance keys (see the note above).
 
 **Running the sweep**
 
@@ -50,7 +67,9 @@ rarely need to edit the base YAML directly.
        --encoder-dim 768 \
        --out simdq_recipe_sweep_fiqa.csv
 
-``--encoder-dim`` is the embedding dimension D of your encoder.  It is
+``--qrels`` is optional — omit it when ``queries.jsonl`` carries its judgements
+in a ``relevant`` key (see the note above).  ``--encoder-dim`` is the embedding
+dimension D of your encoder.  It is
 required for recipes that use ``simdq_d=HALF`` (R4 and R5), which halve
 D before quantisation.  See :doc:`parameters` for all ``simdq_*``
 fields.
@@ -173,6 +192,9 @@ The ``--recipes`` flag accepts one or more recipe IDs:
        --encoder-dim 768 \
        --recipes R0 R3 \
        --out simdq_recipe_sweep_fiqa_r0r3.csv
+
+(As above, ``--qrels`` may be dropped when the queries file has inline
+``relevant`` keys.)
 
 Recipes not listed are silently skipped; if no recipe IDs match the
 filter the script prints a warning and writes no CSV.

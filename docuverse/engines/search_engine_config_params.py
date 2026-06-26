@@ -532,15 +532,35 @@ class RetrievalArguments(GenericArguments):
     simdq_projection: str = field(
         default="identity",
         metadata={
-            "choices": ["identity", "random_orthogonal"],
+            "choices": ["identity", "random_orthogonal", "learned_orthogonal"],
             "help": "simdq: projection W applied to encoder output. "
-                    "Must be 'random_orthogonal' when simdq_d != D."
+                    "'identity' (d=D), 'random_orthogonal' (data-independent), or "
+                    "'learned_orthogonal' (ITQ rotation fit on the corpus to "
+                    "minimise quantization error). Must not be 'identity' when "
+                    "simdq_d != D. Pair learned_orthogonal with simdq_standardize=True."
         }
     )
 
     simdq_projection_seed: int = field(
         default=42,
-        metadata={"help": "simdq: rng seed for random_orthogonal projection."}
+        metadata={"help": "simdq: rng seed for the random_orthogonal / learned_orthogonal projection."}
+    )
+
+    simdq_itq_iters: int = field(
+        default=50,
+        metadata={"help": "simdq: ITQ alternating-minimisation iterations for "
+                          "projection='learned_orthogonal' (50 is the standard default)."}
+    )
+
+    simdq_standardize: bool = field(
+        default=False,
+        metadata={
+            "help": "simdq: fit an affine (x-mu)/sigma standardizer on the corpus "
+                    "and apply it (corpus + query) before the projection W. Centers "
+                    "the embeddings, equalises per-dim variance, and zeroes dead "
+                    "dims so sign(x) bits are balanced. Complementary to "
+                    "random_orthogonal (which decorrelates); per-model tuning knob."
+        }
     )
 
     simdq_store_floats: bool = field(

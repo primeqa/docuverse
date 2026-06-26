@@ -1,6 +1,7 @@
 import math
 import itertools
 import operator
+import numpy as np
 from docuverse.utils.ece_brier.ece import expected_calibration_error
 from docuverse.utils.ece_brier.brier_score import brier_score
 
@@ -159,8 +160,18 @@ class EvaluationOutput:
         # Convert to lists if needed
         self.system_probs = list(first_values)
         self.gold_values = list(second_values)
-        self.ece = expected_calibration_error(self.system_probs, self.gold_values)
-        self.brier = brier_score(self.system_probs, self.gold_values)
+        # ECE/Brier are calibration metrics defined only for probabilities in
+        # [0, 1]. Retrieval engines that emit raw scores (e.g. simdq dot products,
+        # negative Hamming distances) aren't calibrated, so skip rather than crash;
+        # leaving these None is safe (they're only displayed when requested in
+        # eval_measure).
+        probs = np.asarray(self.system_probs, dtype=float)
+        if probs.size and np.all((probs >= 0.0) & (probs <= 1.0)):
+            self.ece = expected_calibration_error(self.system_probs, self.gold_values)
+            self.brier = brier_score(self.system_probs, self.gold_values)
+        else:
+            self.ece = None
+            self.brier = None
 
 
     def __str__(self):

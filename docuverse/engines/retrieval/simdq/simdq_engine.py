@@ -171,6 +171,8 @@ class SimdqEngine(RetrievalEngine):
             projection_seed=self.config.simdq_projection_seed,
             store_floats=self.config.simdq_store_floats,
             encoder_id=self.config.model_name,
+            standardize=self.config.simdq_standardize,
+            itq_iters=self.config.simdq_itq_iters,
         )
         out_dir = self._index_dir()
         os.makedirs(os.path.dirname(out_dir), exist_ok=True)
@@ -242,6 +244,7 @@ class SimdqEngine(RetrievalEngine):
             "b": self.config.simdq_b,
             "d": self.config.simdq_d,
             "projection": self.config.simdq_projection,
+            "standardize": self.config.simdq_standardize,
         }
         try:
             with open(os.path.join(self._index_dir(), "meta.json")) as f:

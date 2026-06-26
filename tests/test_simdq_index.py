@@ -303,3 +303,35 @@ def test_format_version_mismatch_rejected(tmp_index_dir):
     assert "format_version" in msg
     assert "999" in msg
     assert "1" in msg  # the current version must be named too
+
+
+def _anisotropic_corpus(n, D, seed):
+    rng = np.random.default_rng(seed)
+    X = rng.standard_normal((n, D)).astype(np.float32)
+    X[:, :16] *= 8.0
+    A = rng.standard_normal((D, D)).astype(np.float32)
+    return (X @ A).astype(np.float32)
+
+
+@pytest.mark.parametrize("d", [768, 384])
+def test_learned_orthogonal_build_search_round_trip(tmp_index_dir, d):
+    """ITQ projection (paired with standardize) builds, persists, and searches."""
+    X = _anisotropic_corpus(1500, 768, seed=20)
+    idx = SimdqIndex.build(
+        vectors=X, b=2, d=d, projection="learned_orthogonal",
+        standardize=True, itq_iters=20, store_floats=True,
+    )
+    # W has orthonormal rows (faithful rescore tier)
+    assert idx.W.shape == (d, 768)
+    assert np.allclose(idx.W @ idx.W.T, np.eye(d), atol=1e-3)
+
+    idx.save(tmp_index_dir)
+    meta = json.loads((tmp_index_dir / "meta.json").read_text())
+    assert meta["projection"] == "learned_orthogonal"
+    assert meta["standardize"] is True
+
+    loaded = SimdqIndex.load(tmp_index_dir)
+    assert np.array_equal(loaded.W, idx.W)          # W is the only learned artifact
+    # a corpus vector is its own nearest neighbour through the full transform
+    idxs, _ = loaded.search(X[3], K=5, K_prime=50)
+    assert idxs[0] == 3

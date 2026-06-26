@@ -5,6 +5,7 @@ On-disk layout (matches spec section 7):
     <index_path>/
     ├── meta.json
     ├── W.npy           # (d, D_orig) fp32 projection matrix
+    ├── standardize.npz # optional: fitted (mu, inv_sigma, dead_mask) affine
     ├── codes.bin       # SoA (asymmetric) or AoS (hamming) packed codes
     ├── scales.bin      # (N,) fp16 per-vector scales (asymmetric only)
     └── floats.bin      # optional: (N, d) fp16, mmap'd at search
@@ -39,6 +40,7 @@ from docuverse.engines.retrieval.simdq import quantization as _quant
 from docuverse.engines.retrieval.simdq.projection import (
     SUPPORTED_D, SUPPORTED_d, validate_D_d,
 )
+from docuverse.engines.retrieval.simdq.standardize import Standardizer
 
 FORMAT_VERSION = 1
 
@@ -63,6 +65,7 @@ class SimdqIndex:
     has_floats: bool = False
     floats_mmap: Optional[np.ndarray] = None
     encoder_id: Optional[str] = None
+    standardizer: Optional[Standardizer] = None    # affine pre-projection fix
 
     # ----- build -----
 
@@ -77,6 +80,8 @@ class SimdqIndex:
         projection_seed: int = 42,
         store_floats: bool = True,
         encoder_id: Optional[str] = None,
+        standardize: bool = False,
+        itq_iters: int = 50,
     ) -> "SimdqIndex":
         if vectors.ndim != 2:
             raise ValueError(f"simdq build: vectors must be 2-D; got {vectors.shape}")
@@ -103,10 +108,21 @@ class SimdqIndex:
             vectors = vectors.astype(np.float32, copy=False)
         N = int(vectors.shape[0])
 
+        # Optional affine standardization, fit on the corpus and applied (here
+        # and at search time) *before* the linear projection W.
+        standardizer = Standardizer.fit(vectors) if standardize else None
+        if standardizer is not None:
+            vectors = standardizer.apply(vectors)
+
         if projection == "identity" and d == D:
             W = _projection.identity(D)
         elif projection == "random_orthogonal":
             W = _projection.random_orthogonal(D, d, projection_seed)
+        elif projection == "learned_orthogonal":
+            # Data-aware ITQ rotation, fit on the (standardized) corpus.
+            W = _projection.learned_orthogonal(
+                vectors, d, seed=projection_seed, n_iters=itq_iters,
+            )
         elif projection == "identity" and d != D:
             raise ValueError(
                 "simdq build: projection='identity' requires d == D; "
@@ -115,8 +131,8 @@ class SimdqIndex:
             )
         else:
             raise ValueError(
-                f"simdq build: projection must be 'identity' or 'random_orthogonal'; "
-                f"got {projection!r}"
+                "simdq build: projection must be 'identity', 'random_orthogonal', "
+                f"or 'learned_orthogonal'; got {projection!r}"
             )
         Y = _projection.apply_projection(vectors, W)              # (N, d)
 
@@ -138,7 +154,7 @@ class SimdqIndex:
             n_vectors=N, D_orig=D, d=d, b=stored_b,
             projection_name=projection, projection_seed=projection_seed,
             has_floats=store_floats, floats_mmap=floats_mmap,
-            encoder_id=encoder_id,
+            encoder_id=encoder_id, standardizer=standardizer,
         )
 
     # ----- save / load -----
@@ -155,6 +171,8 @@ class SimdqIndex:
         if self.scales is not None:
             (tmp / "scales.bin").write_bytes(self.scales.tobytes())
         np.save(tmp / "W.npy", self.W)
+        if self.standardizer is not None:
+            self.standardizer.save(tmp / "standardize.npz")
         if self.has_floats:
             assert self.floats_mmap is not None
             (tmp / "floats.bin").write_bytes(
@@ -178,6 +196,7 @@ class SimdqIndex:
             "has_floats": bool(self.has_floats),
             "float_dtype": "float16" if self.has_floats else None,
             "encoder_id": self.encoder_id,
+            "standardize": self.standardizer is not None,
         }
         (tmp / "meta.json").write_text(json.dumps(meta, indent=2))
 
@@ -210,6 +229,9 @@ class SimdqIndex:
                     f"meta says n_vectors={N}"
                 )
         W = np.load(path / "W.npy")
+        standardizer = None
+        if meta.get("standardize"):
+            standardizer = Standardizer.load(path / "standardize.npz")
         floats_mmap = None
         if meta.get("has_floats"):
             floats_mmap = np.memmap(
@@ -225,6 +247,7 @@ class SimdqIndex:
             has_floats=bool(meta.get("has_floats", False)),
             floats_mmap=floats_mmap,
             encoder_id=meta.get("encoder_id"),
+            standardizer=standardizer,
         )
 
     # ----- search -----
@@ -245,6 +268,8 @@ class SimdqIndex:
                 f"simdq search: q must have shape ({self.D_orig},); got {q.shape}"
             )
 
+        if self.standardizer is not None:
+            q = self.standardizer.apply(q)
         q_proj = np.ascontiguousarray((self.W @ q).astype(np.float32, copy=False))
 
         if self.family == "asymmetric":

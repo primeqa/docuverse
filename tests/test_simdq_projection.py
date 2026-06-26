@@ -7,8 +7,25 @@ import pytest
 from docuverse.engines.retrieval.simdq.projection import (
     apply_projection,
     identity,
+    learned_orthogonal,
     random_orthogonal,
 )
+
+
+def _anisotropic(n, d, seed):
+    """Zero-mean but anisotropic + correlated data (the regime ITQ targets)."""
+    rng = np.random.default_rng(seed)
+    X = rng.standard_normal((n, d)).astype(np.float32)
+    X[:, :8] *= 10.0                      # variance concentrated in a few dims
+    A = rng.standard_normal((d, d)).astype(np.float32)
+    X = X @ A                             # correlate the dimensions
+    return (X - X.mean(axis=0)).astype(np.float32)
+
+
+def _quant_error(X, W):
+    """Mean squared binary quantization error of sign(X W^T)."""
+    Y = X @ W.T
+    return float(np.mean((np.sign(Y) - Y) ** 2))
 
 
 def test_identity_shape_and_values():
@@ -161,3 +178,62 @@ def test_random_orthogonal_seed_deterministic_cross_process():
     # Also assert deterministic vs an in-process call.
     W_inproc = random_orthogonal(D=768, d=384, seed=42)
     assert out1 == W_inproc.tobytes()
+
+
+# ---------------------------------------------------------------------------
+# ITQ (learned_orthogonal)
+# ---------------------------------------------------------------------------
+
+class TestLearnedOrthogonal:
+    def test_shape_and_orthonormal_rows_full_dim(self):
+        X = _anisotropic(2000, 256, seed=0)
+        W = learned_orthogonal(X, d=256, seed=42, n_iters=30)
+        assert W.shape == (256, 256)
+        assert W.dtype == np.float32
+        # rows orthonormal: W Wᵀ = I_d
+        assert np.allclose(W @ W.T, np.eye(256), atol=1e-3)
+
+    def test_shape_and_orthonormal_rows_half_dim(self):
+        X = _anisotropic(2000, 256, seed=1)
+        W = learned_orthogonal(X, d=128, seed=42, n_iters=30)
+        assert W.shape == (128, 256)
+        assert np.allclose(W @ W.T, np.eye(128), atol=1e-3)
+
+    def test_deterministic_for_same_seed(self):
+        X = _anisotropic(1500, 256, seed=2)
+        W1 = learned_orthogonal(X, d=256, seed=42, n_iters=20)
+        W2 = learned_orthogonal(X, d=256, seed=42, n_iters=20)
+        assert np.array_equal(W1, W2)
+
+    def test_reduces_quantization_error_vs_random_init(self):
+        # ITQ monotonically lowers the binary quant error; 50 iters must beat the
+        # random rotation it started from (n_iters=0, same seed -> same init).
+        X = _anisotropic(3000, 256, seed=3)
+        W0 = learned_orthogonal(X, d=256, seed=42, n_iters=0)
+        W50 = learned_orthogonal(X, d=256, seed=42, n_iters=50)
+        assert _quant_error(X, W50) < _quant_error(X, W0)
+
+    def test_beats_random_orthogonal_quant_error(self):
+        # The whole point: a learned rotation is a better SimHash basis than a
+        # data-independent random one on anisotropic data.
+        X = _anisotropic(3000, 256, seed=4)
+        W_itq = learned_orthogonal(X, d=256, seed=42, n_iters=50)
+        W_rand = random_orthogonal(D=256, d=256, seed=42)
+        assert _quant_error(X, W_itq) < _quant_error(X, W_rand)
+
+    def test_rejects_bad_d(self):
+        X = _anisotropic(500, 256, seed=5)
+        with pytest.raises(ValueError):
+            learned_orthogonal(X, d=200, seed=42)      # not D or D/2
+
+    def test_rejects_too_few_samples(self):
+        X = _anisotropic(100, 256, seed=6)             # N < d
+        with pytest.raises(ValueError):
+            learned_orthogonal(X, d=256, seed=42)
+
+    def test_subsampling_caps_fit_rows(self):
+        # max_fit_samples < N must still produce a valid orthonormal W.
+        X = _anisotropic(4000, 128, seed=7)
+        W = learned_orthogonal(X, d=128, seed=42, n_iters=20, max_fit_samples=1000)
+        assert W.shape == (128, 128)
+        assert np.allclose(W @ W.T, np.eye(128), atol=1e-3)

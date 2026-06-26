@@ -141,6 +141,7 @@ version = {file = "VERSION"}
 markers = [
     "slow: tests that take >10s (SciFact recall regression). Run via `pytest -m slow`.",
     "bench: stress / large-N tests (50M vectors). Run via `pytest -m bench`.",
+    "diagnostic: report-only tests that print metrics and never fail. Run via `pytest -m diagnostic`.",
 ]
 # Default `pytest tests/` excludes both — fast lane stays under 30s.
 addopts = "-m 'not slow and not bench'"
