@@ -463,6 +463,115 @@ def _render_with_jinja2(config: dict[str, Any],
     )
 
 
+_JINJA2_SPECIAL_NAMES = frozenset({
+    'true', 'false', 'none', 'loop', 'super', 'caller',
+    'varargs', 'kwargs', 'range', 'namespace', 'joiner',
+    'cycler', 'lipsum',
+})
+
+
+def _build_scope_registry(config: dict, prefix: str = "",
+                           registry: "dict[str, list[str]] | None" = None) -> "dict[str, list[str]]":
+    """Return a map from every simple key name to all full dotted paths where it appears."""
+    if registry is None:
+        registry = {}
+    for key, value in config.items():
+        full_path = f"{prefix}.{key}" if prefix else key
+        registry.setdefault(key, []).append(full_path)
+        if isinstance(value, dict):
+            _build_scope_registry(value, full_path, registry)
+    return registry
+
+
+_JINJA2_ROOT_VAR_RE = re.compile(
+    r'\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)(?![.\w\[(])'
+)
+
+
+def _find_template_root_vars(config: dict) -> "set[str]":
+    """Collect root Jinja2 variable names from {{ }} expression blocks in string leaves.
+
+    Uses a regex rather than AST parsing so that custom filters (e.g. ``short_model``)
+    do not cause ``TemplateAssertionError`` during discovery.  Only ``{{ }}``
+    blocks are scanned; ``{% %}`` control-flow blocks are left to the renderer.
+    """
+    found: set[str] = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+        elif isinstance(node, str) and '{{' in node:
+            for m in _JINJA2_ROOT_VAR_RE.finditer(node):
+                found.add(m.group(1))
+
+    walk(config)
+    return found
+
+
+def _rewrite_vars_in_string(s: str, rewrites: "dict[str, str]") -> str:
+    """Rewrite root variable names inside Jinja2 {{ }} and {% %} blocks."""
+    def replace_in_block(match):
+        block = match.group(0)
+        for var, scoped in rewrites.items():
+            block = re.sub(
+                r'(?<![.\w])' + re.escape(var) + r'(?![.\w])',
+                scoped,
+                block,
+            )
+        return block
+
+    return re.sub(r'\{\{.*?\}\}|\{%.*?%\}', replace_in_block, s, flags=re.DOTALL)
+
+
+def _scope_unscoped_variables(config: dict) -> dict:
+    """Rewrite unscoped Jinja2 variable references to their fully-scoped dotted paths.
+
+    For each root variable name found in template strings:
+    - Top-level key → leave as-is (already in render context).
+    - Found in exactly one nested scope → rewrite, e.g. ``{{model_name}}`` →
+      ``{{retriever.model_name}}``.
+    - Found in multiple nested scopes → raise ``RuntimeError`` (ambiguous).
+    - Not found in config at all → leave (may come from override_vals or be a
+      Jinja2 built-in handled at render time).
+    """
+    registry = _build_scope_registry(config)
+    top_level_keys = set(config.keys())
+    template_vars = _find_template_root_vars(config)
+
+    rewrites: dict[str, str] = {}
+    for var in template_vars:
+        if var in _JINJA2_SPECIAL_NAMES or var in top_level_keys:
+            continue
+        all_paths = registry.get(var)
+        if not all_paths:
+            continue  # not in config; rendering will raise UndefinedError
+        # all_paths contains only nested paths (top-level already handled above)
+        if len(all_paths) > 1:
+            raise RuntimeError(
+                f"Ambiguous variable '{var}' in Jinja2 template: found in multiple "
+                f"scopes {all_paths}. Use the fully-scoped name (e.g. '{all_paths[0]}')."
+            )
+        rewrites[var] = all_paths[0]
+
+    if not rewrites:
+        return config
+
+    def rewrite_node(node):
+        if isinstance(node, dict):
+            return {k: rewrite_node(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [rewrite_node(v) for v in node]
+        if isinstance(node, str) and ('{{' in node or '{%' in node):
+            return _rewrite_vars_in_string(node, rewrites)
+        return node
+
+    return rewrite_node(config)
+
+
 def read_config_file(config_file, override_vals: dict[str, Any] = None) -> dict[str, Any]:
     """Read a YAML/JSON config file, apply overrides, render Jinja2 templates.
 
@@ -509,6 +618,7 @@ def read_config_file(config_file, override_vals: dict[str, Any] = None) -> dict[
             f"got {type(config).__name__}"
         )
     config = _apply_overrides(config, override_vals)
+    config = _scope_unscoped_variables(config)
     ctx = _build_render_context(config)
     return _render_with_jinja2(config, ctx)
 
