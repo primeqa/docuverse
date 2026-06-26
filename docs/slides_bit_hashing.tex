@@ -293,39 +293,127 @@ than the estimator's noise floor.
 \end{frame}
 
 % ---------------------------------------------------------------
-\begin{frame}{The encoder is its own random projection}
+\begin{frame}{Is the encoder its own projection? The isotropy problem}
 
-SimHash requires the projection to be isotropic Gaussian.
-Trained encoder dimensions are \emph{not} random — but empirically, skipping $W$ works.\\[8pt]
+SimHash assumes the projection is \textbf{isotropic Gaussian}. A trained encoder is
+\emph{not} random --- so does skipping $W$ really preserve cosine? \textbf{We measured it.}\\[4pt]
 
 \onslide<2->{
-\begin{columns}
-\column{0.48\textwidth}
-  \textbf{Classic LSH recipe}:
-  \begin{enumerate}
-    \item Embed to $\mathbb{R}^D$
-    \item Multiply by random $W \in \mathbb{R}^{D \times D}$
-    \item Take signs
-  \end{enumerate}
-  Cost: $O(D^2)$ projection per vector.
-
-\column{0.48\textwidth}
-  \onslide<3->{
-  \textbf{What actually works}:
-  \begin{enumerate}
-    \item Embed to $\mathbb{R}^D$
-    \item Take signs directly
-  \end{enumerate}
-  Contrastive training encourages near-isotropy across dimensions.\\[4pt]
-  \textcolor{hi}{Not proven — but competitive BEIR recall without $W$ is the evidence.}
-  }
-\end{columns}
+\textbf{granite-311m, 178k ClapNQ passages} (\texttt{tests/test\_embedding\_isotropy.py}):
+\begin{center}\small
+\begin{tabular}{lrl}
+\toprule
+Metric & Value & Ideal \\
+\midrule
+sign imbalance       & \textcolor{acc}{0.50} & $<0.05$ --- one dim is a \emph{dead} constant bit \\
+mean offset          & 0.03 & $<0.05$ \\
+effective-rank ratio & \textcolor{acc}{0.21} & $\to 1$ --- uses $\sim$21\% of 768 dims \\
+cov.\ spectral ratio & \textcolor{acc}{1465} & $\to 1$ --- variance in a few directions \\
+\bottomrule
+\end{tabular}
+\end{center}
 }
 
-\vspace{10pt}
+\vspace{2pt}
+\onslide<3->{
+Real embeddings are \textbf{strongly anisotropic} with \emph{rogue} dimensions ---
+naked $\operatorname{sign}(x)$ wastes bits. Two fixes:
+\begin{itemize}\setlength\itemsep{1pt}
+  \item \textbf{Cheap (affine):} center + per-dim standardize. Fixes sign balance
+    ($0.50\!\to\!0.03$) and the mean offset. \textcolor{key}{Universal win} --- but does
+    \emph{not} decorrelate (effective rank stays $\approx 0.21$).
+  \item \textbf{Structural:} a rotation $W$ to decorrelate the axes --- but \emph{which} $W$? (next)
+\end{itemize}
+}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Choosing the rotation $W$: a menu}
+
+$W \in \mathbb{R}^{d\times D}$ with \textbf{orthonormal rows} (so the fp32 rescore tier stays faithful).
+
+\vspace{4pt}
+\begin{center}\small
+\begin{tabular}{lccl}
+\toprule
+Method & Data? & Labels? & Idea \\
+\midrule
+Identity              & --  & --  & no rotation; bits stay correlated \\
+Random orthogonal     & no  & no  & JL / SimHash; unbiased but data-blind \\
+PCA / ZCA whitening   & yes & no  & align \& equalize variance; amplifies low-var noise \\
+\textbf{ITQ}          & yes & no  & rotate to minimize quantization error (next) \\
+Supervised hashing    & yes & yes & similarity-/rank-preserving loss \\
+RL + NDCG (REINFORCE) & yes & yes & optimize the metric directly (last) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{6pt}
+\onslide<2->{
+The axis of choice: \textbf{data-awareness} and \textbf{directness to NDCG} vs.\ \textbf{cost}
+and \textbf{label appetite}. Standardize first; then a rotation is the next lever ---
+most useful when reducing to $d = D/2$.
+}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}[fragile]{ITQ: learn $W$ by minimizing quantization error}
+
+\textbf{Idea} (Gong \& Lazebnik 2011): rotate so the signs sit close to the data.
+PCA to $d$ dims ($Z = XP$), then find the orthogonal $R$ minimizing the binary
+\emph{quantization error}
+\[
+  \min_{R^\top R = I}\; \bigl\| \operatorname{sign}(ZR) - ZR \bigr\|_F^2 .
+\]
+
+\textbf{Alternating minimization} --- each step is a closed-form, monotone minimizer:
+\begin{lstlisting}[language=Python]
+R = random_orthogonal(d)
+for _ in range(n_iters):
+    B = sign(Z @ R)            # nearest binary codes
+    U, _, Vt = svd(B.T @ Z)    # orthogonal Procrustes
+    R = Vt.T @ U.T             # R = V UT  minimizes ||B - Z R||
+W = (P @ R).T                  # (d, D), orthonormal rows
+\end{lstlisting}
+
+\onslide<2->{
+\textbf{Measured} (SciFact / granite-311m): ties identity at full $d$ with the
+\emph{best} Recall@100; at $d{=}D/2$ \textcolor{key}{beats a random rotation by $+0.018$ NDCG}.
+Unsupervised, label-free, $\sim$50 passes once at build time.
+}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Training $W$ for NDCG directly: REINFORCE}
+
+NDCG \emph{and} $\operatorname{sign}(\cdot)$ are both \textbf{non-differentiable} --- so optimize
+$W$ with policy-gradient RL, taking \textbf{NDCG itself as the reward}.
+
+\vspace{2pt}
+\onslide<2->{
+\textbf{Double-orthogonal parametrization} (keeps $W$ on the Stiefel manifold):
+\[
+  W = U_d\,[\,I_d \;\; 0\,]\,V_D^\top,\qquad
+  U_d = e^{A_d}\in SO(d),\;\; V_D = e^{A_D}\in SO(D),
+\]
+with skew-symmetric generators $A_d, A_D$ ($A^\top = -A$) as the free, unconstrained parameters.
+}
+
+\vspace{2pt}
+\onslide<3->{
+\textbf{Stochastic code policy} $\pi(b_k{=}{+}1\mid x) = \sigma\!\bigl(\beta\,(Wx)_k\bigr)$ ---
+sample codes, retrieve, score:
+\[
+  J = \mathbb{E}_{q,\,B\sim\pi}\!\bigl[\operatorname{NDCG@}K\bigr],\qquad
+  \nabla J = \mathbb{E}\bigl[(\operatorname{NDCG} - \bar{b})\,\nabla \log \pi(B)\bigr]
+\]
+($\bar{b}$ = EMA baseline for variance reduction). Backprop $\nabla\log\pi$ into $A_d, A_D$; ascend.
+}
+
+\vspace{2pt}
 \onslide<4->{
-\textcolor{acc}{\textbf{Consequence: the 1-bit code costs nothing extra at ingest time}}\\
-— just call \texttt{sign()} on the output layer.
+\textcolor{acc}{\textbf{Caveats:}} high variance, hungry for labeled queries, overfits qrels.
+Warm-start from \textbf{ITQ}; use NDCG-RL as a final polish, validated on the recall sweep.
 }
 \end{frame}
 
