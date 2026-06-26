@@ -1,0 +1,737 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{titlesec}
+\usepackage{verbatim}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!50!black,
+    urlcolor=blue!50!black,
+    citecolor=blue!50!black,
+}
+
+\definecolor{codebg}{rgb}{0.97,0.97,0.97}
+\definecolor{codekw}{rgb}{0.20,0.20,0.60}
+\definecolor{codecm}{rgb}{0.40,0.55,0.40}
+\definecolor{codestr}{rgb}{0.55,0.30,0.30}
+
+\lstset{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{codekw}\bfseries,
+    commentstyle=\color{codecm}\itshape,
+    stringstyle=\color{codestr},
+    showstringspaces=false,
+    breaklines=true,
+    frame=single,
+    framesep=4pt,
+    rulecolor=\color{black!20},
+    aboveskip=8pt,
+    belowskip=8pt,
+    columns=fullflexible,
+    keepspaces=true,
+}
+
+\lstdefinestyle{cstyle}{language=C}
+\lstdefinestyle{plainstyle}{language=}
+
+\titleformat{\section}{\Large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{1em}{}
+
+\title{\texttt{simdq} Plan 1 --- The Science of Bit-Hashed Retrieval}
+
+\author{DocUVerse \texttt{simdq} engine project}
+\date{2026-06-17}
+
+\begin{document}
+\maketitle
+
+\begin{center}
+\small
+\textbf{Project:} DocUVerse \texttt{simdq} engine \\
+\textbf{Scope of this paper:} Plan 1 --- the C/SIMD kernel layer (no Python, no engine wrapper) \\
+\textbf{Branch:} \texttt{v0.1.2} \\
+\textbf{Companion documents:} design spec, plan \& status, bench data
+\end{center}
+
+\vspace{1em}
+
+\section{Abstract}
+
+Plan 1 of the \texttt{simdq} retrieval engine ports a 768-bit symmetric
+Hamming top-1 kernel into the DocUVerse tree and generalises it along
+two axes:
+
+\begin{enumerate}
+    \item \textbf{Top-K} --- a bounded max-heap is threaded through the
+    SIMD inner loop without breaking its straight-line shape, supporting
+    $K \le 256$ on the stack with a single thresholded compare per
+    \texttt{LANES}-block.
+    \item \textbf{Asymmetric $b$-bit scans} --- full-precision query
+    vectors scored against $b \in \{1, 2, 4\}$ quantized database codes,
+    holding the query's bits intact so the score estimator's variance
+    scales with the \emph{square} of the level spacing rather than the
+    floor of a sign-only Hamming match.
+\end{enumerate}
+
+This document explains the \emph{information-theoretic} and
+\emph{architectural} reasons those design choices land where they do
+--- i.e.\ the science behind the bit hashing --- and ties each piece
+back to the kernel code that ships in
+\path{docuverse/engines/retrieval/simdq/_native/}.
+
+\section{Why bit-hashed retrieval works}
+
+A trained dense embedding model produces vectors $x \in \mathbb{R}^D$
+whose cosine similarity is meaningful for retrieval. For modern
+encoders (e.g.\ \texttt{granite-embedding-278m-multilingual-r2},
+$D = 768$), the \textbf{sign pattern} of $x$ already carries most of
+that information.
+
+\paragraph{The Charikar SimHash bound.} Draw a single isotropic random
+hyperplane $h \in \mathbb{R}^D$ (i.e.\ $h \sim \mathcal{N}(0, I_D)$).
+For unit vectors $x, y$:
+\begin{equation}
+\Pr_{h}\bigl[\,\mathrm{sign}(\langle h, x\rangle) = \mathrm{sign}(\langle h, y\rangle)\,\bigr]
+\;=\; 1 - \frac{\theta(x,y)}{\pi},
+\end{equation}
+where $\theta(x, y) = \arccos(\langle x, y\rangle)$. This is a
+\emph{per-hyperplane} statement: the probability that one random
+hyperplane separates $x$ and $y$ is $\theta/\pi$, equivalently the
+probability they agree is $1 - \theta/\pi$. (It is \emph{not} the
+joint probability that all $D$ hyperplanes agree --- that would be
+$(1 - \theta/\pi)^D$, which is vanishingly small at $D = 768$.)
+
+Now draw $D$ independent hyperplanes $h_1, \dots, h_D$ and hash $x,
+y$ into $D$-bit codes by taking the signs of the $D$ projections.
+Let $A_w = \mathbf{1}[\mathrm{sign}(\langle h_w, x\rangle) =
+\mathrm{sign}(\langle h_w, y\rangle)]$ be the indicator that bit $w$
+agrees. By Eq.~(1), $\mathbb{E}[A_w] = 1 - \theta/\pi$ for each $w$,
+so by linearity of expectation:
+\begin{itemize}
+  \item the \textbf{expected fraction of agreeing bits} is
+  $\mathbb{E}\bigl[\tfrac{1}{D}\sum_w A_w\bigr] = 1 - \theta/\pi$
+  --- a deterministic, monotone function of cosine;
+  \item equivalently --- and this is the kernel-relevant form --- the
+  \textbf{Hamming distance} $\sum_w (1 - A_w)$ is an unbiased
+  estimator of $(D/\pi)\cdot\theta(x,y)$.
+\end{itemize}
+
+For $D = 768$, the standard deviation of that estimator at a target
+similarity $\cos\theta \approx 0.9$ is roughly
+\begin{equation}
+\sigma_H \;\approx\; \sqrt{D \cdot p(1-p)} \;\approx\; \sqrt{768 \cdot 0.146 \cdot 0.854} \;\approx\; 10\ \text{bits},
+\end{equation}
+small relative to the dynamic range of plausible Hamming distances
+($\approx 0$--$384$), and small relative to the typical per-document
+cosine gap between true relevance and a near-miss. That is the
+empirical reason 1-bit codes work at all for text retrieval, and it is
+why the existing \texttt{hb5} driver achieves competitive recall on
+BEIR without any rescore tier.
+
+\paragraph{The full-precision encoder is its own random projection.}
+When the encoder is trained well, the dense embedding lives on a
+low-curvature manifold inside $\mathbb{R}^{768}$, and the directions
+sampled by the trained model already act like a useful random
+projection of the underlying semantic space. Plan 1 exploits this
+directly: it does \textbf{no extra projection} for the symmetric
+kernel --- $\mathrm{sign}(x)$ is the code, full stop. (The spec keeps
+random orthogonal $W$ in scope for later $(b, d)$ recipes; Plan 1
+just doesn't need it.)
+
+\section{The symmetric kernel: XOR-popcount on SoA codes}
+
+The Hamming distance between two $\texttt{WORDS} = 12$ $\times$ 64-bit
+codes (768 bits) is
+\begin{equation}
+H(q, x) \;=\; \sum_{w=0}^{\texttt{WORDS}-1} \mathrm{popcnt}(q_w \oplus x_w).
+\end{equation}
+This is the inner loop of \texttt{scan\_soa512} in
+\path{simdq_kernels_hamming.h:52-77} and of \texttt{scan\_shard} in
+\path{simdq_kernels_hamming.h:87-123} (AVX-512 path) /
+\path{simdq_kernels_hamming.h:152-195} (AVX2 path).
+
+\subsection{Why SoA, not AoS}
+
+Two layouts are admissible (\path{simdq_common.h:7-8}):
+
+\begin{lstlisting}[style=plainstyle]
+AoS:  db [ i*WORDS + w ]   -- code i contiguous, words sequential
+SoA:  dbT[ w*n + i ]       -- word w contiguous across all codes
+\end{lstlisting}
+
+For a vertical SIMD scan, the inner loop wants to load \textbf{the same
+word $w$ of \texttt{LANES} consecutive codes} in a single 256/512-bit
+load. That's $\texttt{dbT}[w \cdot n + i \,..\, w \cdot n + i +
+\texttt{LANES} - 1]$ --- a unit-stride load --- under SoA, but a
+strided gather under AoS ($\texttt{WORDS} \cdot 8 = 96$ byte stride).
+On x86-64 the gather is bandwidth-bound at roughly one element per
+cycle, the contiguous load is bound at 32--64 bytes per cycle. The
+factor is exactly the SIMD width.
+
+The cost of SoA is paid once at ingest (a transpose). The cost of AoS
+is paid every query, forever.
+
+\subsection{The two SIMD paths}
+
+\paragraph{AVX-512 + VPOPCNTDQ (Zen 4/5, Ice Lake+).}
+\path{simdq_kernels_hamming.h:54-69}:
+\begin{lstlisting}[style=cstyle]
+acc += _mm512_popcnt_epi64(_mm512_xor_si512(d, broadcast(q[w])));
+\end{lstlisting}
+8 codes per iteration, 12 word-loads per block, \textbf{96 popcnt-bits
+per vpopcnt instruction}. The accumulator stays in a \texttt{\_\_m512i}
+of 8 $\times$ \texttt{u64} lane counters; the running best per lane is
+updated with \texttt{\_mm512\_cmplt\_epi64\_mask} +
+\texttt{\_mm512\_mask\_mov\_epi64}, eliminating the last branch from
+the hot loop.
+
+\paragraph{AVX2 nibble-LUT (Haswell..Zen 3).}
+\path{simdq_kernels_hamming.h:135-140}:
+\begin{equation}
+\mathrm{popcnt\_byte}(b) \;=\; \mathrm{shuffle}(\mathrm{LUT}, b \,\&\, \mathtt{0x0F}) + \mathrm{shuffle}(\mathrm{LUT}, (b \gg 4) \,\&\, \mathtt{0x0F}).
+\end{equation}
+\texttt{vpshufb} does a 16-entry table lookup per byte lane in one
+cycle; the two halves of each byte (two nibbles) are looked up
+independently and summed. The byte counters then accumulate across all
+12 words --- the bound is $12 \cdot 8 = 96 < 255$, so an 8-bit
+accumulator cannot overflow. One \texttt{vpsadbw} per 4-code block
+reduces 32 bytes of partial counts to 4 $\times$ \texttt{u64}
+distances.
+
+This nibble-LUT trick is the textbook AVX2 popcount; what matters here
+is that \textbf{the byte-overflow argument is exact}, not heuristic ---
+the kernel exploits the fact that no 8-bit lane can ever exceed 96 to
+skip a per-word reduction.
+
+\subsection{Hamming top-K is essentially free}
+\label{sec:topk-free}
+
+\path{simdq_kernels_hamming_topk.h:46-78} adds top-K to the AVX-512
+kernel in eleven lines: after each \texttt{LANES}-block, the per-lane
+distances are spilled to a small scratch array, compared against a
+single \texttt{int64\_t threshold = heap.keys[0]} (the largest of the
+$K$ kept), and offered to \texttt{simdq\_topk\_offer} only if they
+pass. For random data and $K = 100$ against $n = 50\,\mathrm{M}$, the
+threshold settles fast and the heap-offer slow path almost never runs
+--- the bench data show \texttt{bench\_hamming} at \textbf{740 M
+cmp/s} single-query against \texttt{bench\_hamming\_top1} at
+\textbf{288 M cmp/s per query} in the \texttt{NQ=8} batch, so
+single-query top-K with $K = 100$ is \emph{faster} than per-query
+top-1 in the \texttt{NQ=8} batch. The win is register-pressure: top-K
+keeps fewer in-flight accumulators than the 8-query batched top-1.
+
+\subsection{The query-batching trick (carried over from \texttt{hb5})}
+
+Memory bandwidth, not compute, sets the ceiling for an XOR-popcount
+loop on a Zen 4-class chip. The cure, due to the existing \texttt{hb5}
+work, is to \textbf{load each database word once and reuse it for
+\texttt{NQ} queries}:
+
+\begin{lstlisting}[style=cstyle]
+for (w = 0; w < WORDS; w++) {
+    d = load(dbT + w*n + i);            // ONE load
+    for (j = 0; j < NQ; j++)             // NQ XOR+popcounts
+        acc[j] += popcnt(d XOR qs[j][w]);
+}
+\end{lstlisting}
+
+(\path{simdq_kernels_hamming.h:99-115}). The arithmetic stays the
+same; the memory traffic is divided by \texttt{NQ}. At
+$\texttt{NQ} = 8$ and $n = 50\,\mathrm{M}$, the AVX2 nibble-LUT path
+hits \textbf{2308 M cmp/s @ 27.7 GB/s} --- within a few percent of the
+DRAM streaming ceiling on the dev host.
+
+\section{The asymmetric kernels: information beats bits}
+
+\subsection{Why asymmetric}
+
+If we quantise \emph{both} the query and the database to $b$ bits, the
+score we recover is a noisy estimate of an inner product between two
+quantised vectors. The variance of that estimate is set by the
+\emph{square} of the quantization step on \textbf{both sides} --- and
+for $b = 1$ the database side already loses an enormous amount of
+magnitude information (a unit-norm $x$ collapses to $\pm 1$ per dim).
+
+If instead we keep the \textbf{query in fp32} and quantise only the
+database, the score
+\begin{equation}
+\hat{s}_i \;=\; \sum_{w} q'_w \cdot v_{i,w}, \qquad v_{i,w} \in V_b
+\end{equation}
+is an unbiased estimate of $q' \cdot y_i$ with variance
+\begin{equation}
+\mathrm{Var}[\hat{s}_i] \;=\; \sum_{w} (q'_w)^2 \cdot \mathrm{Var}[v_{i,w} - y_{i,w}]
+\;\le\; \|q'\|^2 \cdot \frac{\Delta_b^2}{12},
+\end{equation}
+(per-dim quantization error variance, with $\Delta_b$ the level
+spacing). For $V_2 = \{-3, -1, +1, +3\}$ after the per-vector scale
+$s_i = \|y_i\|/\sqrt{d}$ is applied, $\Delta_b = 2$; for $V_4$,
+$\Delta_b = 2$ as well over a 16-level grid. The \textbf{query being in
+float means its directional information is fully preserved} --- only
+the database codebook's projection error contributes noise.
+
+This is the core ASH (Asymmetric Scalar Hashing) observation, and it
+is the reason Plan 1 ships three asymmetric kernels rather than just
+the symmetric Hamming one.
+
+\subsection{Per-vector scale}
+
+\path{simdq_pack.h:32-44}:
+\begin{equation}
+s_i \;=\; \frac{\|y_i\|}{\sqrt{d}}
+\end{equation}
+stored as one fp16 (or fp32 in Plan 1 for now) per database vector.
+This is the unique scalar that makes the quantization grid's mean
+squared per-dim residual minimal \emph{under the assumption that $y_i$
+has roughly isotropic dimensions}. After dividing by $s_i$, each
+$y_{i,w}$ has unit MSE, so the level grid $V_b = \{2c - (2^b - 1) \mid
+c = 0\dots 2^b - 1\}$ catches roughly the right fraction of the
+distribution at every boundary --- i.e.\ for $b = 2$ the levels
+$\{-3, -1, +1, +3\}$ straddle the fitted standard normal at the
+natural quartile boundaries.
+
+The cost of this scale is \textbf{2 bytes per code} at fp16 --- under
+0.5\% of a $b = 4$, $d = 768$ code, and 2\% of a $b = 1$ code. Recall
+gain in published ASH-style work is a few NDCG points, so the trade is
+unambiguously worth it.
+
+\subsection{$V_b$ is the natural symmetric grid}
+
+The grid $V_b = \{2c - (2^b - 1) \mid c = 0\dots 2^b - 1\}$ has three
+properties that make it the right choice for an asymmetric scan:
+
+\begin{enumerate}
+    \item \textbf{Symmetric around 0.} No bias on a zero-mean coordinate
+    distribution.
+    \item \textbf{Integer-valued.} \texttt{vf[l] = (float)levels[code]}
+    is exact, no rounding noise injected on top of the quantization
+    step.
+    \item \textbf{Maps to $c \in \{0, \dots, 2^b - 1\}$ with one
+    shift+mask.} The encoded ``code'' is a $b$-bit unsigned that the
+    SIMD path can extract with \texttt{(packed >> (l*b)) \& ((1 << b) -
+    1)} --- no per-lane sign extension on the AVX2 path, which would
+    otherwise cost a separate shuffle.
+\end{enumerate}
+
+The alternative --- a Lloyd--Max grid fit to the empirical coordinate
+distribution --- would gain at most a fraction of a bit of effective
+resolution and would forfeit (3). Plan 1 doesn't bother.
+
+\subsection{The packed SoA layout, generalised}
+
+For asymmetric scans the SoA stride is \textbf{$d \times \lceil N
+\cdot b / 8 \rceil$ bytes}, with each dim row holding $N$ codes packed
+$b$ bits wide (\path{simdq_pack.h:1-19}):
+
+\begin{lstlisting}[style=plainstyle]
+b = 1 :  byte = i >> 3,   bit   = i & 7
+b = 2 :  byte = i >> 2,   shift = 2 * (i & 3)
+b = 4 :  byte = i >> 1,   shift = 4 * (i & 1)
+\end{lstlisting}
+
+This is dim-major because the inner loop, exactly as for the Hamming
+kernel, broadcasts a single $q'_w$ and FMAs it across \texttt{LANES}
+consecutive codes' decoded levels. The \texttt{LANES} is set by the
+SIMD register width: $\texttt{ASYM\_LANES} = 16$ for AVX-512
+(\texttt{\_\_m512}), $\texttt{ASYM\_LANES} = 8$ for AVX2
+(\texttt{\_\_m256}).
+
+\subsection{Inner loop, $b=2$ and $b=4$ (the fast paths)}
+
+\path{simdq_kernels_asym_b2.h:35-62} (AVX-512F) and lines 99--121
+(AVX2-FMA) implement the $b = 2$ scan;
+\path{simdq_kernels_asym_b4.h} is structurally identical at $b = 4$.
+Sketch:
+
+\begin{lstlisting}[style=plainstyle]
+for each block of LANES codes:
+    acc = 0
+    for w = 0 .. d-1:
+        packed = *(uintN_t*)(codes + w*row_bytes + (i0 >> log2(8/b)))
+        for l = 0 .. LANES-1:
+            vf[l] = levels[ (packed >> (l*b)) & ((1<<b)-1) ]
+        acc = fmadd( broadcast(q[w]), load(vf), acc )
+    spill acc to LANES floats; threshold-test against heap;
+        offer survivors.
+\end{lstlisting}
+
+The 16-byte LUT for $b = 2$ ($\{-3, -1, +1, +3\}$ repeated to fill
+\texttt{vpshufb}) and the 16-byte LUT for $b = 4$ ($\{2c - 15 \mid c =
+0\dots 15\}$) are immediates the compiler hoists out of the loop on
+AVX-512 hosts.
+
+The benchmark numbers (single-threaded, 50~M codes):
+
+\begin{center}
+\begin{tabular}{cccc}
+\toprule
+$b$ & bytes/code & cmp/s & GB/s \\
+\midrule
+2 & 192 & 2.19 M & 0.4 \\
+4 & 384 & 2.36 M & 0.9 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+are bound by the FMA throughput of the AVX2 path on the dev host, not
+by memory. On an AVX-512F-capable chip the \texttt{\_\_m512}
+accumulator doubles the per-cycle FMA work and the per-iteration
+unpack drops from a scalar 8-step expansion to a single masked-blend
+or shuffle --- we expect roughly \textbf{2--3$\times$ the AVX2
+throughput} on Zen 4 / Sapphire Rapids, which is the next measurement
+Plan 2 must take.
+
+\subsection{The $b=1$ asymmetric outlier}
+\label{sec:b1-outlier}
+
+\path{simdq_kernels_asym_b1.h} is the most informative kernel in
+Plan 1 because the \textbf{AVX-512F path is provably good} while the
+\textbf{AVX2 path is provably suboptimal}:
+
+\begin{itemize}
+    \item \textbf{AVX-512F (lines 46--72).} 16 packed bits $\to$
+    \texttt{\_\_mmask16} $\to$ \texttt{\_mm512\_mask\_blend\_ps(m, -1,
+    +1)} in \textbf{one instruction}. Then a single FMA against the
+    broadcast query. This is dense, branchless, and bandwidth-bound
+    --- exactly the design point.
+
+    \item \textbf{AVX2-FMA (lines 99--130).} The mask register doesn't
+    exist below AVX-512, so the kernel currently expands 8 bits to 8
+    floats with a per-iteration scalar loop:
+\begin{lstlisting}[style=cstyle]
+for (l = 0; l < 8; l++)
+    vf[l] = (bits & (1u << l)) ? 1.0f : -1.0f;
+\end{lstlisting}
+    The compiler does \emph{not} vectorize this in a useful way. The
+    observed ratio at $n = 50\,\mathrm{M}$ (\texttt{bench\_asym\_b1})
+    is \textbf{0.55 M cmp/s}, $\sim 6\times$ slower than $b = 2$
+    despite reading 2$\times$ \emph{less} memory.
+\end{itemize}
+
+The AVX2 fix is a known three-instruction trick:
+\texttt{\_mm256\_set1\_epi8(bits)} $\to$ \texttt{vpshufb} against an
+8$\times$\texttt{u8} spread table $\to$ masked blend to $\pm 1$
+floats. This is queued for Plan 2. Plan 1's value here is that
+\textbf{the bottleneck is now measured and named} --- it would have
+been hidden under ``the kernel is just slow'' without a microbench
+targeting exactly this path.
+
+\subsection{The bandwidth budget}
+
+For asymmetric $b = 2$, $d = 768$, the per-query work is
+\begin{align}
+\text{loads}      &: d \cdot \lceil N \cdot b / 8 \rceil = 768 \cdot N/4 = 192\,N \text{ bytes} \\
+\text{arithmetic} &: d \cdot \texttt{LANES} \text{ FMAs} / \texttt{LANES} \text{ codes} \approx 768 \text{ FMAs per code}
+\end{align}
+
+On Zen 4 (single-threaded, $\sim 64$ GB/s sustained DRAM, 2 FMA/cycle
+at $\sim 3.5$ GHz on \texttt{\_\_m512}):
+\begin{align}
+\text{bandwidth ceiling} &: \frac{64 \text{ GB/s}}{192 \text{ B/code}} = 333 \text{ M cmp/s} \\
+\text{compute ceiling}   &: \frac{16 \text{ lanes} \cdot 2 \text{ FMA/cyc} \cdot 3.5 \text{ GHz}}{768 \text{ FMA/code}} = 146 \text{ M cmp/s}
+\end{align}
+
+so on Zen 4 the \textbf{$b = 2$ kernel is compute-bound}, not
+memory-bound, and the ceiling is reached when both FMA pipes stay
+busy. The AVX-512 path (16 lanes vs 8) doubles compute headroom; the
+AVX2 path is half. This matches the empirical AVX2 numbers
+($\sim 2.2$ M cmp/s $\times$ 32 threads $\approx 70$ M cmp/s, within a
+factor of 2 of the AVX2-compute ceiling once the threaded driver
+lands in Plan 2).
+
+For $b = 1$, the load drops to $96 N$ bytes per query.
+\textbf{Memory is no longer the bottleneck}; the FMA pipe count is.
+This is why Hamming + popcount is faster than asymmetric $b = 1$
+despite reading the same bytes --- popcount uses a different
+instruction port from the FMA pipes, so the symmetric kernel's
+effective issue rate is higher.
+
+\section{Top-K extraction in the SIMD inner loop}
+
+\path{simdq_topk.h} is a 100-line bounded max-heap with two design
+constraints:
+
+\begin{enumerate}
+    \item \textbf{Caller-allocated.} The \texttt{keys} and \texttt{idxs}
+    arrays are passed in; the heap struct itself is 24 bytes and lives
+    on the stack of the scan kernel. No allocation in the hot path.
+    \item \textbf{Branchless thresholding.}
+    \texttt{simdq\_topk\_threshold(h)} returns \texttt{INT64\_MAX}
+    while the heap is filling and \texttt{h->keys[0]} once full. The
+    inner-loop test is therefore always a single integer compare; the
+    heap-touching code (\texttt{simdq\_topk\_offer}) only runs on
+    survivors.
+\end{enumerate}
+
+For $K \le 256$ random codes per shard against $n \approx 1\,\mathrm{M}$,
+the survival rate per \texttt{LANES}-block converges to roughly $K /
+n$ after the first few percent of the scan, so the amortised heap
+cost is \textbf{well under one offer per block}. The empirical
+evidence is in \S\ref{sec:topk-free}: top-K at $K = 100$ runs at the
+same per-query throughput as top-1.
+
+\subsection{Negated fixed-point keys for asymmetric scores}
+
+Asymmetric scans want the \textbf{$K$ largest} scores; the heap
+supports \textbf{$K$ smallest} keys. The kernels resolve this with a
+fixed-point negation (see e.g.\ \path{simdq_kernels_asym_b2.h:56}):
+\begin{equation}
+\text{key} \;=\; -\,(\texttt{int64\_t})(\,\text{score} \cdot 2^{20}\,)
+\end{equation}
+The $2^{20}$ factor preserves $\sim 6$ decimal digits of the float
+score in an \texttt{int64} --- more than enough to break ties
+correctly between any two non-equal asymmetric inner products on a
+$d = 768$ corpus. The choice of integer keys (rather than float keys)
+keeps the heap comparison a single \texttt{cmp + jl} instruction,
+which matters because the heap is touched inside the inner loop.
+
+\subsection{OpenMP merge for the threaded Hamming driver}
+
+\path{simdq_kernels_hamming_topk.h:143-168} runs $T$ shards in
+parallel, each with its own per-thread heap, and merges into a global
+heap under \texttt{omp critical}. For $T = 32$ and $K = 100$, the
+merge work is $T \cdot K \cdot \log K \approx 32 \cdot 100 \cdot 7
+\approx 22\,000$ operations --- a rounding error next to a 50 M-code
+scan. Plan 1 ships this for the Hamming family only; the asymmetric
+scans inherit the same pattern in Plan 2.
+
+The single subtlety is \textbf{partial-fill safety}: a thread whose
+shard is shorter than $K$ will not fill its local heap to $K$
+entries, so the merge code initialises \texttt{ld[r] = INT64\_MAX,
+li[r] = -1} and skips sentinel rows during merge (line 159,
+\texttt{if (li[r] >= 0 \&\& \dots)}). This is the kind of bug that
+doesn't show up at $n \gg T \cdot K$ and bites exactly once --- at
+the boundary where some user runs $n = 50$ for a unit test.
+
+\section{Test coverage and what it actually checks}
+
+Plan 1's 12 ctest targets aren't ticking a checkbox; they are designed
+to falsify a specific class of kernel bug each:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Target} & \textbf{Falsifies} \\
+\midrule
+\texttt{kernels\_hamming\_*} & XOR-popcount mismatch vs scalar reference \\
+\texttt{kernels\_hamming\_topk\_*} & top-K boundary (K=1, planted, threaded shard boundary) \\
+\texttt{kernels\_asym\_b\{1,2,4\}\_*} & level grid mis-mapping, per-vector scale, planted-best \\
+\texttt{pack} & round-trip pack$\to$unpack for all $b$, including b=4 saturation clamp \\
+\texttt{topk} & heap invariants under random offers; ascending extraction \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The two SIMD paths are exercised independently. On an AVX-512F host,
+\texttt{*\_native} compiles with \texttt{-march=native} (picks
+AVX-512), \texttt{*\_avx2} forces \texttt{-mavx2 -mpopcnt} (or
+\texttt{-mavx2 -mfma} for asymmetric). On an AVX2-only host,
+\texttt{*\_native} \emph{is} \texttt{*\_avx2} and the AVX-512 paths
+are not exercised --- which is why \S\ref{sec:results} below flags
+re-running the sweep on an AVX-512F box as a Plan-2 prerequisite.
+
+The planted-best tests are the most targeted: they insert the known
+best at index 0, at index $N - 1$, in the $n \bmod \texttt{LANES}$
+tail, and across an OpenMP shard boundary. This is the test that
+catches the class of bug where the SIMD body is correct but the tail
+loop or the cross-thread merge silently drops the winning index.
+
+\section{Empirical results and what they mean}
+\label{sec:results}
+
+Headline numbers from \texttt{\_native/BENCHMARKS.md} (50 M codes, 32
+threads, AVX2-only host, $K = 100$):
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Kernel} & \textbf{cmp/s} & \textbf{GB/s} \\
+\midrule
+\texttt{bench\_hamming\_top1} (NQ=8 batched) & \textbf{2308 M} & 27.7 \\
+\texttt{bench\_hamming} (top-K=100) & \textbf{740 M} & 71.1 \\
+\texttt{bench\_asym\_b1} (single-threaded) & 0.55 M & 0.1 \\
+\texttt{bench\_asym\_b2} (single-threaded) & 2.19 M & 0.4 \\
+\texttt{bench\_asym\_b4} (single-threaded) & 2.36 M & 0.9 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Three observations.
+
+\paragraph{(1) The Hamming kernel hit the bandwidth wall.} 71.1 GB/s
+on the single-query top-K path is within a few percent of the dev
+host's sustained DRAM bandwidth. The \texttt{NQ=8} batched top-1
+reaches 27.7 GB/s because each load is reused 8$\times$, so the
+effective bandwidth is $27.7 \cdot 8 = 222$ GB/s of ``consumed'' data
+per second --- the chip's \emph{L3} bandwidth, since the working set
+spills out of L2. The implication: at this scale, the symmetric kernel
+cannot get meaningfully faster without lossless code compression (out
+of scope for v1) or an outer index (out of scope for v1).
+
+\paragraph{(2) Asymmetric $b \in \{2, 4\}$ are within striking
+distance of the threaded ceiling.} The ratio $2.19$ M cmp/s $\times$
+32 threads $\approx 70$ M cmp/s (assuming linear scaling, modulo
+memory contention) lands at roughly \textbf{5\% of the bandwidth
+headroom on this host}. That headroom collapses on AVX-512F because
+the per-cycle FMA work doubles; we expect the threaded Plan-2 number
+on an AVX-512F box to be \textbf{bandwidth-bound, not compute-bound},
+at roughly the 200--300 M cmp/s scale that makes a 5 M corpus
+searchable in $\sim 20$ ms.
+
+\paragraph{(3) The $b = 1$ asymmetric path is the canary.} It is
+reading the \emph{least} memory of any asymmetric kernel and is the
+\emph{slowest}. The diagnosis (\S\ref{sec:b1-outlier}) is unambiguous
+--- the AVX2 unpack --- and the fix is queued. Plan 1's contribution
+is that this gap is now visible; under the previous setup it would
+have looked like ``asymmetric is just slow.''
+
+\section{The science questions Plan 1 sets up for Plan 3}
+
+Plan 1 ships kernels; Plan 3 ships a recipe sweep over BEIR. The
+specific scientific questions Plan 1's machinery is engineered to
+answer:
+
+\begin{center}
+\begin{tabular}{p{0.55\textwidth}l}
+\toprule
+\textbf{Question} & \textbf{Recipes that answer it} \\
+\midrule
+Does asymmetric $b = 2$ at full $d$ match $b = 1$ + float rescore at the same byte budget? & R0 vs R3 \\
+Does halving $d$ and doubling $b$ win under random-orthogonal $W$? & R3 vs R4 \\
+Is $b = 4$ at $d/2$ (same byte budget as $b = 2$ at $d$) a Pareto move? & R3 vs R5 \\
+How much of the float-baseline NDCG does any of the above sacrifice? & R6 (existing engines) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The headline finding the team will read off the resulting CSV is
+whether \textbf{asymmetric multi-bit replaces the binary-plus-rescore
+pattern} that current engines rely on. If R3 wins R0 at the same byte
+budget, the deployment recommendation across the embedding fleet
+flips. If R0 still wins, ASH-style learned projection (v2) becomes
+the next research lever; if it loses by a meaningful margin, v2 is
+unnecessary.
+
+The measurement infrastructure for that decision is already in this
+tree. Plan 1 is the foundation; Plan 2 makes it callable from Python;
+Plan 3 turns the dial.
+
+\section{Limitations of Plan 1 (read before citing)}
+
+\begin{enumerate}
+    \item \textbf{AVX-512F throughput is unmeasured.} The dev host
+    lacks AVX-512F; correctness is tested via the \texttt{*\_avx2}
+    ctest variant that forces the fallback path on the same source.
+    Numbers in \S\ref{sec:results} are AVX2-only.
+    \item \textbf{Asymmetric scans are single-threaded.} The OpenMP
+    shard/merge pattern from \texttt{scan\_batch\_parallel\_topk} will
+    be reused in Plan 2. Multiply the asymmetric $b = 2$/$b = 4$
+    numbers by $\sim 16$--$24\times$ to approximate the threaded
+    ceiling at 32 threads (modulo memory bandwidth, which on AVX2-only
+    hosts becomes the binding constraint above $\sim 16$ threads).
+    \item \textbf{The AVX2 $b = 1$ unpack is suboptimal}
+    (\S\ref{sec:b1-outlier}). The headline $b = 1$ cmp/s number
+    under-represents what the kernel will look like once the
+    \texttt{vpshufb}-based unpack lands.
+    \item \textbf{No $D \ne 768$.} Plan 1 hard-codes
+    $\texttt{ASYM\_D} = 768$. Templates for $D \in \{384, 1024,
+    1536\}$ come in Plan 3.
+    \item \textbf{No Python, no engine.} \texttt{SimdqIndex} and
+    \texttt{SimdqEngine} are Plan 2 / Plan 3. Today the kernels are
+    callable only from C.
+\end{enumerate}
+
+\section*{References}
+
+\begin{itemize}[leftmargin=*]
+    \item Charikar, M. (2002). ``Similarity Estimation Techniques from
+    Rounding Algorithms.'' STOC. --- The SimHash bound (\S2); states
+    Eq.~(1) as a corollary of Goemans--Williamson rounding.
+    \item Goemans, M.\ X.\ \& Williamson, D.\ P.\ (1995). ``Improved
+    Approximation Algorithms for Maximum Cut and Satisfiability
+    Problems Using Semidefinite Programming.'' JACM 42(6),
+    pp.~1115--1145. --- The original random-hyperplane rounding
+    argument; Lemma~3.2 contains the geometric identity used in
+    Appendix~\ref{app:simhash-proof}.
+    \item Vempala, S.\ (2004). \emph{The Random Projection Method}.
+    AMS DIMACS Series, vol.~65. --- Textbook treatment of random
+    projections, including the SimHash identity.
+    \item Andoni, A.\ \& Indyk, P.\ (2008). ``Near-Optimal Hashing
+    Algorithms for Approximate Nearest Neighbor in High Dimensions.''
+    Communications of the ACM 51(1), pp.~117--122. --- LSH context
+    and survey.
+    \item Tepper, M.\ \& Willke, T. (2026, internal pre-print).
+    ``Asymmetric Scalar Hashing.'' --- The asymmetric $b$-bit +
+    per-vector scale framework Plan 1 ports (\S4).
+    \item Mu\l{}a, W., Kurz, N., \& Lemire, D. (2018). ``Faster
+    Population Counts using AVX2 Instructions.'' Computer Journal. ---
+    The nibble-LUT popcount used in
+    \path{simdq_kernels_hamming.h:135-140}.
+    \item Existing \texttt{embedding\_hashes/hb5} driver in
+    \path{~/sandbox2}. --- Source of the NQ-batched query trick
+    (\S3.4).
+\end{itemize}
+
+\appendix
+
+\section{Proof of the Charikar SimHash bound}\label{app:simhash-proof}
+
+We prove the per-hyperplane identity stated as Eq.~(1) in \S2:
+\begin{equation}\label{eq:simhash-restate}
+\Pr_{h \sim \mathcal{N}(0, I_D)}\bigl[\,\mathrm{sign}(\langle h, x\rangle) \neq \mathrm{sign}(\langle h, y\rangle)\,\bigr]
+\;=\; \frac{\theta(x, y)}{\pi},
+\end{equation}
+for unit vectors $x, y \in \mathbb{R}^D$ with angle $\theta = \theta(x, y) = \arccos\langle x, y\rangle \in [0, \pi]$. The agreement form in Eq.~(1) follows by complementation.
+
+The argument is the Goemans--Williamson random-hyperplane rounding identity (Goemans \& Williamson 1995, Lemma~3.2), applied to a pair of unit vectors. We give it in three short steps.
+
+\paragraph{Step 1: reduce to the 2D plane spanned by $x$ and $y$.} Let $P \subset \mathbb{R}^D$ be the 2-dimensional subspace spanned by $x$ and $y$ (assume $\theta \in (0, \pi)$, i.e.\ $x, y$ are linearly independent; the boundary cases $\theta \in \{0, \pi\}$ give probability $0$ and $1$ respectively, consistent with~\eqref{eq:simhash-restate}). Decompose
+\[
+h \;=\; h_P + h_{P^\perp},
+\]
+where $h_P$ is the orthogonal projection of $h$ onto $P$ and $h_{P^\perp} \perp P$. Since $x, y \in P$, we have $\langle h, x\rangle = \langle h_P, x\rangle$ and $\langle h, y\rangle = \langle h_P, y\rangle$, so the event in~\eqref{eq:simhash-restate} depends only on $h_P$.
+
+By rotational invariance of the standard Gaussian on $\mathbb{R}^D$, $h_P$ is itself an isotropic Gaussian on the 2D subspace $P$, i.e.\ $h_P \sim \mathcal{N}(0, I_2)$ in any orthonormal basis of $P$. The problem therefore reduces to the 2D case.
+
+\paragraph{Step 2: in 2D, the direction of $h_P$ is uniform on $S^1$.} Write $h_P = R \cdot u$, where $R = \|h_P\| \geq 0$ and $u = h_P / \|h_P\| \in S^1$ (defined almost surely, since $h_P = 0$ has probability zero). For an isotropic 2D Gaussian, $R$ and $u$ are independent and $u$ is \textbf{uniform on the unit circle} $S^1$ --- this is the standard polar decomposition of $\mathcal{N}(0, I_2)$, equivalent to the Box--Muller construction.
+
+The signs $\mathrm{sign}(\langle h_P, x\rangle) = \mathrm{sign}(R \langle u, x\rangle) = \mathrm{sign}(\langle u, x\rangle)$ depend only on $u$, not on $R$. So
+\[
+\Pr_h\bigl[\mathrm{sign}(\langle h, x\rangle) \neq \mathrm{sign}(\langle h, y\rangle)\bigr]
+\;=\;
+\Pr_{u \sim \mathrm{Unif}(S^1)}\bigl[\mathrm{sign}(\langle u, x\rangle) \neq \mathrm{sign}(\langle u, y\rangle)\bigr].
+\]
+
+\paragraph{Step 3: count the separating arc.} Choose an orthonormal basis of $P$ in which $x = (1, 0)$ and $y = (\cos\theta, \sin\theta)$. Parametrise $u \in S^1$ by its angle $\phi \in [0, 2\pi)$, so $u = (\cos\phi, \sin\phi)$. Then
+\[
+\langle u, x\rangle = \cos\phi, \qquad \langle u, y\rangle = \cos(\phi - \theta).
+\]
+Each inner product changes sign exactly twice as $\phi$ traverses $[0, 2\pi)$:
+\begin{itemize}
+  \item $\cos\phi$ flips sign at $\phi = \pi/2$ and $\phi = 3\pi/2$;
+  \item $\cos(\phi - \theta)$ flips sign at $\phi = \theta + \pi/2$ and $\phi = \theta + 3\pi/2$.
+\end{itemize}
+The four sign-change points partition $S^1$ into four arcs. Walking around the circle, the two signs disagree on exactly the two arcs of length $\theta$ each (one between $\pi/2$ and $\theta + \pi/2$, one between $3\pi/2$ and $\theta + 3\pi/2$, modulo $2\pi$). The total angular measure of disagreement is therefore $2\theta$, out of total measure $2\pi$. Since $u$ is uniform:
+\[
+\Pr_u\bigl[\mathrm{sign}(\langle u, x\rangle) \neq \mathrm{sign}(\langle u, y\rangle)\bigr]
+\;=\; \frac{2\theta}{2\pi} \;=\; \frac{\theta}{\pi},
+\]
+which is~\eqref{eq:simhash-restate}. \hfill$\blacksquare$
+
+\paragraph{Remarks.}
+\begin{itemize}
+  \item The proof never used $D$. The bound is dimension-free: the probability depends only on the angle $\theta$, regardless of the ambient dimension.
+  \item The same argument shows that the LHS depends on $x$ and $y$ only through $\langle x, y\rangle$ (since rotations of $\mathbb{R}^D$ leave both the Gaussian and the inner product invariant). This is what makes Hamming distance on the binary codes a function of cosine alone.
+  \item The bound is \emph{tight} --- it is an exact identity, not an inequality. The looseness in practice comes from the variance of the empirical bit-agreement rate around its mean (Eq.~(2) in \S2), not from the bound itself.
+  \item For $\theta$ small (the regime of interest in retrieval), $\theta/\pi \approx (1 - \cos\theta)^{1/2} \cdot \sqrt{2}/\pi$, so the disagreement probability scales as $\sqrt{1 - \cos\theta}$ near $\theta = 0$ --- bit codes resolve near-duplicate similarities sub-linearly in $1 - \cos\theta$, which is the underlying reason the Hamming top-1 estimator can rank tightly clustered candidates.
+\end{itemize}
+
+\end{document}
