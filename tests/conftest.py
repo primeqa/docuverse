@@ -19,3 +19,8 @@ def pytest_addoption(parser):
             "that justified the move."
         ),
     )
+    parser.addoption(
+        "--embeddings-npy",
+        default=None,
+        help="Path to a .npy file of shape (N, D) with fp32 embeddings to test for isotropy.",
+    )
