@@ -183,6 +183,11 @@ static inline void scan_asym_b2_topk_parallel(const uint8_t *codes, size_t N, si
     {
         int t = omp_get_thread_num(), T = omp_get_num_threads();
         size_t chunk = (N + (size_t)T - 1) / (size_t)T;
+        // Each shard start i0 must land on a byte boundary: the 2-bit codes are
+        // packed 4/byte and the SIMD path reads vector ii from byte (ii>>2), so
+        // an unaligned i0 reads the wrong codes. Round the chunk up to a multiple
+        // of 64 so every i0 = t*chunk is byte-aligned (covers all b and lane widths).
+        chunk = (chunk + 63) & ~(size_t)63;
         size_t i0 = (size_t)t * chunk;
         size_t i1 = i0 + chunk < N ? i0 + chunk : N;
         if (i0 < i1) {

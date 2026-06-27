@@ -158,6 +158,37 @@ def test_search_rejects_bad_K(tmp_index_dir):
         idx.search(np.zeros(768, dtype=np.float32), K=10, K_prime=5)  # K' < K
 
 
+@pytest.mark.parametrize("b", [1, 2, 4])
+def test_parallel_scan_matches_single_thread(b):
+    """Multi-threaded asym scan must equal the single-threaded scan.
+
+    Regression for a sharding bug: the parallel kernel split [0,N) at
+    chunk = ceil(N/T) without byte-aligning the shard start, so threads
+    whose i0 wasn't a multiple of the codes-per-byte (b1:8, b2:4, b4:2)
+    unpacked the wrong codes — silently returning a wrong top-K and
+    collapsing retrieval quality (worse with more threads). N is chosen
+    so ceil(N/T) is unaligned for T in {4,8}. Codes-only (K'=K) isolates
+    the scan from the single-threaded fp32 rescore.
+    """
+    rng = np.random.default_rng(7)
+    N = 20011                                   # ceil(N/4)=5003, ceil(N/8)=2502: both unaligned
+    Y = rng.standard_normal(size=(N, 768)).astype(np.float32)
+    idx = SimdqIndex.build(vectors=Y, b=b, projection="identity", store_floats=False)
+
+    K = 50
+    for s in range(5):
+        q = rng.standard_normal(size=(768,)).astype(np.float32)
+        ref_idx, _ = idx.search(q, K=K, K_prime=K, num_threads=1)
+        ref = set(int(x) for x in ref_idx)
+        for nt in (2, 4, 8, 0):
+            got_idx, _ = idx.search(q, K=K, K_prime=K, num_threads=nt)
+            got = set(int(x) for x in got_idx)
+            assert got == ref, (
+                f"b={b} query={s} num_threads={nt}: parallel scan disagrees with "
+                f"single-thread on {len(ref ^ got)}/{K} entries"
+            )
+
+
 # ---------------------------------------------------------------------------
 # Parametrized multi-D + hamming family tests (Task 6)
 # ---------------------------------------------------------------------------

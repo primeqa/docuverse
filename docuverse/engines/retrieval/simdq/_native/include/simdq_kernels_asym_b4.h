@@ -174,6 +174,10 @@ static inline void scan_asym_b4_topk_parallel(const uint8_t *codes, size_t N, si
     {
         int t = omp_get_thread_num(), T = omp_get_num_threads();
         size_t chunk = (N + (size_t)T - 1) / (size_t)T;
+        // Shard start must be byte-aligned: 4-bit codes are packed 2/byte and the
+        // SIMD path reads vector ii from byte (ii>>1); an unaligned i0 reads the
+        // wrong codes. Round chunk up to a multiple of 64 so every i0 is aligned.
+        chunk = (chunk + 63) & ~(size_t)63;
         size_t i0 = (size_t)t * chunk;
         size_t i1 = i0 + chunk < N ? i0 + chunk : N;
         if (i0 < i1) {
