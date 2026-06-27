@@ -566,52 +566,51 @@ Asym $b=4$ (single thread)   & 2.36 M          & 0.9  & FMA \\
 % ---------------------------------------------------------------
 \begin{frame}{Does it hold on a real corpus? Natural Questions}
 
-\textbf{Setup}: NQ dev, \textbf{267k passages}, granite-embedding-97m (384-dim).
-\textbf{simdq} = asymmetric $b{=}2$ + fp32 rescore ($\alpha{=}10$) vs.\
-\textbf{Milvus FLAT} = exact fp32 brute force. Identical embeddings \& chunking.
+\textbf{Setup}: NQ dev ($\sim$270k passages). \textbf{simdq} = asymmetric $b{=}2$ +
+fp32 rescore ($\alpha{=}10$) vs.\ \textbf{Milvus FLAT} = exact fp32 brute force.
+Two encoders, identical embeddings \& chunking each.
 
-\vspace{6pt}
+\vspace{4pt}
 \begin{columns}
-\column{0.48\textwidth}
+\column{0.54\textwidth}
 \centering\small
-\textbf{Quality --- statistically identical}\\[4pt]
-\begin{tabular}{lcc}
+\textbf{Quality --- lossless on both}\\[3pt]
+\begin{tabular}{l cc cc}
 \toprule
-        & Milvus & simdq \\
-        & fp32   & $b{=}2$ \\
+ & \multicolumn{2}{c}{NDCG@10} & \multicolumn{2}{c}{Match@100} \\
+ & fp32 & simdq & fp32 & simdq \\
 \midrule
-NDCG@10  & 0.576 & 0.576 \\
-NDCG@100 & 0.610 & 0.609 \\
-Match@10 & 0.874 & 0.872 \\
-Match@100& 0.974 & 0.974 \\
-MRR@10   & 0.525 & 0.524 \\
+granite-97m \scriptsize(384d)  & 0.576 & 0.576 & 0.974 & 0.974 \\
+granite-311m \scriptsize(768d) & 0.607 & 0.607 & 0.983 & 0.984 \\
 \bottomrule
 \end{tabular}
 
-\column{0.52\textwidth}
+\column{0.46\textwidth}
 \centering\small
-\textbf{Speed --- retrieval kernel}\\[4pt]
-\begin{tabular}{lcc}
+\textbf{Scan speed (ms/query)}\\[3pt]
+\begin{tabular}{l cc}
 \toprule
-                   & Milvus & simdq \\
+            & Milvus & simdq \\
+            & fp32   & $b{=}2$ \\
 \midrule
-Median lat./query  & 7.6 ms  & \textbf{\textcolor{key}{3.2 ms}} \\
-Kernel throughput  & 131 q/s & \textbf{\textcolor{key}{302 q/s}} \\
-Scan-tier bytes/doc& 1536    & \textbf{\textcolor{key}{96}} \\
+97m  \scriptsize(384d)  & 7.6 & \textbf{\textcolor{key}{3.2}} \\
+311m \scriptsize(768d)  & 9.4 & \textcolor{acc}{49} \\
 \bottomrule
-\end{tabular}\\[6pt]
-{\scriptsize fp16 rescore tier touched only for top-$K'$ candidates.}
+\end{tabular}\\[5pt]
+{\scriptsize scan codes $16\times$ smaller (96 vs 1536 B/doc) either way.}
 \end{columns}
 
-\vspace{8pt}
+\vspace{6pt}
 \onslide<2->{
-\textcolor{hi}{\textbf{Same NDCG to $\pm 0.001$, $\approx 2.3\times$ faster scan, $16\times$ smaller scan codes.}}
-Asymmetric $b{=}2$ + rescore reproduces \emph{exact} fp32 ranking on a real corpus ---
-the $50$M-scale kernel speed is not bought with quality.\\[4pt]
-\onslide<3->{
-\small With \textbf{batched query encoding}, end-to-end search throughput widens further:
-\textbf{286 q/s} (simdq) vs.\ \textbf{66 q/s} (Milvus, per-query encode).
+\textcolor{hi}{\textbf{Quality is lossless on both ($\pm0.001$ NDCG)} --- the bit-hashing
+science holds.} The asymmetric $b{=}2$ scan is \emph{compute}-bound, so:
 }
+\onslide<3->{
+\begin{itemize}\setlength\itemsep{1pt}\small
+  \item at \textbf{384-dim} the unpack beats optimized fp32 FLAT ($2.3\times$ faster);
+  \item at \textbf{768-dim} it \textcolor{acc}{loses} ($\approx$5$\times$ slower) --- a kernel-efficiency gap,
+    not a memory one. Codes are still $16\times$ smaller; the $768$-dim unpack kernel is the next lever.
+\end{itemize}
 }
 \end{frame}
 
