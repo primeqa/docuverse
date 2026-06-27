@@ -211,6 +211,33 @@ below the threshold — which is exactly why 384d never showed the problem.
   depends on setting `OPENBLAS_NUM_THREADS`.
 - Test suite: `tests/test_simdq_*` green (see run).
 
+---
+
+## Phase 4 — fixing query-level parallelism (single-GPU)
+
+The old engine path encoded queries inside `parallel_process`, which defaults to
+**multiprocessing with `fork`**. `precompute_query_embeddings` creates a CUDA
+context in the main process, then `parallel_process` forks — fork-after-CUDA is
+unsupported, so workers can't safely use the GPU. Net effect: query-level
+parallelism only paid off with **one GPU per worker**.
+
+**Fix:** `SimdqEngine.search_all(queries, num_threads)` makes the two phases
+explicit and keeps the GPU in the main process:
+1. **Pool all query texts → one batched GPU forward pass** (no fork after CUDA).
+2. **Parallelize only the CPU scan with a thread pool** — the native scan
+   releases the GIL, so threads give real parallelism while sharing the
+   in-process embedding cache (no pickling, no model reload). Each scan runs
+   single-threaded (`scan_threads=1`) to avoid nested-OMP oversubscription.
+
+`SearchEngine.search` now delegates to `retriever.search_all` when present
+(else the old `precompute + parallel_process` path). Verified equivalent to
+per-query `search` at `num_threads` ∈ {1, 4}
+(`tests/test_simdq_engine.py::test_search_all_parallel_matches_sequential`).
+This reuses the exact threaded-scan pattern measured in §2.1 (3.9 ms/q, 255 q/s
+on the real 768d index).
+
+---
+
 ### Status report corrections needed (`docs/simdq_status_report.md` §3, §6.1)
 - The "768d simdq b=2 = 49 ms, ~5× slower than Milvus FLAT" result was measured
   under BLAS×OpenMP thread oversubscription. **Real number is ~3.9 ms/q**

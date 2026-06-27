@@ -102,6 +102,34 @@ def test_dispatch_and_round_trip(family, fake_corpus):
             f"none of {relevant} in top-{cfg.top_k}: {ids}"
 
 
+def test_search_all_parallel_matches_sequential(fake_corpus):
+    """search_all (batch encode + threaded scan) must equal per-query search."""
+    pytest.importorskip("sentence_transformers")
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _make_config(td)
+        eng = create_retrieval_engine(cfg)
+        eng.ingest(fake_corpus, update=False)
+
+        queries = [
+            SearchQueries.Query(template=default_query_template, id=f"q{i}", text=t)
+            for i, t in enumerate([
+                "neural networks deep learning",
+                "wild animals in the savannah",
+                "interpreted programming languages",
+                "attention mechanism in transformers",
+                "small furry mammals",
+            ])
+        ]
+        # Ground truth: one search() call per query.
+        seq = [[p["id"] for p in eng.search(q).retrieved_passages] for q in queries]
+
+        # Threaded batch path must produce identical rankings.
+        for nt in (1, 4):
+            res = eng.search_all(queries, num_threads=nt)
+            got = [[p["id"] for p in r.retrieved_passages] for r in res]
+            assert got == seq, f"search_all(num_threads={nt}) diverged: {got} != {seq}"
+
+
 def test_dispatch_raises_for_bad_family():
     pytest.importorskip("sentence_transformers")
     with tempfile.TemporaryDirectory() as td:

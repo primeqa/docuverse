@@ -232,7 +232,50 @@ class SimdqEngine(RetrievalEngine):
         self._query_emb_cache = {id(q): embs[i] for i, q in enumerate(items)}
         tm.add_timing("encode_batch")
 
-    def search(self, query: SearchQueries.Query, **kwargs) -> SearchResult:
+    def search_all(self, queries, num_threads: int = 1) -> List[SearchResult]:
+        """Batch-encode all queries on the GPU, then scan in parallel on the CPU.
+
+        Two phases, by design:
+          1. Pool every query's text and run **one** batched GPU forward pass
+             (``precompute_query_embeddings``). This keeps the GPU in the main
+             process — no ``fork`` after CUDA init, which is what made the old
+             ``parallel_process`` path require one GPU per worker.
+          2. Run the per-query scans across a *thread* pool. The native scan
+             releases the GIL, so threads give real parallelism while sharing the
+             in-process embedding cache (no pickling, no model reload). Each scan
+             runs single-threaded to avoid nested-OMP oversubscription.
+
+        ``num_threads`` is the query-level worker count (``num_search_threads``);
+        ``<= 1`` runs sequentially, ``< 0`` means all cores.
+        """
+        self._ensure_loaded()
+        items = list(queries)
+        if not items:
+            return []
+        if num_threads is not None and num_threads < 0:
+            num_threads = os.cpu_count() or 1
+
+        # Phase 1: one batched GPU encode for all queries.
+        self.precompute_query_embeddings(items)
+
+        # Phase 2: parallel CPU scan.
+        if num_threads is None or num_threads <= 1:
+            return [self.search(q, scan_threads=1)
+                    for q in tqdm(items, desc="simdq search", leave=True)]
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        results: List[Optional[SearchResult]] = [None] * len(items)
+        with ThreadPoolExecutor(max_workers=num_threads) as ex:
+            futs = {ex.submit(self.search, q, scan_threads=1): i
+                    for i, q in enumerate(items)}
+            with tqdm(total=len(items), desc="simdq search", leave=True) as tk:
+                for fut in as_completed(futs):
+                    results[futs[fut]] = fut.result()
+                    tk.update(1)
+        return results
+
+    def search(self, query: SearchQueries.Query, scan_threads: Optional[int] = None,
+               **kwargs) -> SearchResult:
         tm = timer("simdq::search")
         self._ensure_loaded()
         tm.add_timing("load")
@@ -254,7 +297,8 @@ class SimdqEngine(RetrievalEngine):
 
         idxs, scores = self.index.search(
             q, K=K, K_prime=K_prime,
-            num_threads=self.config.simdq_num_threads,
+            num_threads=(self.config.simdq_num_threads
+                         if scan_threads is None else scan_threads),
         )
         tm.add_timing("scan")
 

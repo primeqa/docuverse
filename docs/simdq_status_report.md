@@ -135,11 +135,12 @@ earlier 768d "regression" and its root cause (BLAS oversubscription), now fixed.
    VBMI/GFNI unpack and `d=D/2` projection ideas remain valid future kernel
    optimizations but are no longer needed for parity. See
    `docs/simdq_768_investigation.md`.
-2. **`simdq_num_threads` default.** `0` (all cores) is correct now but was the trigger
-   for the kernel bug and is pathological on tiny corpora (thread-launch overhead).
-   With query-level `parallel_process`, `1` (single-threaded scan, let the query
-   pool own parallelism) is as fast and avoids nested-OMP oversubscription.
-   Consider making it the default.
+2. **Query-level parallelism reworked (single-GPU).** The old path encoded inside
+   `parallel_process` (multiprocessing+fork), which broke after the CUDA context
+   was created — so it only scaled with one GPU per worker. New
+   `SimdqEngine.search_all` does it in two phases: one batched GPU encode, then a
+   *thread* pool over the GIL-releasing CPU scans (each scan single-threaded).
+   `SearchEngine.search` delegates to it. See `docs/simdq_768_investigation.md` §4.
 3. **Re-validate 97m numbers** against the fixed kernel (they predate it).
 4. **`bench_simdq_scan.py`** is still untracked — commit if it should be kept.
 5. **hypothesis** not installed → `tests/test_simdq_fuzz.py` is skipped in CI here.
