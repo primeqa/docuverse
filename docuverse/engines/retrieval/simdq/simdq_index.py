@@ -26,6 +26,7 @@ rescore against floats.bin.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from dataclasses import dataclass
@@ -33,6 +34,28 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+
+try:
+    from threadpoolctl import threadpool_limits as _threadpool_limits
+except Exception:  # threadpoolctl is optional
+    _threadpool_limits = None
+
+
+@contextlib.contextmanager
+def _single_threaded_blas():
+    """Keep BLAS single-threaded for the tiny per-query projection GEMV.
+
+    The projection ``W @ q`` is ~1 MFLOP, but at D=768 OpenBLAS parallelizes it
+    and spawns its own thread pool. Under the engine's ``parallel_process`` (one
+    query per thread) those pools oversubscribe the cores and dominate runtime —
+    the root cause of the 768-dim "slowness" (see
+    docs/simdq_768_investigation.md). A no-op if threadpoolctl is unavailable.
+    """
+    if _threadpool_limits is None:
+        yield
+    else:
+        with _threadpool_limits(limits=1, user_api="blas"):
+            yield
 
 from docuverse.engines.retrieval.simdq import _simdq_native as _native
 from docuverse.engines.retrieval.simdq import projection as _projection
@@ -270,11 +293,26 @@ class SimdqIndex:
 
         if self.standardizer is not None:
             q = self.standardizer.apply(q)
-        q_proj = np.ascontiguousarray((self.W @ q).astype(np.float32, copy=False))
+        q_proj = self._project_query(q)
 
         if self.family == "asymmetric":
             return self._search_asym(q_proj, K, K_prime, num_threads)
         return self._search_hamming(q_proj, K, K_prime, num_threads)
+
+    def _project_query(self, q: np.ndarray) -> np.ndarray:
+        """Apply the projection W to a query, cheaply.
+
+        Identity projection (the default, and the common case) is a no-op, so we
+        skip the (D, D) matmul entirely — both to save the work and, more
+        importantly, to avoid OpenBLAS spawning a parallel thread pool for it
+        (see _single_threaded_blas / docs/simdq_768_investigation.md). The real
+        projection path keeps the matmul but pins BLAS to one thread.
+        """
+        if self.projection_name == "identity" and self.d == self.D_orig:
+            return np.ascontiguousarray(q, dtype=np.float32)
+        with _single_threaded_blas():
+            q_proj = self.W @ q
+        return np.ascontiguousarray(q_proj.astype(np.float32, copy=False))
 
     def _search_asym(self, q_proj, K, K_prime, num_threads):
         scan = {1: _native.scan_b1, 2: _native.scan_b2, 4: _native.scan_b4}[self.b]
