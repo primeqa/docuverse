@@ -27,7 +27,14 @@ from docuverse.utils import get_param
 
 # Module-level function for computing tokenized length (needed for pickling in multiprocessing)
 def _compute_tokenized_length(itm, tiler):
-    """Compute tokenized length for an item. This function is defined at module level to be picklable."""
+    """Compute tokenized length for an item. This function is defined at module level to be picklable.
+
+    Reuses ``itm['tlen']`` when the tiler already captured it for free during
+    tiling (single-tile docs in token-count mode), avoiding a redundant second
+    tokenization pass over the whole corpus.
+    """
+    if 'tlen' in itm:
+        return itm['tlen']
     return tiler.get_tokenized_length(itm['text'], forced_tok=True)
 
 
@@ -627,8 +634,7 @@ class SearchData:
                 if items:
                     if verbose:
                         for item in items:
-                            passages.append({**item, 'tlen': tiler.get_tokenized_length(item['text'],
-                                                                                         forced_tok=True)})
+                            passages.append({**item, 'tlen': _compute_tokenized_length(item, tiler)})
                     else:
                         passages.extend(items)
             if _drop_count:

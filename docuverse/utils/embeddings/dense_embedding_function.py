@@ -141,7 +141,7 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         # message instead of letting it surface as a confusing dim-mismatch deep in
         # ingest (e.g. "encoder produced dim 384 but hidden_dim=768").
         if self.matryoshka_dim > 0:
-            _native_dim = self.model.get_sentence_embedding_dimension()
+            _native_dim = self._model_embedding_dim()
             if self.matryoshka_dim > _native_dim:
                 raise ValueError(
                     f"matryoshka_dim={self.matryoshka_dim} exceeds the native "
@@ -158,9 +158,16 @@ class DenseEmbeddingFunction(EmbeddingFunction):
     def tokenizer(self):
         return self.model.tokenizer
 
+    def _model_embedding_dim(self):
+        # sentence-transformers renamed get_sentence_embedding_dimension ->
+        # get_embedding_dimension; prefer the new name, fall back for older versions.
+        getter = getattr(self.model, "get_embedding_dimension", None) \
+            or self.model.get_sentence_embedding_dimension
+        return getter()
+
     @property
     def embedding_dim(self):
-        dim = self.model.get_sentence_embedding_dimension()
+        dim = self._model_embedding_dim()
         return self.matryoshka_dim if self.matryoshka_dim > 0 else dim
 
     def start_pool(self):

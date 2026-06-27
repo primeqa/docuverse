@@ -130,6 +130,12 @@ class TextTiler:
             merged_length = self.get_tokenized_length(text=expanded_text)
             if merged_length <= max_doc_size:
                 itm.update({'id': f"{id_}-0-{len(text)}", 'text': expanded_text})
+                # Single-tile docs: we already have the exact token length here,
+                # so stash it (token mode only) to let stats skip a redundant
+                # re-tokenization of the whole corpus. In char mode merged_length
+                # is a character count, so it must not be reused as a token count.
+                if self.count_type == self.COUNT_TYPE_TOKEN:
+                    itm['tlen'] = merged_length
                 pieces.append(itm.copy())
             else:
                 maxl = max_doc_size  # - title_len
