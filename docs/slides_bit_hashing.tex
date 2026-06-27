@@ -13,15 +13,32 @@
 \usepackage{xcolor}
 \usepackage{mathtools}
 
+\definecolor{codebg}{RGB}{247,249,251}
+\definecolor{coderule}{RGB}{0,100,180}
+\definecolor{codekw}{RGB}{0,92,197}
+\definecolor{codecmt}{RGB}{90,150,95}
+\definecolor{codefn}{RGB}{150,75,20}
+
 \lstset{
-  basicstyle=\ttfamily\small,
-  keywordstyle=\color{blue!80!black}\bfseries,
-  commentstyle=\color{green!50!black},
-  backgroundcolor=\color{gray!8},
-  frame=single,
-  framerule=0pt,
-  xleftmargin=4pt,
-  xrightmargin=4pt,
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecmt}\itshape,
+  emph={sign,svd,random_orthogonal,range},
+  emphstyle=\color{codefn}\bfseries,
+  backgroundcolor=\color{codebg},
+  frame=l,
+  rulecolor=\color{coderule},
+  framerule=2.5pt,
+  framesep=8pt,
+  xleftmargin=18pt,
+  xrightmargin=8pt,
+  aboveskip=6pt,
+  belowskip=4pt,
+  lineskip=1pt,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  tabsize=4,
 }
 
 \definecolor{acc}{RGB}{180,30,30}
@@ -362,9 +379,11 @@ most useful when reducing to $d = D/2$.
 \textbf{Idea} (Gong \& Lazebnik 2011): rotate so the signs sit close to the data.
 PCA to $d$ dims ($Z = XP$), then find the orthogonal $R$ minimizing the binary
 \emph{quantization error}
+\vspace{-4pt}
 \[
   \min_{R^\top R = I}\; \bigl\| \operatorname{sign}(ZR) - ZR \bigr\|_F^2 .
 \]
+\vspace{-10pt}
 
 \textbf{Alternating minimization} --- each step is a closed-form, monotone minimizer:
 \begin{lstlisting}[language=Python]
@@ -372,11 +391,13 @@ R = random_orthogonal(d)
 for _ in range(n_iters):
     B = sign(Z @ R)            # nearest binary codes
     U, _, Vt = svd(B.T @ Z)    # orthogonal Procrustes
-    R = Vt.T @ U.T             # R = V UT  minimizes ||B - Z R||
+    R = Vt.T @ U.T             # R = V U^T minimizes ||B - Z R||
 W = (P @ R).T                  # (d, D), orthonormal rows
 \end{lstlisting}
 
 \onslide<2->{
+\vspace{2pt}
+\small
 \textbf{Measured} (SciFact / granite-311m): ties identity at full $d$ with the
 \emph{best} Recall@100; at $d{=}D/2$ \textcolor{key}{beats a random rotation by $+0.018$ NDCG}.
 Unsupervised, label-free, $\sim$50 passes once at build time.
