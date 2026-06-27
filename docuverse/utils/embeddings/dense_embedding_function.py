@@ -136,6 +136,20 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             self._attn_implementation = None
         float_types = {p.dtype for p in self.model.parameters()}
         print(f"Floating point types used in the model {model_or_directory_name}: {float_types}")
+        # Matryoshka can only truncate the native embedding down — never expand it.
+        # Catch an oversized matryoshka_dim here (fast, at load) with an actionable
+        # message instead of letting it surface as a confusing dim-mismatch deep in
+        # ingest (e.g. "encoder produced dim 384 but hidden_dim=768").
+        if self.matryoshka_dim > 0:
+            _native_dim = self.model.get_sentence_embedding_dimension()
+            if self.matryoshka_dim > _native_dim:
+                raise ValueError(
+                    f"matryoshka_dim={self.matryoshka_dim} exceeds the native "
+                    f"embedding dimension ({_native_dim}) of model "
+                    f"'{model_or_directory_name}'. Matryoshka only truncates the "
+                    f"output, it cannot expand it. Set matryoshka_dim<={_native_dim} "
+                    f"(or remove it to use the full {_native_dim}-dim output)."
+                )
         if self.torch_compile:
             print("Applying torch.compile() to embedding model...")
             self.model[0].auto_model = torch.compile(self.model[0].auto_model)

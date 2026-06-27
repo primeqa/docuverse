@@ -51,6 +51,10 @@ class SimdqEngine(RetrievalEngine):
         self.index: Optional[SimdqIndex] = None
         self.id_map: List[str] = []
         self.metadata_store: Dict[str, dict] = {}
+        # Optional precomputed query embeddings, keyed by id(query). Populated
+        # by precompute_query_embeddings() so the GPU encode runs once in a
+        # single batched forward pass instead of once per query.
+        self._query_emb_cache: Dict[int, np.ndarray] = {}
 
         self.load_model_config(config_params)
         self.text_header = "text"
@@ -59,17 +63,28 @@ class SimdqEngine(RetrievalEngine):
         self.extra_fields = get_param(self.config.data_template, "extra_fields", [])
         self.persist_directory = get_param(self.config, "project_dir", "/tmp")
 
-        self.init_model(**kwargs)
+        # Defer the (GPU) model load until first use. read_data()/tokenizing
+        # then runs with no CUDA context, which lets the preprocessing step
+        # use fork-based multiprocessing (all cores) instead of GIL-bound
+        # threads. The model is loaded lazily on the first encode.
+        self._init_model_kwargs = kwargs
         self.init_client()
 
     # ===== Init =====
 
     def init_model(self, **kwargs):
+        if self.model is not None:
+            return
         self.model = DenseEmbeddingFunction(
             self.config.model_name,
             **self.config.__dict__,
         )
         self.hidden_dim = self.model.embedding_dim
+
+    def _ensure_model(self):
+        """Load the embedding model on first use (lazy GPU init)."""
+        if self.model is None:
+            self.init_model(**self._init_model_kwargs)
 
     def init_client(self):
         os.makedirs(os.path.join(self.persist_directory, self.SUBDIR), exist_ok=True)
@@ -110,6 +125,7 @@ class SimdqEngine(RetrievalEngine):
 
     def ingest(self, corpus: SearchCorpus, update: bool = False, **kwargs) -> bool:
         self.check_client()
+        self._ensure_model()
         fmt = "\n=== {:30} ==="
         still_create_index = self.create_update_index(fmt=fmt, do_update=update)
         if not still_create_index:
@@ -195,15 +211,41 @@ class SimdqEngine(RetrievalEngine):
             self.id_map = side["id_map"]
             self.metadata_store = side["metadata"]
 
+    def precompute_query_embeddings(self, queries) -> None:
+        """Batch-encode all query texts in one GPU forward pass.
+
+        Stored by id(query) and consumed by search(); this removes the
+        per-query encode (the dominant fixed cost at small corpus sizes,
+        where the scan itself is cheap) and avoids concurrent model.encode
+        calls when search runs under parallel_process.
+        """
+        self._ensure_loaded()
+        self._ensure_model()
+        items = list(queries)
+        texts = [(q.text if hasattr(q, "text") else q) for q in items]
+        if not texts:
+            return
+        tm = timer("simdq::precompute_query_embeddings")
+        embs = self.model.encode(texts, show_progress_bar=False,
+                                 prompt_name="query", tm=tm)
+        embs = np.asarray(embs, dtype=np.float32)
+        self._query_emb_cache = {id(q): embs[i] for i, q in enumerate(items)}
+        tm.add_timing("encode_batch")
+
     def search(self, query: SearchQueries.Query, **kwargs) -> SearchResult:
         tm = timer("simdq::search")
         self._ensure_loaded()
         tm.add_timing("load")
 
-        text = query.text if hasattr(query, "text") else query
-        emb = self.model.encode([text], show_progress_bar=False,
-                                prompt_name="query", tm=tm)[0]
-        q = np.asarray(emb, dtype=np.float32)
+        cached = self._query_emb_cache.get(id(query))
+        if cached is not None:
+            q = np.asarray(cached, dtype=np.float32)
+        else:
+            self._ensure_model()
+            text = query.text if hasattr(query, "text") else query
+            emb = self.model.encode([text], show_progress_bar=False,
+                                    prompt_name="query", tm=tm)[0]
+            q = np.asarray(emb, dtype=np.float32)
         tm.add_timing("encode")
 
         K = int(self.config.top_k)

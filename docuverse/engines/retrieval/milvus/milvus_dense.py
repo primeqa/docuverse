@@ -37,6 +37,7 @@ class MilvusDenseEngine(MilvusEngine):
         self.normalize_embs = False
         self.hidden_dim = 0
         self.index_type = None
+        self.index_metric_type = None
         super().__init__(config, **kwargs)
         self.storage_size = get_param([config, kwargs], 'storage_size', "fp16")
         self.storage_rep = self.STORAGE_MAP[self.storage_size]
@@ -93,6 +94,7 @@ class MilvusDenseEngine(MilvusEngine):
             #         "efConstruction": 128}
         )
         self.index_type = _index_params["index_type"]
+        self.index_metric_type = _index_params.get("metric_type", "IP")
         return index_params
 
     def create_fields(self, embeddings_name="embeddings", new_fields_only=False):
@@ -119,7 +121,11 @@ class MilvusDenseEngine(MilvusEngine):
         # Milvus-Lite; mirror that here so we don't pass HNSW knobs to a
         # collection that doesn't have an HNSW index.
         if self.index_type and self.index_type in self.milvus_defaults.get('search_params', {}):
-            _default_search = self.milvus_defaults['search_params'][self.index_type]
+            _default_search = dict(self.milvus_defaults['search_params'][self.index_type])
+            # The search metric_type must match the index we actually built;
+            # the per-index default (e.g. AUTOINDEX → L2) can disagree with it.
+            if self.index_metric_type:
+                _default_search["metric_type"] = self.index_metric_type
         elif self.server is not None and getattr(self.server, "type", None) == "file":
             _default_search = {"metric_type": "IP", "params": {}}
         else:
@@ -129,6 +135,10 @@ class MilvusDenseEngine(MilvusEngine):
             search_params = _default_search
         if isinstance(search_params, str):
             search_params = get_param(self.milvus_defaults, "search_params." + search_params)
+        # pymilvus rejects a None inner "params"; coerce to an empty dict so a
+        # `params: null` default (e.g. AUTOINDEX) can't break the search call.
+        if isinstance(search_params, dict) and search_params.get("params") is None:
+            search_params = {**search_params, "params": {}}
         return search_params
 
     def encode_data(self, texts, batch_size, tm=None, **kwargs):

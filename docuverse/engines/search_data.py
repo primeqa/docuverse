@@ -31,6 +31,20 @@ def _compute_tokenized_length(itm, tiler):
     return tiler.get_tokenized_length(itm['text'], forced_tok=True)
 
 
+def _cuda_context_active() -> bool:
+    """True if a CUDA context is already initialized in this process.
+
+    Used to decide whether forking (multiprocessing) is safe: forking a
+    process that holds a live CUDA context can hang, so we keep GIL-bound
+    threads in that case and only fork when CUDA is untouched.
+    """
+    try:
+        import torch
+        return torch.cuda.is_initialized()
+    except Exception:
+        return False
+
+
 class DefaultProcessor:
     product_counts = {}
     stopwords = None
@@ -631,12 +645,17 @@ class SearchData:
             else:
                 post_func = None
                 post_label = None
+            # Prefer fork-based multiprocessing (true multi-core) for this
+            # CPU-bound, GIL-heavy tokenizing step. Fall back to threads only
+            # when a CUDA context is already live, since forking a process
+            # that holds a CUDA context can hang.
+            use_threads_tok = _cuda_context_active()
             results = parallel_process(process_func=process_text_func,
                                        post_func=post_func,
                                        post_label=post_label,
                                        data=all_data, num_threads=num_threads,
                                        msg="Tokenizing",
-                                       use_threads=True)
+                                       use_threads=use_threads_tok)
             # Guard against None entries from crashed worker processes
             passages = list(chain.from_iterable(r for r in results if r is not None))
             del results

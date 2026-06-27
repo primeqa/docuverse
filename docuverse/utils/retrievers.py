@@ -88,6 +88,12 @@ def create_retrieval_engine(retriever_config: dict):
        from docuverse.engines.retrieval.file.file_engine import FileEngine
        engine = FileEngine(retriever_config)
 
+   if engine is None:
+       raise ValueError(
+           f"Unknown or unsupported db_engine: {name!r}. Check spelling "
+           "(e.g. 'simdq', not 'simqd') against the supported engines: "
+           "elastic-*, milvus-*, lancedb-*, chromadb, faiss, simdq, file:."
+       )
    return engine
 
 def create_reranker_engine(reranker_config: dict|RerankerArguments):

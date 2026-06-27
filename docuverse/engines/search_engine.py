@@ -176,6 +176,10 @@ class SearchEngine:
             if len(queries) == 0:
                  print(f"No queries to seaarch. Check {self.config.input_queries}")
             self.retriever.reconnect_if_necessary()
+            # Let a retriever batch-encode all queries up front (one GPU pass)
+            # instead of encoding once per query inside parallel_process.
+            if hasattr(self.retriever, "precompute_query_embeddings"):
+                self.retriever.precompute_query_embeddings(queries)
             answers = parallel_process(self.retriever.search, queries,
                                        num_threads=self.config.num_search_threads,
                                        msg=f"Searching documents:")
