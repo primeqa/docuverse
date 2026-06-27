@@ -594,7 +594,7 @@ granite-311m \scriptsize(768d) & 0.607 & 0.607 & 0.983 & 0.984 \\
             & fp32   & $b{=}2$ \\
 \midrule
 97m  \scriptsize(384d)  & 7.6 & \textbf{\textcolor{key}{3.2}} \\
-311m \scriptsize(768d)  & 9.4 & \textcolor{acc}{49} \\
+311m \scriptsize(768d)  & 9.4 & \textbf{\textcolor{key}{3.9}} \\
 \bottomrule
 \end{tabular}\\[5pt]
 {\scriptsize scan codes $16\times$ smaller (96 vs 1536 B/doc) either way.}
@@ -603,13 +603,15 @@ granite-311m \scriptsize(768d) & 0.607 & 0.607 & 0.983 & 0.984 \\
 \vspace{6pt}
 \onslide<2->{
 \textcolor{hi}{\textbf{Quality is lossless on both ($\pm0.001$ NDCG)} --- the bit-hashing
-science holds.} The asymmetric $b{=}2$ scan is \emph{compute}-bound, so:
+science holds.} simdq \textbf{beats Milvus FLAT at both dims}:
 }
 \onslide<3->{
 \begin{itemize}\setlength\itemsep{1pt}\small
-  \item at \textbf{384-dim} the unpack beats optimized fp32 FLAT ($2.3\times$ faster);
-  \item at \textbf{768-dim} it \textcolor{acc}{loses} ($\approx$5$\times$ slower) --- a kernel-efficiency gap,
-    not a memory one. Codes are still $16\times$ smaller; the $768$-dim unpack kernel is the next lever.
+  \item \textbf{384-dim}: $2.3\times$ faster; \textbf{768-dim}: $2.4\times$ faster.
+  \item An earlier $768$-dim ``regression'' ($49$~ms) was \textbf{not} the kernel:
+    the per-query identity projection \texttt{W@q} let OpenBLAS spawn its own
+    thread pool, which oversubscribed the cores against the scan threads. Skipping
+    the identity matmul fixed it ($49 \to 3.9$~ms). Codes stay $16\times$ smaller.
 \end{itemize}
 }
 \end{frame}
