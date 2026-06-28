@@ -566,11 +566,10 @@ Asym $b=4$ (single thread)   & 2.36 M          & 0.9  & FMA \\
 % ---------------------------------------------------------------
 \begin{frame}{Does it hold on a real corpus? Natural Questions}
 
-\textbf{Setup}: NQ dev ($\sim$270k passages). \textbf{simdq} = asymmetric $b{=}2$ +
-fp32 rescore ($\alpha{=}10$) vs.\ \textbf{Milvus FLAT} = exact fp32 brute force.
-Two encoders, identical embeddings \& chunking each.
+\textbf{Setup}: NQ dev ($\sim$270k passages), 2 encoders; fp32 rescore
+($\alpha{=}10$) vs.\ \textbf{Milvus FLAT} (exact fp32).
 
-\vspace{4pt}
+\vspace{2pt}
 \begin{columns}
 \column{0.54\textwidth}
 \centering\small
@@ -582,40 +581,34 @@ Two encoders, identical embeddings \& chunking each.
 granite-97m \scriptsize(384d)  & 0.576 & 0.576 & 0.575 \\
 granite-311m \scriptsize(768d) & 0.607 & 0.607 & 0.607 \\
 \bottomrule
-\end{tabular}\\[4pt]
-{\scriptsize all with fp32 rescore ($\alpha{=}10$). Match@100 within 0.6\% of fp32.}
+\end{tabular}\\[3pt]
+{\scriptsize Match@100 within 0.6\% of fp32.}
 
 \column{0.46\textwidth}
 \centering\small
-\textbf{Search speed (ms/query)}\\[3pt]
+\textbf{Speed (ms/q, 16-conc)}\\[3pt]
 \begin{tabular}{l ccc}
 \toprule
             & Milvus & $b{=}2$ & 1-bit \\
-            & fp32   &        &       \\
 \midrule
 97m  \scriptsize(384d)  & 5.0 & 0.43 & \textbf{\textcolor{key}{0.23}} \\
 311m \scriptsize(768d)  & 11.7 & 0.81 & \textbf{\textcolor{key}{0.40}} \\
 \bottomrule
-\end{tabular}\\[5pt]
-{\scriptsize search-only, 16-way concurrent, same 276k vectors / machine.\\
-bytes/doc: 1-bit 48/96, $b{=}2$ 96/192, fp32 1536/3072.}
+\end{tabular}\\[3pt]
+{\scriptsize B/doc: 1-bit 48/96, $b{=}2$ 96/192, fp32 1536/3072.}
 \end{columns}
 
-\vspace{6pt}
+\vspace{3pt}
 \onslide<2->{
-\textcolor{hi}{\textbf{Quality holds for all modes} --- the bit-hashing science works.}
-\textbf{1-bit Hamming + fp32 rescore is now the fastest \emph{and} smallest} ---
-up to \textbf{$\sim$29$\times$ faster than Milvus FLAT}, lossless at 768d:
+\textcolor{hi}{\textbf{Quality holds for all modes.}} \textbf{1-bit Hamming + fp32
+rescore is fastest \emph{and} smallest} --- up to $\sim$29$\times$ vs Milvus FLAT, lossless at 768d.
 }
 \onslide<3->{
-\begin{itemize}\setlength\itemsep{1pt}\small
-  \item Identity projection \texttt{W@q} let OpenBLAS oversubscribe the scan
-    threads --- skip it ($49\to3.9$~ms); then an in-register
-    \texttt{vpmultishiftqb}+\texttt{vpshufb} unpack replaced the $b{=}2$ scalar
-    code-unpack ($\sim$4$\times$, $\to0.9$~ms, bit-identical).
-  \item \textbf{1-bit:} storing codes \textbf{SoA} killed a per-query AoS$\to$SoA
-    transpose ($3.4\to0.4$~ms, $8.6\times$); the 1-bit scan now stays L3-resident.
-    fp32 rescore recovers exact ranking --- lossless at 768d, NDCG@10 $-0.001$ at 384d.
+\begin{itemize}\setlength\itemsep{1pt}\footnotesize
+  \item $b{=}2$ 768d $49\to0.9$~ms: skip identity \texttt{W@q} (BLAS oversubscription)
+    {}+ in-register \texttt{vpmultishiftqb} code-unpack.
+  \item \textbf{1-bit}: SoA storage kills the per-query AoS$\to$SoA transpose
+    ($3.4\to0.4$~ms, L3-resident); fp32 rescore keeps it lossless.
 \end{itemize}
 }
 \end{frame}
