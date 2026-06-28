@@ -394,7 +394,7 @@ W = (P @ R).T                  # (d, D), orthonormal rows
 \end{lstlisting}
 
 \onslide<2->{
-\vspace{2pt}
+\vspace{-3pt}
 \small
 \textbf{Measured} (SciFact / granite-311m): ties identity at full $d$ with the
 \emph{best} Recall@100; at $d{=}D/2$ \textcolor{key}{beats a random rotation by $+0.018$ NDCG}.
@@ -439,9 +439,9 @@ Warm-start from \textbf{ITQ}; use NDCG-RL as a final polish, validated on the re
 % ---------------------------------------------------------------
 \begin{frame}{Symmetric vs. asymmetric: why it matters}
 
-\textbf{Symmetric}: quantize \emph{both} query and database to $b$ bits.\\[4pt]
+\textbf{Symmetric}: quantize \emph{both} query and database to $b$ bits.\\[2pt]
 Per-dimension error: $(q_w{+}\varepsilon_q)(y_w{+}\varepsilon_y) - q_w y_w
-= q_w\varepsilon_y + y_w\varepsilon_q + \varepsilon_q\varepsilon_y$\\[2pt]
+= q_w\varepsilon_y + y_w\varepsilon_q + \varepsilon_q\varepsilon_y$\\[1pt]
 Leading variance (two additive noise sources):
 \[
   \operatorname{Var}[\hat{s}] \;\approx\;
@@ -457,12 +457,11 @@ Leading variance (two additive noise sources):
 \textcolor{key}{\textbf{One}} noise source instead of two — factor of $\mathbf{2}$ in variance.
 }
 
-\vspace{4pt}
+\vspace{1pt}
 \onslide<3->{
-\textbf{The $b=1$ case is more severe.}
-Quantizing a unit-norm vector to $\pm 1$ per dim inflates its norm from $1$ to $\sqrt{D}$,
-collapsing all magnitude information.
-Asymmetric avoids this on the query side entirely.
+\textbf{The $b=1$ case is more severe.} Quantizing a unit vector to $\pm 1$/dim
+inflates its norm to $\sqrt{D}$, collapsing magnitude --- asymmetric avoids this
+on the query side.
 }
 \end{frame}
 
@@ -487,11 +486,11 @@ $b$ & Grid $V_b$ & Level spacing $\Delta_b$ \\
 \end{tabular}
 \end{center}
 
-\vspace{10pt}
+\vspace{3pt}
 \onslide<2->{
-Each vector gets a \textbf{per-vector scale} $s_i = \|y_i\|/\sqrt{d}$, stored as fp16.\\[4pt]
+Each vector gets a \textbf{per-vector scale} $s_i = \|y_i\|/\sqrt{d}$, stored as fp16.\\[3pt]
 After dividing by $s_i$, the distribution has unit MSE, so the levels straddle the
-empirical quartiles with no wasted range.\\[8pt]
+empirical quartiles with no wasted range.\\[3pt]
 \textcolor{key}{The scale costs 2 bytes per code} (0.5\% overhead for $b=4$, $d=768$).
 }
 \end{frame}
@@ -526,7 +525,7 @@ Effective bandwidth $\div 8$.
 }
 \end{columns}
 
-\vspace{10pt}
+\vspace{5pt}
 \onslide<4->{
 Top-$K$ is maintained as a \textbf{bounded max-heap on the stack} — threaded through
 the scan loop with one integer compare per SIMD block.
@@ -550,7 +549,7 @@ Asym $b=4$ (single thread)   & 2.36 M          & 0.9  & FMA \\
 \end{tabular}
 \end{center}
 
-\vspace{4pt}
+\vspace{1pt}
 \onslide<2->{
 \textbf{Key observations:}
 \begin{itemize}\setlength\itemsep{1pt}
