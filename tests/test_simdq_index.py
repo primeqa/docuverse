@@ -22,9 +22,10 @@ def _gaussian(n: int, d: int, seed: int) -> np.ndarray:
 
 def test_hamming_ivf_round_trip_and_full_probe_matches_flat(tmp_index_dir):
     """IVF (hamming) survives save/load, returns valid original ids, and with
-    nprobe=nlist (scan every cluster) matches the flat hamming top-K."""
+    nprobe=nlist (gather & scan every cluster) matches the flat hamming top-K
+    up to K'-boundary ties. Also: more probes recover at least as much as few."""
     Y = _gaussian(2048, 768, seed=1)
-    nlist = 16
+    nlist = 32
     flat = SimdqIndex.build(vectors=Y, family="hamming",
                             projection="identity", store_floats=True)
     ivf = SimdqIndex.build(vectors=Y, family="hamming",
@@ -32,24 +33,25 @@ def test_hamming_ivf_round_trip_and_full_probe_matches_flat(tmp_index_dir):
                            ivf_nlist=nlist, ivf_nprobe=nlist)
     ivf.save(tmp_index_dir)
     assert (tmp_index_dir / "ivf_centroids.npy").exists()
-    assert (tmp_index_dir / "ivf_perm.npy").exists()
-    assert (tmp_index_dir / "ivf_offsets.npy").exists()
     ivf = SimdqIndex.load(tmp_index_dir)
     assert ivf.has_ivf
     # the reorder permutation is a bijection over [0, N)
     assert np.array_equal(np.sort(ivf.ivf_perm), np.arange(Y.shape[0]))
 
     rng = np.random.default_rng(2)
-    overlaps = []
+    full, low = [], []
     for _ in range(20):
         q = rng.standard_normal(768).astype(np.float32)
-        fi, _ = flat.search(q, K=10, K_prime=128)
-        vi, _ = ivf.search(q, K=10, K_prime=128, nprobe=nlist)
-        assert set(int(x) for x in vi) <= set(range(Y.shape[0]))   # valid original ids
-        overlaps.append(len(set(int(x) for x in fi) & set(int(x) for x in vi)))
-    # Scanning every cluster covers the same docs as flat; results match up to
-    # Hamming-distance ties at the K' boundary (lots of ties in random data).
-    assert np.mean(overlaps) >= 9.0, f"mean top-10 overlap {np.mean(overlaps)} too low"
+        fi, _ = flat.search(q, K=10, K_prime=256)
+        vi, _ = ivf.search(q, K=10, K_prime=256, nprobe=nlist)   # scans every cluster
+        assert set(int(x) for x in vi) <= set(range(Y.shape[0]))  # valid original ids
+        full.append(len(set(int(x) for x in fi) & set(int(x) for x in vi)))
+        vlow, _ = ivf.search(q, K=10, K_prime=256, nprobe=2)
+        low.append(len(set(int(x) for x in fi) & set(int(x) for x in vlow)))
+    # Scanning every cluster == flat scan, modulo Hamming ties at the K' boundary.
+    assert np.mean(full) >= 9.0, f"full-probe vs flat overlap {np.mean(full)} too low"
+    # Fewer probes shouldn't beat full probing.
+    assert np.mean(low) <= np.mean(full)
 
 
 def test_build_save_load_round_trip(tmp_index_dir):

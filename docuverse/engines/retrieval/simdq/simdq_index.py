@@ -204,14 +204,14 @@ class SimdqIndex:
             scales_fp16 = scales_fp32.astype(np.float16)
             stored_b = b
         else:
-            codes = _quant.pack_hamming(Y)
+            codes = _quant.pack_hamming(Y)              # AoS uint8 (N*words*8 bytes)
             scales_fp16 = None
             stored_b = None
 
-        # Optional IVF outer index (hamming only). Cluster the corpus, then
-        # reorder the AoS codes so each cluster occupies a contiguous range;
-        # search scans only the nprobe nearest clusters. floats stay in original
-        # order — ivf_perm maps a reordered position back to the original id.
+        # Optional IVF outer index (hamming only): cluster the corpus, then
+        # reorder docs so each cluster is a contiguous index range; search scans
+        # only the nprobe nearest clusters. floats stay in original order —
+        # ivf_perm maps a reordered position back to the original id.
         ivf_centroids = ivf_perm = ivf_offsets = None
         if ivf_nlist:
             if family != "hamming":
@@ -221,9 +221,16 @@ class SimdqIndex:
             ivf_perm = np.argsort(assign, kind="stable").astype(np.int64)
             counts = np.bincount(assign, minlength=nlist)
             ivf_offsets = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
-            bpv = (d // 64) * 8                          # bytes per vector (AoS)
-            codes = np.ascontiguousarray(
-                codes.reshape(N, bpv)[ivf_perm].reshape(-1))
+
+        if family == "hamming":
+            # Store codes SoA (dbT[w*N + i]) so search never transposes per query
+            # (the AoS->SoA transpose was a per-query memory-bound cost). Apply
+            # the IVF doc reordering, if any, before transposing.
+            words = d // 64
+            aos_u64 = codes.view(np.uint64).reshape(N, words)
+            if ivf_perm is not None:
+                aos_u64 = aos_u64[ivf_perm]
+            codes = np.ascontiguousarray(aos_u64.T).view(np.uint8).ravel()
 
         floats_mmap = Y.astype(np.float16) if store_floats else None
 
@@ -274,7 +281,7 @@ class SimdqIndex:
             "projection": self.projection_name,
             "projection_seed": int(self.projection_seed),
             "quantization": ("none" if self.family == "hamming" else "per_vector"),
-            "code_layout": ("aos" if self.family == "hamming" else "soa"),
+            "code_layout": "soa",   # hamming codes are now stored SoA too
             "code_bytes_per_vector": int(self.codes.size // self.n_vectors)
                                      if self.family == "hamming"
                                      else int(self.codes.size // self.d),
@@ -308,6 +315,12 @@ class SimdqIndex:
         b = meta.get("b")
 
         codes = np.fromfile(path / "codes.bin", dtype=np.uint8)
+        if family == "hamming" and meta.get("code_layout", "aos") != "soa":
+            # Back-compat: pre-SoA hamming indexes stored AoS. Transpose once
+            # here so the search path can use the no-transpose SoA kernel.
+            words = d // 64
+            codes = np.ascontiguousarray(
+                codes.view(np.uint64).reshape(N, words).T).view(np.uint8).ravel()
         scales = None
         if family == "asymmetric":
             scales = np.fromfile(path / "scales.bin", dtype=np.float16)
@@ -418,8 +431,10 @@ class SimdqIndex:
 
     def _search_hamming(self, q_proj, K, K_prime, num_threads):
         q_bytes = self._hamming_query_bytes(q_proj)
-        dist_buf, idx_buf = _native.scan_hamming(
+        # SoA codes -> no per-query transpose; scan the full range [0, N).
+        dist_buf, idx_buf = _native.scan_hamming_soa(
             self.codes, self.n_vectors, self.d, q_bytes, K_prime, num_threads,
+            0, self.n_vectors,
         )
         dists = np.frombuffer(dist_buf, dtype=np.int64).copy()
         idxs  = np.frombuffer(idx_buf,  dtype=np.int64).copy()
@@ -439,13 +454,12 @@ class SimdqIndex:
         """IVF Hamming search: scan only the nprobe nearest clusters.
 
         Route the query to clusters by L2 to the centroids (argmax of
-        q·c - ½‖c‖²), **gather** the selected clusters' contiguous code ranges
-        into one buffer, run a single native popcount scan over it, then
-        fp32-rescore the candidates. The single gathered scan is the key to the
-        speedup: scanning per-cluster instead pays the kernel's per-call
-        AoS→SoA transpose + alloc nprobe times and ends up slower than flat.
-        Cutting the scanned set to ~nprobe/nlist of the corpus shrinks both the
-        transpose and the popcount, relieving the memory-bandwidth wall.
+        q·c - half||c||^2), then scan each selected cluster's contiguous index
+        range **in place** with the SoA kernel — a cluster is just a range
+        [off[c], off[c+1]) in the reordered codes, so there is no gather and no
+        transpose. fp32-rescore the candidate union. Cutting the scan to
+        ~nprobe/nlist of the corpus relieves the memory-bandwidth wall; SoA
+        storage removes the per-query transpose.
         """
         nlist = self.ivf_centroids.shape[0]
         nprobe = max(1, min(int(nprobe), nlist))
@@ -454,25 +468,27 @@ class SimdqIndex:
         probes = (np.argpartition(-route, nprobe - 1)[:nprobe]
                   if nprobe < nlist else np.arange(nlist))
 
-        bpv = (self.d // 64) * 8                                   # bytes per vector
         off = self.ivf_offsets
-        code_parts, id_parts = [], []
-        for c in probes:
-            s, e = int(off[c]), int(off[c + 1])
-            if e > s:
-                code_parts.append(self.codes[s * bpv:e * bpv])
-                id_parts.append(self.ivf_perm[s:e])
-        if not code_parts:
+        ranges = [np.arange(int(off[c]), int(off[c + 1])) for c in probes
+                  if off[c + 1] > off[c]]
+        if not ranges:
             return np.empty(0, np.int64), np.empty(0, np.float32)
-        buf = np.concatenate(code_parts)                          # one contiguous scan buffer
-        cand_ids = np.concatenate(id_parts)                       # gathered pos -> original id
-        M = cand_ids.shape[0]
+        sel = np.concatenate(ranges)                              # reordered positions to scan
+        cand_ids = self.ivf_perm[sel]                             # -> original ids
+        M = sel.shape[0]
+        # Gather the selected clusters into one contiguous SoA buffer with a
+        # single fancy-index (codes2d[w, i]) and run one native scan — far less
+        # overhead than a native call per cluster.
+        words = self.d // 64
+        codes2d = self.codes.view(np.uint64).reshape(words, self.n_vectors)
+        buf = np.ascontiguousarray(codes2d[:, sel]).view(np.uint8).ravel()
 
         q_bytes = self._hamming_query_bytes(q_proj)
-        db, ib = _native.scan_hamming(buf, M, self.d, q_bytes, min(K_prime, M), num_threads)
+        db, ib = _native.scan_hamming_soa(
+            buf, M, self.d, q_bytes, min(K_prime, M), num_threads, 0, M)
         loc = np.frombuffer(ib, dtype=np.int64)
-        dists = np.frombuffer(db, dtype=np.int64)
         ids = cand_ids[loc]
+        dists = np.frombuffer(db, dtype=np.int64)
 
         if self.has_floats and K_prime > K:
             cand = np.array(self.floats_mmap[ids], dtype=np.float32)

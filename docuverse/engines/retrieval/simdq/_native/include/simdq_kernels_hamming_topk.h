@@ -174,4 +174,41 @@ static inline void scan_hamming_topk_parallel(const uint64_t *dbT, size_t n,
     }
     simdq_topk_extract_sorted(&global, gd, gi);
 }
+
+/*
+ * Top-K Hamming scan over a sub-range [r0, r1) of an SoA database (word stride
+ * still n, the full database). Same threaded shard+merge as
+ * scan_hamming_topk_parallel but bounded to [r0, r1) — used by the IVF path to
+ * scan one cluster's contiguous index range without copying or transposing.
+ * Returned indices are absolute (in [r0, r1)).
+ */
+static inline void scan_hamming_topk_parallel_range(const uint64_t *dbT, size_t n,
+                                                    size_t words,
+                                                    size_t r0, size_t r1,
+                                                    const uint64_t *q, int K,
+                                                    int64_t *gd, int64_t *gi) {
+    assert(K > 0 && K <= 256);
+    int64_t gkeys[256], gidxs[256];
+    simdq_topk_t global;
+    simdq_topk_init(&global, K, gkeys, gidxs);
+
+    #pragma omp parallel
+    {
+        int t = omp_get_thread_num(), T = omp_get_num_threads();
+        size_t span = r1 > r0 ? r1 - r0 : 0;
+        size_t chunk = (span + (size_t)T - 1) / (size_t)T;
+        size_t i0 = r0 + (size_t)t * chunk;
+        size_t i1 = i0 + chunk < r1 ? i0 + chunk : r1;
+        if (i0 < i1) {
+            int64_t ld[256], li[256];
+            for (int r = 0; r < K; r++) { ld[r] = INT64_MAX; li[r] = -1; }
+            scan_hamming_shard_topk(dbT, n, words, i0, i1, q, K, ld, li);
+            #pragma omp critical
+            for (int r = 0; r < K; r++)
+                if (li[r] >= 0 && ld[r] < simdq_topk_threshold(&global))
+                    simdq_topk_offer(&global, ld[r], li[r]);
+        }
+    }
+    simdq_topk_extract_sorted(&global, gd, gi);
+}
 #endif

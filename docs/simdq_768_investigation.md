@@ -403,3 +403,51 @@ build to kill the per-query transpose (orthogonal to IVF).
 
 Config: `simdq_ivf_nlist` (0 = off), `simdq_ivf_nprobe`. Wired through
 `SimdqEngine`. Test: `tests/test_simdq_index.py::test_hamming_ivf_round_trip_and_full_probe_matches_flat`.
+
+---
+
+## Phase 8 — SoA storage kills the per-query transpose (Hamming)
+
+`scan_hamming` consumed an SoA layout (`dbT[w*N+i]`) but the codes were stored
+**AoS**, so the binding transposed the whole corpus AoS→SoA (a fresh `N*words*8`
+alloc + copy) **on every query** — a non-shareable, memory-bound cost that was
+most of Hamming's slowness and the reason it didn't scale across concurrent
+queries (each query rebuilt its own SoA buffer).
+
+**Fix:** store Hamming codes SoA at build time (transpose once), and add a
+no-transpose, range-capable binding `scan_hamming_soa(codes, N, D, q, K, nt, i0, i1)`
+backed by a new `scan_hamming_topk_parallel_range` kernel. Flat search scans
+`[0, N)`; IVF gathers the selected clusters with one fancy-index and scans the
+gathered buffer once. Old AoS indexes are transposed once on load (back-compat
+via `meta.code_layout`). `pack_hamming` and the native C tests are untouched.
+
+### Result — flat Hamming (real 768d NQ index, 16-way concurrent)
+
+| | before (AoS, transpose/query) | after (SoA) |
+|---|---|---|
+| flat Hamming | 3.36 ms/q | **0.39 ms/q (8.6×)** |
+
+Quality is **unchanged and lossless** (NDCG@10 0.607, NDCG@100 0.634, Match@100
+0.984 — identical to fp32/asym-b2; SoA is just a layout change).
+
+### This flips the verdict (supersedes Phase 6/7)
+
+| encoder/mode (768d) | speed 16-conc | quality | bytes/doc |
+|---|---|---|---|
+| Milvus FLAT fp32 | 12.2 ms | exact | 3072 |
+| asym b=2 | 0.81 ms | lossless | 192 |
+| **Hamming flat (SoA)** | **0.39 ms** | **lossless** | **96** |
+| Hamming IVF np=16/32 | 1.49 / 2.30 ms | 0.591 / 0.601 NDCG@10 | 96 (+centroids/perm) |
+
+**Flat Hamming + fp32 rescore is now the fastest *and* smallest lossless option**
+— faster than asym-b2 at half the code size. The earlier "Hamming is ~4× slower,
+its niche is RAM not speed" conclusion was an artifact of the per-query transpose,
+now removed.
+
+### Is IVF still useful? Not at this scale.
+With codes stored SoA, the whole 26.5 MB corpus is read once per query and stays
+**L3-resident** (96 MB X3D) shared across concurrent queries, so the full scan is
+0.39 ms — cheaper than IVF's gather+scan (1.49 ms at np=16) plus a recall loss.
+IVF only pays off when the SoA codes **exceed L3** (corpora ≫ ~10–30 M × 96 B),
+where a single full pass becomes DRAM-bound; it's kept (and tested) for that
+regime. A native multi-range scan would cut its per-query overhead further.

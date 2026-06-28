@@ -383,6 +383,86 @@ fail3:
     return NULL;
 }
 
+// ---------- scan_hamming_soa (no per-query transpose) ----------
+//
+// Codes are already stored SoA (dbT[w*N + i]), so this skips the AoS->SoA
+// transpose+alloc that scan_hamming does on every call. Scans the index range
+// [i0, i1) (word stride is the full N); the IVF path passes one cluster's range.
+static PyObject *py_scan_hamming_soa(PyObject *self, PyObject *args) {
+    PyObject *codes_obj, *q_obj;
+    Py_ssize_t N, D, K, num_threads, i0, i1;
+    if (!PyArg_ParseTuple(args, "OnnOnnnn",
+                          &codes_obj, &N, &D, &q_obj, &K, &num_threads,
+                          &i0, &i1)) return NULL;
+    if (K <= 0 || K > 256) {
+        PyErr_SetString(PyExc_ValueError, "K must be in [1, 256]"); return NULL;
+    }
+    if (simdq_check_d(D) != 0) return NULL;
+    if ((D % 64) != 0) {
+        PyErr_Format(PyExc_ValueError,
+                     "scan_hamming_soa: D must be a multiple of 64; got %zd", D);
+        return NULL;
+    }
+    if (i0 < 0 || i1 > N || i0 > i1) {
+        PyErr_Format(PyExc_ValueError,
+                     "scan_hamming_soa: bad range [%zd, %zd) for N=%zd", i0, i1, N);
+        return NULL;
+    }
+    Py_ssize_t words = D / 64;
+
+    Py_buffer codes_view, q_view;
+    if (get_buffer(codes_obj, &codes_view, 'B', 0) != 0) return NULL;
+    if (get_buffer(q_obj, &q_view, 'B', 0) != 0) {
+        PyBuffer_Release(&codes_view); return NULL;
+    }
+    Py_ssize_t expect_codes = N * words * (Py_ssize_t)sizeof(uint64_t);
+    Py_ssize_t expect_q     = words * (Py_ssize_t)sizeof(uint64_t);
+    if (codes_view.shape[0] < expect_codes) {
+        PyErr_Format(PyExc_ValueError,
+                     "codes buffer too small: %zd < %zd", codes_view.shape[0], expect_codes);
+        goto failsoa;
+    }
+    if (q_view.shape[0] < expect_q) {
+        PyErr_Format(PyExc_ValueError,
+                     "q buffer too small: %zd < %zd", q_view.shape[0], expect_q);
+        goto failsoa;
+    }
+    if (K > (i1 - i0)) K = (i1 - i0);   // can't return more than the range holds
+    if (K <= 0) {                       // empty range -> empty result
+        PyBuffer_Release(&codes_view); PyBuffer_Release(&q_view);
+        char *e1, *e2;
+        PyObject *b1 = new_bytes_buffer(0, &e1);
+        PyObject *b2 = new_bytes_buffer(0, &e2);
+        if (!b1 || !b2) { Py_XDECREF(b1); Py_XDECREF(b2); return NULL; }
+        return Py_BuildValue("(NN)", b1, b2);
+    }
+
+    char *scores_data, *idx_data;
+    PyObject *scores_bytes = new_bytes_buffer(K * (Py_ssize_t)sizeof(int64_t), &scores_data);
+    if (!scores_bytes) goto failsoa;
+    PyObject *idx_bytes = new_bytes_buffer(K * (Py_ssize_t)sizeof(int64_t), &idx_data);
+    if (!idx_bytes) { Py_DECREF(scores_bytes); goto failsoa; }
+
+    int saved_threads = omp_get_max_threads();
+    if (num_threads > 0) omp_set_num_threads((int)num_threads);
+
+    Py_BEGIN_ALLOW_THREADS
+    scan_hamming_topk_parallel_range((const uint64_t *)codes_view.buf, (size_t)N,
+                                     (size_t)words, (size_t)i0, (size_t)i1,
+                                     (const uint64_t *)q_view.buf, (int)K,
+                                     (int64_t *)scores_data, (int64_t *)idx_data);
+    Py_END_ALLOW_THREADS
+
+    if (num_threads > 0) omp_set_num_threads(saved_threads);
+
+    PyBuffer_Release(&codes_view); PyBuffer_Release(&q_view);
+    return Py_BuildValue("(NN)", scores_bytes, idx_bytes);
+
+failsoa:
+    PyBuffer_Release(&codes_view); PyBuffer_Release(&q_view);
+    return NULL;
+}
+
 // ---------- module table ----------
 
 static PyMethodDef SimdqMethods[] = {
@@ -401,7 +481,10 @@ static PyMethodDef SimdqMethods[] = {
      "pack_hamming(Y) -> codes (uint8 bytes, AoS layout, D*N/8 bytes total)"},
     {"scan_hamming", py_scan_hamming, METH_VARARGS,
      "scan_hamming(codes, N, D, q, K, num_threads) -> (distances, indices) bytes; "
-     "distances are int64 Hamming distances (smaller = better)."},
+     "AoS codes, transposes to SoA per call. distances int64 (smaller = better)."},
+    {"scan_hamming_soa", py_scan_hamming_soa, METH_VARARGS,
+     "scan_hamming_soa(codes, N, D, q, K, num_threads, i0, i1) -> (distances, indices) "
+     "bytes; codes already SoA (dbT[w*N+i]), no transpose; scans range [i0, i1)."},
     {NULL, NULL, 0, NULL},
 };
 

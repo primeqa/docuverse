@@ -91,6 +91,13 @@ standalone server on :19530, 16-way concurrent. ms/query (lower better):
 
 (The Milvus numbers match the earlier ~7.6 / 9.4 ms within measurement noise.)
 
+**Hamming is now the fastest lossless option** (768d, same harness): after storing
+codes SoA to kill the per-query AoS→SoA transpose, flat Hamming + fp32 rescore runs
+at **0.39 ms/q** (was 3.36) — faster than asym b=2 (0.81 ms), lossless (NDCG@10
+0.607, Match@100 0.984), at half the code size (96 vs 192 B/doc). See
+`docs/simdq_768_investigation.md` §8. The IVF outer index (§7) no longer helps at
+L3-resident corpus sizes and is kept only for corpora ≫ L3.
+
 Two fixes took 768d from the original 49 ms to 0.9 ms:
 
 1. **Projection/BLAS oversubscription (49 → 3.9 ms).** Under `parallel_process`
