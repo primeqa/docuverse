@@ -357,3 +357,49 @@ If latency/throughput matter, asym-b2 wins (~4× faster at 768d concurrent).
 Open levers for hamming: vectorize the query pack (trivial, 49×), and the
 memory-bound scan needs an outer/coarse index to scan fewer codes (a faster
 kernel won't help a bandwidth wall).
+
+---
+
+## Phase 7 — IVF outer index for Hamming (scan fewer codes)
+
+Hamming's scan is memory-bound (Phase 6): every query streams **all** N codes,
+and the native `scan_hamming` even transposes the whole AoS corpus to SoA per
+call. Added an **IVF (inverted-file) outer index** so a query only scans the
+`nprobe` nearest clusters.
+
+**Build** (`SimdqIndex.build(..., ivf_nlist=, ivf_nprobe=)`, hamming only):
+k-means (faiss, sklearn fallback) into `nlist` clusters; reorder the AoS codes so
+each cluster is a contiguous range (store cluster offsets + a permutation back to
+original ids; floats stay in original order).
+
+**Search** (`_search_hamming_ivf`): route by L2 to centroids (`argmax q·c − ½‖c‖²`),
+**gather** the selected clusters' code ranges into one buffer, run a **single**
+native scan, then fp32-rescore. The single gathered scan is essential — scanning
+clusters with one native call each pays the per-call alloc+transpose `nprobe`
+times and is *slower* than flat (measured: np=16 went from 5.8 ms → 1.4 ms after
+switching to gather+single-call).
+
+### Quality vs speed (real NQ dev eval, 768d, nlist=√N≈525)
+
+| nprobe | % corpus | NDCG@10 | Match@100 | speed 16-conc |
+|---|---|---|---|---|
+| 16 | 3% | 0.591 | 0.949 | 1.38 ms |
+| 32 | 6% | 0.601 | 0.969 | 2.22 ms |
+| 64 | 12% | 0.605 | 0.979 | 4.05 ms |
+| 128 | 24% | 0.607 | 0.982 | ~8 ms |
+| flat (no IVF) | 100% | 0.607 | 0.984 | 3.36 ms |
+
+IVF gives a real **speed/quality knob**: nprobe=32 is ~1.5× faster than flat
+Hamming at ~99% of its NDCG@10; nprobe=16 is ~2.4× faster at ~97%. Past ~nprobe=64
+the gather cost erases the win (use flat instead). Default `simdq_ivf_nprobe=32`.
+
+### Honest verdict
+IVF makes Hamming competitive with **itself**, not with asym-b2: even nprobe=16
+(1.38 ms) is still slower than asym-b2's lossless 0.78 ms at 768d, and lossy. So
+the practical frontier is unchanged — **asym-b2 for speed, Hamming(+IVF) only when
+1-bit RAM (96/48 B/doc) is the hard constraint**, trading a little recall for a
+smaller scan. A bigger structural win would be storing Hamming codes SoA once at
+build to kill the per-query transpose (orthogonal to IVF).
+
+Config: `simdq_ivf_nlist` (0 = off), `simdq_ivf_nprobe`. Wired through
+`SimdqEngine`. Test: `tests/test_simdq_index.py::test_hamming_ivf_round_trip_and_full_probe_matches_flat`.

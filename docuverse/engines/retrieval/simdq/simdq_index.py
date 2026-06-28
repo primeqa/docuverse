@@ -72,6 +72,28 @@ FORMAT_VERSION = 1
 _HAMMING_BIT_WEIGHTS = np.uint64(1) << np.arange(64, dtype=np.uint64)
 
 
+def _fit_kmeans(Y: np.ndarray, nlist: int, seed: int):
+    """k-means on Y -> (centroids (nlist, d) fp32, assignment (N,) int64).
+
+    Uses faiss if available (fast), else sklearn. Only needed at build time.
+    """
+    Y = np.ascontiguousarray(Y, dtype=np.float32)
+    N, d = Y.shape
+    nlist = int(min(nlist, N))
+    try:
+        import faiss
+        km = faiss.Kmeans(d, nlist, niter=20, seed=int(seed), verbose=False)
+        km.train(Y)
+        centroids = np.ascontiguousarray(km.centroids.reshape(nlist, d), dtype=np.float32)
+        assign = km.index.search(Y, 1)[1].ravel().astype(np.int64)
+    except Exception:
+        from sklearn.cluster import KMeans
+        km = KMeans(n_clusters=nlist, random_state=int(seed), n_init=3)
+        assign = km.fit_predict(Y).astype(np.int64)
+        centroids = np.ascontiguousarray(km.cluster_centers_, dtype=np.float32)
+    return centroids, assign
+
+
 @dataclass
 class SimdqIndex:
     """In-memory + on-disk simdq index.
@@ -93,6 +115,17 @@ class SimdqIndex:
     floats_mmap: Optional[np.ndarray] = None
     encoder_id: Optional[str] = None
     standardizer: Optional[Standardizer] = None    # affine pre-projection fix
+    # Optional IVF outer index (hamming only): cluster the corpus, store codes
+    # reordered so each cluster is contiguous, and at search scan only the
+    # nprobe nearest clusters instead of all N codes (see _search_hamming_ivf).
+    ivf_centroids: Optional[np.ndarray] = None      # (nlist, d) fp32
+    ivf_perm: Optional[np.ndarray] = None           # (N,) int64: reordered pos -> original id
+    ivf_offsets: Optional[np.ndarray] = None        # (nlist+1,) int64 cluster boundaries
+    ivf_nprobe: int = 1                             # default clusters to probe at search
+
+    @property
+    def has_ivf(self) -> bool:
+        return self.ivf_centroids is not None
 
     # ----- build -----
 
@@ -109,6 +142,8 @@ class SimdqIndex:
         encoder_id: Optional[str] = None,
         standardize: bool = False,
         itq_iters: int = 50,
+        ivf_nlist: Optional[int] = None,
+        ivf_nprobe: int = 1,
     ) -> "SimdqIndex":
         if vectors.ndim != 2:
             raise ValueError(f"simdq build: vectors must be 2-D; got {vectors.shape}")
@@ -173,6 +208,23 @@ class SimdqIndex:
             scales_fp16 = None
             stored_b = None
 
+        # Optional IVF outer index (hamming only). Cluster the corpus, then
+        # reorder the AoS codes so each cluster occupies a contiguous range;
+        # search scans only the nprobe nearest clusters. floats stay in original
+        # order — ivf_perm maps a reordered position back to the original id.
+        ivf_centroids = ivf_perm = ivf_offsets = None
+        if ivf_nlist:
+            if family != "hamming":
+                raise ValueError("simdq build: ivf_nlist is only supported for family='hamming'")
+            ivf_centroids, assign = _fit_kmeans(Y, ivf_nlist, projection_seed)
+            nlist = ivf_centroids.shape[0]
+            ivf_perm = np.argsort(assign, kind="stable").astype(np.int64)
+            counts = np.bincount(assign, minlength=nlist)
+            ivf_offsets = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
+            bpv = (d // 64) * 8                          # bytes per vector (AoS)
+            codes = np.ascontiguousarray(
+                codes.reshape(N, bpv)[ivf_perm].reshape(-1))
+
         floats_mmap = Y.astype(np.float16) if store_floats else None
 
         return cls(
@@ -182,6 +234,8 @@ class SimdqIndex:
             projection_name=projection, projection_seed=projection_seed,
             has_floats=store_floats, floats_mmap=floats_mmap,
             encoder_id=encoder_id, standardizer=standardizer,
+            ivf_centroids=ivf_centroids, ivf_perm=ivf_perm,
+            ivf_offsets=ivf_offsets, ivf_nprobe=int(ivf_nprobe),
         )
 
     # ----- save / load -----
@@ -200,6 +254,10 @@ class SimdqIndex:
         np.save(tmp / "W.npy", self.W)
         if self.standardizer is not None:
             self.standardizer.save(tmp / "standardize.npz")
+        if self.has_ivf:
+            np.save(tmp / "ivf_centroids.npy", self.ivf_centroids)
+            np.save(tmp / "ivf_perm.npy", self.ivf_perm)
+            np.save(tmp / "ivf_offsets.npy", self.ivf_offsets)
         if self.has_floats:
             assert self.floats_mmap is not None
             (tmp / "floats.bin").write_bytes(
@@ -224,6 +282,9 @@ class SimdqIndex:
             "float_dtype": "float16" if self.has_floats else None,
             "encoder_id": self.encoder_id,
             "standardize": self.standardizer is not None,
+            "ivf": self.has_ivf,
+            "ivf_nlist": int(self.ivf_centroids.shape[0]) if self.has_ivf else 0,
+            "ivf_nprobe": int(self.ivf_nprobe),
         }
         (tmp / "meta.json").write_text(json.dumps(meta, indent=2))
 
@@ -265,6 +326,11 @@ class SimdqIndex:
                 path / "floats.bin", dtype=np.float16, mode="r",
                 shape=(N, d),
             )
+        ivf_centroids = ivf_perm = ivf_offsets = None
+        if meta.get("ivf"):
+            ivf_centroids = np.load(path / "ivf_centroids.npy")
+            ivf_perm = np.load(path / "ivf_perm.npy")
+            ivf_offsets = np.load(path / "ivf_offsets.npy")
         return cls(
             family=family,
             codes=codes, scales=scales, W=W,
@@ -275,12 +341,14 @@ class SimdqIndex:
             floats_mmap=floats_mmap,
             encoder_id=meta.get("encoder_id"),
             standardizer=standardizer,
+            ivf_centroids=ivf_centroids, ivf_perm=ivf_perm,
+            ivf_offsets=ivf_offsets, ivf_nprobe=int(meta.get("ivf_nprobe", 1)),
         )
 
     # ----- search -----
 
     def search(self, q: np.ndarray, K: int = 10, K_prime: Optional[int] = None,
-               num_threads: int = 0):
+               num_threads: int = 0, nprobe: Optional[int] = None):
         if K <= 0 or K > 256:
             raise ValueError(f"simdq search: K must be in [1, 256]; got {K}")
         if K_prime is None: K_prime = K
@@ -301,6 +369,10 @@ class SimdqIndex:
 
         if self.family == "asymmetric":
             return self._search_asym(q_proj, K, K_prime, num_threads)
+        if self.has_ivf:
+            return self._search_hamming_ivf(
+                q_proj, K, K_prime, num_threads,
+                nprobe if nprobe is not None else self.ivf_nprobe)
         return self._search_hamming(q_proj, K, K_prime, num_threads)
 
     def _project_query(self, q: np.ndarray) -> np.ndarray:
@@ -334,7 +406,7 @@ class SimdqIndex:
         order = np.argsort(-scaled)[:K]
         return idxs[order], scaled[order]
 
-    def _search_hamming(self, q_proj, K, K_prime, num_threads):
+    def _hamming_query_bytes(self, q_proj) -> bytes:
         # Quantize the projected query to 1-bit codes (same packing as pack_hamming):
         # bit b of word w is set iff q_proj[w*64 + b] >= 0. Vectorized — the old
         # per-bit Python loop was ~49× slower and GIL-bound under the threaded
@@ -342,8 +414,10 @@ class SimdqIndex:
         words = self.d // 64
         signs = (q_proj >= 0.0).reshape(words, 64).astype(np.uint64)
         q_bits = (signs * _HAMMING_BIT_WEIGHTS).sum(axis=1).astype(np.uint64)
-        q_bytes = q_bits.tobytes()                                # 8*words bytes
+        return q_bits.tobytes()                                   # 8*words bytes
 
+    def _search_hamming(self, q_proj, K, K_prime, num_threads):
+        q_bytes = self._hamming_query_bytes(q_proj)
         dist_buf, idx_buf = _native.scan_hamming(
             self.codes, self.n_vectors, self.d, q_bytes, K_prime, num_threads,
         )
@@ -360,3 +434,50 @@ class SimdqIndex:
         # descending.
         order = np.argsort(dists)[:K]
         return idxs[order], (-dists[order]).astype(np.float32)
+
+    def _search_hamming_ivf(self, q_proj, K, K_prime, num_threads, nprobe):
+        """IVF Hamming search: scan only the nprobe nearest clusters.
+
+        Route the query to clusters by L2 to the centroids (argmax of
+        q·c - ½‖c‖²), **gather** the selected clusters' contiguous code ranges
+        into one buffer, run a single native popcount scan over it, then
+        fp32-rescore the candidates. The single gathered scan is the key to the
+        speedup: scanning per-cluster instead pays the kernel's per-call
+        AoS→SoA transpose + alloc nprobe times and ends up slower than flat.
+        Cutting the scanned set to ~nprobe/nlist of the corpus shrinks both the
+        transpose and the popcount, relieving the memory-bandwidth wall.
+        """
+        nlist = self.ivf_centroids.shape[0]
+        nprobe = max(1, min(int(nprobe), nlist))
+        chalf = 0.5 * np.einsum("ij,ij->i", self.ivf_centroids, self.ivf_centroids)
+        route = self.ivf_centroids @ q_proj - chalf               # higher = closer (L2)
+        probes = (np.argpartition(-route, nprobe - 1)[:nprobe]
+                  if nprobe < nlist else np.arange(nlist))
+
+        bpv = (self.d // 64) * 8                                   # bytes per vector
+        off = self.ivf_offsets
+        code_parts, id_parts = [], []
+        for c in probes:
+            s, e = int(off[c]), int(off[c + 1])
+            if e > s:
+                code_parts.append(self.codes[s * bpv:e * bpv])
+                id_parts.append(self.ivf_perm[s:e])
+        if not code_parts:
+            return np.empty(0, np.int64), np.empty(0, np.float32)
+        buf = np.concatenate(code_parts)                          # one contiguous scan buffer
+        cand_ids = np.concatenate(id_parts)                       # gathered pos -> original id
+        M = cand_ids.shape[0]
+
+        q_bytes = self._hamming_query_bytes(q_proj)
+        db, ib = _native.scan_hamming(buf, M, self.d, q_bytes, min(K_prime, M), num_threads)
+        loc = np.frombuffer(ib, dtype=np.int64)
+        dists = np.frombuffer(db, dtype=np.int64)
+        ids = cand_ids[loc]
+
+        if self.has_floats and K_prime > K:
+            cand = np.array(self.floats_mmap[ids], dtype=np.float32)
+            rescore = cand @ q_proj
+            order = np.argsort(-rescore)[:K]
+            return ids[order], rescore[order].astype(np.float32)
+        order = np.argsort(dists)[:K]
+        return ids[order], (-dists[order]).astype(np.float32)

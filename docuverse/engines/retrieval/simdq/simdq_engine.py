@@ -189,6 +189,9 @@ class SimdqEngine(RetrievalEngine):
             encoder_id=self.config.model_name,
             standardize=self.config.simdq_standardize,
             itq_iters=self.config.simdq_itq_iters,
+            ivf_nlist=(self.config.simdq_ivf_nlist
+                       if self.config.simdq_family == "hamming" else None),
+            ivf_nprobe=self.config.simdq_ivf_nprobe,
         )
         out_dir = self._index_dir()
         os.makedirs(os.path.dirname(out_dir), exist_ok=True)
@@ -299,6 +302,7 @@ class SimdqEngine(RetrievalEngine):
             q, K=K, K_prime=K_prime,
             num_threads=(self.config.simdq_num_threads
                          if scan_threads is None else scan_threads),
+            nprobe=self.config.simdq_ivf_nprobe,
         )
         tm.add_timing("scan")
 

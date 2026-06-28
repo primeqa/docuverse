@@ -20,6 +20,38 @@ def _gaussian(n: int, d: int, seed: int) -> np.ndarray:
     return rng.standard_normal(size=(n, d)).astype(np.float32)
 
 
+def test_hamming_ivf_round_trip_and_full_probe_matches_flat(tmp_index_dir):
+    """IVF (hamming) survives save/load, returns valid original ids, and with
+    nprobe=nlist (scan every cluster) matches the flat hamming top-K."""
+    Y = _gaussian(2048, 768, seed=1)
+    nlist = 16
+    flat = SimdqIndex.build(vectors=Y, family="hamming",
+                            projection="identity", store_floats=True)
+    ivf = SimdqIndex.build(vectors=Y, family="hamming",
+                           projection="identity", store_floats=True,
+                           ivf_nlist=nlist, ivf_nprobe=nlist)
+    ivf.save(tmp_index_dir)
+    assert (tmp_index_dir / "ivf_centroids.npy").exists()
+    assert (tmp_index_dir / "ivf_perm.npy").exists()
+    assert (tmp_index_dir / "ivf_offsets.npy").exists()
+    ivf = SimdqIndex.load(tmp_index_dir)
+    assert ivf.has_ivf
+    # the reorder permutation is a bijection over [0, N)
+    assert np.array_equal(np.sort(ivf.ivf_perm), np.arange(Y.shape[0]))
+
+    rng = np.random.default_rng(2)
+    overlaps = []
+    for _ in range(20):
+        q = rng.standard_normal(768).astype(np.float32)
+        fi, _ = flat.search(q, K=10, K_prime=128)
+        vi, _ = ivf.search(q, K=10, K_prime=128, nprobe=nlist)
+        assert set(int(x) for x in vi) <= set(range(Y.shape[0]))   # valid original ids
+        overlaps.append(len(set(int(x) for x in fi) & set(int(x) for x in vi)))
+    # Scanning every cluster covers the same docs as flat; results match up to
+    # Hamming-distance ties at the K' boundary (lots of ties in random data).
+    assert np.mean(overlaps) >= 9.0, f"mean top-10 overlap {np.mean(overlaps)} too low"
+
+
 def test_build_save_load_round_trip(tmp_index_dir):
     Y = _gaussian(1024, 768, seed=0)
     idx = SimdqIndex.build(

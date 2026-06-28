@@ -584,6 +584,18 @@ class RetrievalArguments(GenericArguments):
         metadata={"help": "simdq: OpenMP thread count for the scan kernel; 0 = OMP default."}
     )
 
+    simdq_ivf_nlist: int = field(
+        default=0,
+        metadata={"help": "simdq (hamming only): number of IVF clusters for the outer "
+                          "index. 0 = no IVF (flat scan over all codes)."}
+    )
+
+    simdq_ivf_nprobe: int = field(
+        default=32,
+        metadata={"help": "simdq (hamming IVF): number of nearest clusters to scan per "
+                          "query. Higher = better recall, slower. Ignored if no IVF."}
+    )
+
     def __post_init__(self):
         super().__post_init__()
         # parse the query_header_template
