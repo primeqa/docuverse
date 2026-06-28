@@ -207,6 +207,23 @@ Performance debugging
     ``simdq_store_floats: false`` (disables float rescoring; recall may drop
     slightly) or reduce corpus size.  See :doc:`tuning` for the recall impact.
 
+**Hamming IVF slower than a flat scan?**
+    ``simdq_ivf_nlist > 0`` (the Hamming IVF outer index) only pays off when the
+    SoA codes exceed L3 cache — roughly tens of millions of docs.  Below that, the
+    full flat scan reads each code once and stays L3-resident, so it is *faster*
+    than IVF (and IVF also costs recall).  On a 276k corpus, flat Hamming is
+    ~0.4 ms/query while IVF at ``nprobe=32`` is ~2.3 ms.
+
+    Fix: set ``simdq_ivf_nlist: 0`` (the default) unless your corpus is large
+    enough that a single scan is DRAM-bound.  See :doc:`tuning` (Performance
+    results) for the crossover.
+
+**Throughput not scaling across queries?**
+    The engine encodes all queries in one GPU pass and then runs the CPU scans
+    across a thread pool (``SimdqEngine.search_all``).  Leave ``simdq_num_threads``
+    at ``0``: parallelism is over *queries* (one single-threaded scan each), so
+    raising the per-scan thread count usually just oversubscribes the cores.
+
 **AVX-512 not used?**
     The build system selects the widest available SIMD ISA at compile time via
     ``-march=native``.  If the index was built on a machine without AVX-512 the

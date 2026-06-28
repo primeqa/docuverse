@@ -36,15 +36,29 @@ messages see :doc:`troubleshooting`.
    * - ``simdq_projection``
      - str
      - ``"identity"``
-     - ``identity`` | ``random_orthogonal``
+     - ``identity`` | ``random_orthogonal`` | ``learned_orthogonal``
      - Projection W (d×D)
-     - ``random_orthogonal`` is required for d=D/2
+     - ``random_orthogonal``/``learned_orthogonal`` required for d=D/2; prefer
+       ``learned_orthogonal`` (ITQ) when d≠D
    * - ``simdq_projection_seed``
      - int
      - ``42``
      - any int
      - RNG seed for the projection
      - Pin for reproducibility across hosts
+   * - ``simdq_standardize``
+     - bool
+     - ``False``
+     - True / False
+     - Center + per-dim standardize before projecting
+     - ``True`` for transformer encoders (anisotropic); required with
+       ``random_orthogonal``/``learned_orthogonal``
+   * - ``simdq_itq_iters``
+     - int
+     - ``50``
+     - ≥ 1
+     - ITQ passes when ``projection=learned_orthogonal``
+     - Build-time only; rarely needs changing
    * - ``simdq_store_floats``
      - bool
      - ``True``
@@ -61,8 +75,22 @@ messages see :doc:`troubleshooting`.
      - int
      - ``0``
      - 0…N
-     - OMP threads for scan; 0 = OMP default
-     - Tune to ``#physical cores`` for memory-bound asym scans
+     - OMP threads for one scan; 0 = OMP default
+     - Leave 0. Under the engine, ``search_all`` parallelizes over queries (one
+       single-threaded scan each), so per-scan threads are usually not needed
+   * - ``simdq_ivf_nlist``
+     - int
+     - ``0``
+     - 0 or ≥1
+     - Hamming only: IVF clusters for the outer index; 0 = flat scan
+     - Set (e.g. ≈√N) only for corpora whose codes exceed L3; flat SoA scan is
+       faster below that (see :doc:`tuning`)
+   * - ``simdq_ivf_nprobe``
+     - int
+     - ``32``
+     - ≥1
+     - Hamming IVF: nearest clusters scanned per query
+     - Higher = better recall, slower; ignored when ``simdq_ivf_nlist=0``
 
 Cross-cutting fields
 --------------------

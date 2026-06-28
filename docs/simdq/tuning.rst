@@ -11,6 +11,11 @@ Recipe decision tree
 
 .. code-block:: text
 
+    Want the fastest AND smallest lossless mode? (the usual answer)
+        → family=hamming + store_floats=True + rescore_alpha=10  (R0)
+          1-bit Hamming + fp32 rescore: on NQ it is faster than b=2 at half the
+          code bytes and matches fp32 NDCG. See "Performance results" below.
+
     Variable-norm corpus (e.g. heterogeneous text length)?
         yes → use store_floats=True + rescore_alpha=10 (R0 or R2)
         no  → codes-only is fine
@@ -96,6 +101,85 @@ Recipe decision tree
      - R7 with a learned (ITQ) rotation; the recommended *projected* (d=D/2)
        recipe — beats the random rotation on both NDCG and recall
      - Large anisotropic corpora where index footprint dominates
+
+Performance results
+===================
+
+Measured on **Natural Questions dev** (~276k passages, 768-dim
+``granite-embedding-311m``; 384-dim is ``granite-97m``, ~267k), search-only with
+queries pre-encoded, one identical harness, 16-way concurrent, on a Ryzen 9
+9950X3D vs. a local Milvus FLAT (exact fp32) baseline.
+
+.. list-table:: Search speed (ms/query, 16-way concurrent) and quality
+   :header-rows: 1
+   :widths: 18 16 16 16 16 18
+
+   * - Mode
+     - 384d ms/q
+     - 768d ms/q
+     - NDCG@10 (768d)
+     - Match@100 (768d)
+     - Code bytes/doc (384/768)
+   * - Milvus FLAT fp32
+     - 5.0
+     - 11.7
+     - 0.607 (exact)
+     - 0.983
+     - 1536 / 3072
+   * - simdq ``b=2`` + rescore
+     - 0.43
+     - 0.81
+     - 0.607
+     - 0.984
+     - 96 / 192
+   * - **simdq Hamming (1-bit) + rescore**
+     - **0.23**
+     - **0.40**
+     - **0.607**
+     - **0.984**
+     - **48 / 96**
+
+Takeaways:
+
+- **1-bit Hamming + fp32 rescore is the fastest and smallest lossless mode** —
+  faster than ``b=2`` at half the code bytes, ~29× faster than Milvus FLAT at
+  768d, with NDCG@10 identical to fp32 (768d; 384d is within 0.001). The fp32
+  rescore (``rescore_alpha=10`` → top-256 candidates re-ranked by exact dot
+  product) is what makes the 1-bit ranking lossless.
+- The byte counts above are the **scanned codes** (what sets scan bandwidth and
+  speed). Rescore additionally reads a handful of fp16 vectors from ``floats.bin``
+  per query (memory-mapped, only the top-K′ rows touched), so it is not on the
+  hot scan path — but it does dominate *total disk* (``+2·N·d`` bytes).
+
+How these numbers were reached (all internal; no config changes needed):
+
+#. **No per-query BLAS oversubscription.** The identity projection ``W@q`` is
+   skipped (it is a no-op) so OpenBLAS cannot spawn a competing thread pool under
+   the engine's query-level parallelism.
+#. **In-register code unpack.** The ``b=2``/``b=4`` AVX-512 scan unpacks codes
+   with ``vpmultishiftqb`` + ``vpshufb`` instead of a scalar stack roundtrip
+   (~4× the inner loop).
+#. **SoA Hamming storage.** Hamming codes are stored struct-of-arrays so the
+   scan never transposes per query; the static codes stay L3-resident and shared
+   across concurrent queries (flat Hamming 3.4 → 0.4 ms at 768d).
+#. **Batched, threaded search.** ``SimdqEngine.search_all`` encodes all queries
+   in one GPU pass, then runs the (GIL-releasing) CPU scans across a thread pool
+   — query-level parallelism that works on a single GPU.
+
+IVF outer index (very large corpora only)
+------------------------------------------
+
+For Hamming, ``simdq_ivf_nlist > 0`` builds an IVF (inverted-file) outer index:
+the corpus is k-means-clustered, codes are reordered so each cluster is
+contiguous, and a query scans only the ``simdq_ivf_nprobe`` nearest clusters.
+This trades recall for scanning a fraction of the codes.
+
+It only helps when the SoA codes **exceed L3 cache** (roughly tens of millions of
+docs). Below that the full flat SoA scan reads each code once and stays
+L3-resident, so it beats IVF — e.g. on the 276k NQ corpus, flat Hamming (0.40 ms)
+is faster than IVF at any useful ``nprobe`` (nprobe=32 ≈ 2.3 ms, and lossy). Leave
+``simdq_ivf_nlist=0`` unless your corpus is large enough that a single pass is
+DRAM-bound.
 
 Per-parameter math intuition
 =============================
