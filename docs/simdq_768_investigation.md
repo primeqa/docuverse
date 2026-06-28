@@ -304,3 +304,56 @@ are also 16× smaller in RAM (96 vs 1536 B/doc at 384d).
   (faster than Milvus FLAT's 9.4 ms). Update the table and remove the "768-dim
   scan kernel speed" from the primary open-items list — the kernel was never the
   bottleneck.
+
+---
+
+## Phase 6 — Hamming family benchmark (quality + speed)
+
+Built Hamming indexes from the **same stored embeddings** as the asym-b2 indexes
+(no re-encode) for granite-97m (384d) and granite-311m (768d). Hamming = 1-bit
+sign codes (AoS), query sign-quantized at search, scored by negative Hamming
+distance, then fp32-rescored over the top-K' candidates (α=10, K'=256).
+
+### Quality — real NQ dev eval (retrieve+eval via the engine, vs qrels)
+
+768d (granite-311m), identical pipeline to the asym-b2 / fp32 runs:
+
+| metric | fp32 | asym b=2 | **hamming** |
+|---|---|---|---|
+| NDCG@10 | 0.607 | 0.607 | **0.607** |
+| NDCG@100 | 0.634 | 0.634 | **0.634** |
+| Match@100 | 0.983 | 0.984 | **0.984** |
+| MRR@10 | — | 0.554 | **0.554** |
+
+**Hamming + fp32 rescore is lossless** — identical to asym-b2 and fp32. The 1-bit
+ranking is coarse but good enough to pull the true top-100 into the top-256
+candidate set, and the fp32 rescore fixes the final order.
+
+> Caveat learned the hard way: quality **must** use real query embeddings.
+> Recall-vs-exact with *random* query vectors gave ~0.15 (meaningless) because
+> random queries have near-tied top-K that any quantizer reorders.
+
+### Speed — same clean harness (search-only, same vectors, 16-way concurrent)
+
+| dim | asym b=2 | hamming | fp32 (Milvus) |
+|---|---|---|---|
+| 384d | 0.41 ms/q | 1.14 ms/q | 6.3 ms/q |
+| 768d | 0.81 ms/q | 3.5 ms/q | 12.2 ms/q |
+
+**Hamming is slower than asym-b2 in practice**, despite 1-bit codes being half the
+size of b=2. Decomposing the 768d hamming path:
+- native popcount scan: 3.1 ms serial → **4.5 ms at 16-way concurrent** (negative
+  scaling) — it's **memory/latency-bound**, so concurrent queries contend rather
+  than scale. asym-b2's vectorized compute-bound scan parallelizes well instead.
+- Python query sign-packing: 0.138 ms/query, **49× slower** than a vectorized
+  `(signs.reshape(-1,64) * 2**arange(64)).sum()` (0.003 ms) and GIL-bound — minor
+  next to the scan, but it inflates the engine's per-call `scan` timer badly under
+  the threaded path (123 ms median observed).
+
+### Verdict
+Hamming's niche is **RAM**, not speed: 96 / 48 B/doc (768d / 384d) vs asym-b2's
+192 / 96 and fp32's 3072 / 1536, at **identical retrieval quality** once rescored.
+If latency/throughput matter, asym-b2 wins (~4× faster at 768d concurrent).
+Open levers for hamming: vectorize the query pack (trivial, 49×), and the
+memory-bound scan needs an outer/coarse index to scan fewer codes (a faster
+kernel won't help a bandwidth wall).

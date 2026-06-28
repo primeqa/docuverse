@@ -67,6 +67,10 @@ from docuverse.engines.retrieval.simdq.standardize import Standardizer
 
 FORMAT_VERSION = 1
 
+# Per-bit weights for packing a 64-dim sign block into a uint64 word (bit b ->
+# value 1<<b), used by the Hamming query quantizer.
+_HAMMING_BIT_WEIGHTS = np.uint64(1) << np.arange(64, dtype=np.uint64)
+
 
 @dataclass
 class SimdqIndex:
@@ -331,17 +335,13 @@ class SimdqIndex:
         return idxs[order], scaled[order]
 
     def _search_hamming(self, q_proj, K, K_prime, num_threads):
-        # Quantize the projected query to 1-bit codes (same packing as pack_hamming).
+        # Quantize the projected query to 1-bit codes (same packing as pack_hamming):
+        # bit b of word w is set iff q_proj[w*64 + b] >= 0. Vectorized — the old
+        # per-bit Python loop was ~49× slower and GIL-bound under the threaded
+        # search path (see docs/simdq_768_investigation.md §6).
         words = self.d // 64
-        q_bits = np.zeros(words, dtype=np.uint64)
-        for w in range(words):
-            block = q_proj[w * 64:(w + 1) * 64]
-            mask = (block >= 0.0)
-            bits = np.uint64(0)
-            for b in range(64):
-                if mask[b]:
-                    bits |= (np.uint64(1) << np.uint64(b))
-            q_bits[w] = bits
+        signs = (q_proj >= 0.0).reshape(words, 64).astype(np.uint64)
+        q_bits = (signs * _HAMMING_BIT_WEIGHTS).sum(axis=1).astype(np.uint64)
         q_bytes = q_bits.tobytes()                                # 8*words bytes
 
         dist_buf, idx_buf = _native.scan_hamming(
