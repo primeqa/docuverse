@@ -294,13 +294,13 @@ At a target similarity $\cos\theta \approx 0.9$ (i.e.\ $\theta \approx 26^{\circ
   \;\approx\; \textcolor{key}{\mathbf{10\;\text{bits}}}
 \]
 
-\vspace{8pt}
+\vspace{2pt}
 \onslide<2->{
 Hamming distances span $0$ (identical) to $768$ (antipodal), centered near $384$ for
-unrelated pairs. \textbf{$\sigma_H = 10$ is small.}\\[8pt]
+unrelated pairs. \textbf{$\sigma_H = 10$ is small.}\\[3pt]
 The gap between a true match ($\cos\theta = 0.9$, $E[H]\approx110$) and a near-miss
 ($\cos\theta = 0.7$, $E[H]\approx194$)
-corresponds to $\approx 84$ bits in Hamming space — well above the noise.\\[8pt]
+corresponds to $\approx 84$ bits in Hamming space — well above the noise.\\[3pt]
 }
 \onslide<3->{
 \textcolor{hi}{\textbf{This is why 1-bit codes work for text retrieval.}}\\
@@ -312,8 +312,8 @@ than the estimator's noise floor.
 % ---------------------------------------------------------------
 \begin{frame}{Is the encoder its own projection? The isotropy problem}
 
-SimHash assumes the projection is \textbf{isotropic Gaussian}. A trained encoder is
-\emph{not} random --- so does skipping $W$ really preserve cosine? \textbf{We measured it.}\\[4pt]
+SimHash assumes an \textbf{isotropic Gaussian} projection. A trained encoder is
+\emph{not} random --- does skipping $W$ preserve cosine? \textbf{We measured it.}
 
 \onslide<2->{
 \textbf{granite-311m, 178k ClapNQ passages} (\texttt{tests/test\_embedding\_isotropy.py}):
@@ -331,15 +331,13 @@ cov.\ spectral ratio & \textcolor{acc}{1465} & $\to 1$ --- variance in a few dir
 \end{center}
 }
 
-\vspace{2pt}
 \onslide<3->{
-Real embeddings are \textbf{strongly anisotropic} with \emph{rogue} dimensions ---
-naked $\operatorname{sign}(x)$ wastes bits. Two fixes:
-\begin{itemize}\setlength\itemsep{1pt}
-  \item \textbf{Cheap (affine):} center + per-dim standardize. Fixes sign balance
-    ($0.50\!\to\!0.03$) and the mean offset. \textcolor{key}{Universal win} --- but does
-    \emph{not} decorrelate (effective rank stays $\approx 0.21$).
-  \item \textbf{Structural:} a rotation $W$ to decorrelate the axes --- but \emph{which} $W$? (next)
+\textbf{Strongly anisotropic} with \emph{rogue} dimensions --- naked
+$\operatorname{sign}(x)$ wastes bits. Two fixes:
+\begin{itemize}\setlength\itemsep{1pt}\small
+  \item \textbf{Cheap (affine):} center + per-dim standardize --- fixes sign balance
+    ($0.50\!\to\!0.03$); \textcolor{key}{universal win}, no decorrelation (rank $\approx0.21$).
+  \item \textbf{Structural:} a rotation $W$ to decorrelate the axes --- \emph{which} $W$? (next)
 \end{itemize}
 }
 \end{frame}
