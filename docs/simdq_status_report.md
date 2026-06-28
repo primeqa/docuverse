@@ -12,11 +12,12 @@ embedding models, plus the bugs found and fixed along the way._
   exact fp32 to ±0.001.
 - **Quality is lossless** for asymmetric `b=2` + fp32 rescore on both encoders tested
   (granite-97m and granite-311m) once the kernel bug was fixed.
-- **Speed: simdq beats Milvus FLAT at both dims** (~2.3× at 384d, ~2.4× at 768d).
-  An earlier "768-dim is ~5× slower (49 ms)" result was a **measurement/threading
-  bug, not the kernel**: the per-query identity projection `W@q` let OpenBLAS spawn
-  its own thread pool that oversubscribed the cores against the scan threads. Skipping
-  the identity matmul fixed it (49 → ~3.9 ms/query). See
+- **Speed: simdq is ~14–15× faster than Milvus FLAT at both dims** (search-only,
+  same vectors/machine: 384d 0.42 vs 6.3 ms/q; 768d 0.89 vs 12.2 ms/q). The
+  original "768-dim ~5× slower (49 ms)" was wrong on two counts, both fixed:
+  (1) a thread-oversubscription bug (per-query identity `W@q` spawned an OpenBLAS
+  pool fighting the scan threads) → 49→3.9 ms; (2) a scalar 2-bit unpack in the
+  AVX-512 kernel → replaced with `vpmultishiftqb`+`vpshufb` → 3.9→0.9 ms. See
   `docs/simdq_768_investigation.md`.
 - A batch of smaller correctness/usability/perf fixes landed (config typos, lazy GPU
   load, multi-core tokenization, matryoshka guard, deprecation warning, redundant
@@ -77,26 +78,32 @@ indexes full uint64 elements). Rebuilt the native extension.
 
 ---
 
-## 3. Speed — current state (scan kernel, median ms/query, isolated)
+## 3. Speed — current state
+
+Re-benchmarked Milvus FLAT and simdq with **one identical harness**: search-only
+(queries pre-encoded), same 276k vectors, same machine (Ryzen 9 9950X3D), Milvus
+standalone server on :19530, 16-way concurrent. ms/query (lower better):
 
 | encoder | Milvus FLAT fp32 | simdq b=2 | verdict |
 |---|---|---|---|
-| granite-97m (384d) | 7.6 ms | **3.2 ms** | simdq ~2.3× faster |
-| granite-311m (768d) | 9.4 ms | **3.9 ms** | simdq ~2.4× faster |
+| granite-97m (384d) | 6.3 ms | **0.42 ms** (2373 q/s) | simdq ~15× faster |
+| granite-311m (768d) | 12.2 ms | **0.89 ms** (1128 q/s) | simdq ~14× faster |
 
-**Resolved** (was: "768d is ~5× slower, compute-bound unpack kernel" — that was
-wrong). The 49 ms figure was thread oversubscription, not the kernel. Under the
-engine's `parallel_process` (one query per thread), the per-query identity
-projection `W@q` (a 768×768 matmul) crossed OpenBLAS's auto-parallel threshold,
-so each query-thread spawned its own ~16-thread BLAS pool on top of the scan's
-OpenMP threads → cores oversubscribed → collapse. At 384d the projection matrix
-stays below the threshold, which is exactly why 384d never showed the problem.
+(The Milvus numbers match the earlier ~7.6 / 9.4 ms within measurement noise.)
 
-Fix: `SimdqIndex._project_query` skips the matmul entirely for identity
-projection (bit-exact: `max|W@q − q| = 0.0`) and pins BLAS to one thread for the
-non-identity path. Real NQ 768d index, default BLAS, 16 query-threads:
-**8.8 → 3.9 ms/query (255 q/s)**, now faster than Milvus FLAT. Single-thread
-kernel cost scales ~linearly with dim and was never the bottleneck.
+Two fixes took 768d from the original 49 ms to 0.9 ms:
+
+1. **Projection/BLAS oversubscription (49 → 3.9 ms).** Under `parallel_process`
+   (one query per thread) the per-query identity projection `W@q` (768×768)
+   crossed OpenBLAS's auto-parallel threshold, so each query-thread spawned its
+   own ~16-thread BLAS pool on top of the scan's OpenMP threads → collapse. At
+   384d the matrix stays below the threshold (why 384d never showed it). Fix:
+   `SimdqIndex._project_query` skips the matmul for identity projection (bit-exact)
+   and pins BLAS for the non-identity path.
+2. **Vectorized AVX-512 unpack — Lever 1 (3.9 → 0.9 ms).** `b2`/`b4` unpacked
+   2-bit/4-bit codes with a scalar loop into a stack array then reloaded (a
+   store-forwarding stall). Replaced with an in-register `vpmultishiftqb` (VBMI)
+   + `vpshufb` LUT unpack: ~4× faster single-thread (768d 52 → 13 ms), bit-identical.
 
 Full diagnosis + measurements in `docs/simdq_768_investigation.md`. The standalone
 scan-time sweep (`scripts/bench_simdq_scan.py`) confirms scan-only timings; note it

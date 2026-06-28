@@ -238,6 +238,66 @@ on the real 768d index).
 
 ---
 
+## Phase 5 — Lever 1: vectorized sub-byte unpack (kernel speedup)
+
+The `b2`/`b4` AVX-512 kernels unpacked codes with a per-dim **scalar loop into a
+stack `vf[16]` then `_mm512_loadu_ps`** — a store-forwarding stall that dominated
+the inner loop. Replaced with an in-register unpack:
+
+- **`vpmultishiftqb`** (`_mm_multishift_epi64_epi8`, AVX512-VBMI) extracts the 16
+  packed codes into 16 bytes in one instruction (control = per-lane bit offset,
+  data = the packed word broadcast to both qwords).
+- **`vpshufb`** (`_mm_shuffle_epi8`) maps code → level via a 4-entry (`b2`) /
+  16-entry (`b4`) LUT, then `cvtepi8_epi32` + `cvtepi32_ps` feed the existing FMA.
+
+Bit-identical to the scalar path (same level floats, same lane order, same FMA
+sequence); a scalar fallback is kept under `#if !(__AVX512VBMI__ && __AVX512VL__)`.
+Files: `simdq_kernels_asym_b2.h`, `simdq_kernels_asym_b4.h`.
+
+> Gotcha: `_mm_multishift_epi64_epi8(a, b)` takes **a = control, b = data**
+> (verified empirically; the Intel guide prose is ambiguous). Getting it backwards
+> compiles and runs but returns wrong candidates.
+
+### Verification
+- `b2` and `b4` vs a numpy level-dot reference: **top-200 candidate set identical**,
+  max score error ~3e-6 (fp32 reduction-order only). Single-thread == all-threads.
+- Full simdq suite green (**108 passed**).
+
+### Speed (single-thread scan, N=276,007, BLAS pinned)
+
+| dim | before (scalar unpack) | after (Lever 1) | speedup |
+|---|---|---|---|
+| 384d b=2 | 26.4 ms | **5.9 ms** | 4.5× |
+| 768d b=2 | 52 ms | **13.4 ms** | 3.9× |
+
+### End-to-end on the real 768d NQ index (default BLAS, with the projection fix)
+
+| config | ms/query | q/s |
+|---|---|---|
+| scan=1, serial | 13.5 | 74 |
+| scan=all, serial | 1.48 | 677 |
+| **scan=1, 16 query-threads** | **0.95** | **1053** |
+| scan=all, 16 query-threads | 0.99 | 1014 |
+
+**768d cumulative: 49 ms → 3.9 ms (projection fix) → 0.95 ms (Lever 1).**
+Next levers if needed: VNNI `vpdpbusd` MAC and multiple FMA accumulators.
+
+### Head-to-head vs Milvus FLAT (one identical harness)
+
+Re-benchmarked both with the **same harness**: search-only (queries pre-encoded),
+same 276k vectors, same machine, Milvus standalone on :19530, 16-way concurrent.
+ms/query:
+
+| encoder | Milvus FLAT | simdq b=2 | speedup |
+|---|---|---|---|
+| granite-97m (384d) | 6.3 | **0.42** (2373 q/s) | ~15× |
+| granite-311m (768d) | 12.2 | **0.89** (1128 q/s) | ~14× |
+
+The Milvus figures reproduce the earlier ~7.6 / 9.4 ms within noise. simdq's codes
+are also 16× smaller in RAM (96 vs 1536 B/doc at 384d).
+
+---
+
 ### Status report corrections needed (`docs/simdq_status_report.md` §3, §6.1)
 - The "768d simdq b=2 = 49 ms, ~5× slower than Milvus FLAT" result was measured
   under BLAS×OpenMP thread oversubscription. **Real number is ~3.9 ms/q**

@@ -30,17 +30,38 @@ static inline void scan_asym_b4_shard_topk(const uint8_t *codes, size_t N, size_
     simdq_topk_t heap;
     simdq_topk_init(&heap, K, hkeys, hidxs);
 
+#if defined(__AVX512VBMI__) && defined(__AVX512VL__)
+    // Lever 1 — vectorized 4-bit unpack (see asym_b2 for the technique).
+    // vpmultishiftqb extracts the 16 nibbles of `packed` into 16 bytes; vpshufb
+    // maps code -> level via a full 16-entry LUT (level = 2*code - 15).
+    // Bit-identical to the scalar path.
+    const __m128i k_ctrl = _mm_setr_epi8(0, 4, 8, 12, 16, 20, 24, 28,
+                                         32, 36, 40, 44, 48, 52, 56, 60);
+    const __m128i k_lut  = _mm_setr_epi8(-15, -13, -11, -9, -7, -5, -3, -1,
+                                         1, 3, 5, 7, 9, 11, 13, 15);
+    const __m128i k_lo4  = _mm_set1_epi8(0xF);
+#endif
+
     for (size_t ii = i0; ii + ASYM_B4_LANES <= i1; ii += ASYM_B4_LANES) {
         __m512 acc = _mm512_setzero_ps();
         for (size_t w = 0; w < d; w++) {
             // 8 bytes hold 16 codes' 4-bit values
             uint64_t packed = *(const uint64_t *)(codes + w * row_bytes + (ii >> 1));
+            __m512 v;
+#if defined(__AVX512VBMI__) && defined(__AVX512VL__)
+            __m128i data  = _mm_set1_epi64x((long long)packed);
+            __m128i bytes = _mm_multishift_epi64_epi8(k_ctrl, data);
+            __m128i code8 = _mm_and_si128(bytes, k_lo4);
+            __m128i lev8  = _mm_shuffle_epi8(k_lut, code8);          // int8 levels
+            v = _mm512_cvtepi32_ps(_mm512_cvtepi8_epi32(lev8));
+#else
             float vf[16];
             for (int l = 0; l < 16; l++) {
                 uint8_t code = (uint8_t)((packed >> (l * 4)) & 0xF);
                 vf[l] = (float)(2 * (int)code - 15);
             }
-            __m512 v = _mm512_loadu_ps(vf);
+            v = _mm512_loadu_ps(vf);
+#endif
             __m512 qb = _mm512_set1_ps(q[w]);
             acc = _mm512_fmadd_ps(qb, v, acc);
         }

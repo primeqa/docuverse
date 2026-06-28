@@ -587,31 +587,33 @@ granite-311m \scriptsize(768d) & 0.607 & 0.607 & 0.983 & 0.984 \\
 
 \column{0.46\textwidth}
 \centering\small
-\textbf{Scan speed (ms/query)}\\[3pt]
-\begin{tabular}{l cc}
+\textbf{Search speed (ms/query)}\\[3pt]
+\begin{tabular}{l cc c}
 \toprule
-            & Milvus & simdq \\
-            & fp32   & $b{=}2$ \\
+            & Milvus & simdq & \\
+            & fp32   & $b{=}2$ & $\times$ \\
 \midrule
-97m  \scriptsize(384d)  & 7.6 & \textbf{\textcolor{key}{3.2}} \\
-311m \scriptsize(768d)  & 9.4 & \textbf{\textcolor{key}{3.9}} \\
+97m  \scriptsize(384d)  & 6.3 & \textbf{\textcolor{key}{0.42}} & 15 \\
+311m \scriptsize(768d)  & 12.2 & \textbf{\textcolor{key}{0.89}} & 14 \\
 \bottomrule
 \end{tabular}\\[5pt]
-{\scriptsize scan codes $16\times$ smaller (96 vs 1536 B/doc) either way.}
+{\scriptsize search-only, 16-way concurrent, same 276k vectors / machine.\\
+codes $16\times$ smaller (96 vs 1536 B/doc).}
 \end{columns}
 
 \vspace{6pt}
 \onslide<2->{
 \textcolor{hi}{\textbf{Quality is lossless on both ($\pm0.001$ NDCG)} --- the bit-hashing
-science holds.} simdq \textbf{beats Milvus FLAT at both dims}:
+science holds.} simdq is \textbf{$\sim$14--15$\times$ faster than Milvus FLAT} at both dims:
 }
 \onslide<3->{
 \begin{itemize}\setlength\itemsep{1pt}\small
-  \item \textbf{384-dim}: $2.3\times$ faster; \textbf{768-dim}: $2.4\times$ faster.
-  \item An earlier $768$-dim ``regression'' ($49$~ms) was \textbf{not} the kernel:
-    the per-query identity projection \texttt{W@q} let OpenBLAS spawn its own
-    thread pool, which oversubscribed the cores against the scan threads. Skipping
-    the identity matmul fixed it ($49 \to 3.9$~ms). Codes stay $16\times$ smaller.
+  \item Two fixes got 768-dim there. \textbf{(1)} the per-query identity projection
+    \texttt{W@q} let OpenBLAS spawn a thread pool that oversubscribed the scan
+    threads --- skip the identity matmul ($49\to3.9$~ms).
+  \item \textbf{(2)} the AVX-512 scan unpacked 2-bit codes with a scalar
+    loop + stack roundtrip; an in-register \texttt{vpmultishiftqb}+\texttt{vpshufb}
+    unpack is $\sim$4$\times$ faster ($\to0.9$~ms), bit-identical. Codes stay $16\times$ smaller.
 \end{itemize}
 }
 \end{frame}

@@ -35,20 +35,42 @@ static inline void scan_asym_b2_shard_topk(const uint8_t *codes, size_t N, size_
     simdq_topk_t heap;
     simdq_topk_init(&heap, K, hkeys, hidxs);
 
+#if defined(__AVX512VBMI__) && defined(__AVX512VL__)
+    // Lever 1 — vectorized 2-bit unpack. vpmultishiftqb (VBMI) extracts the 16
+    // 2-bit codes packed in `packed` into 16 bytes (one per lane); vpshufb maps
+    // code -> level via a 4-entry LUT. This replaces the per-dim scalar loop +
+    // stack roundtrip and is bit-identical to it (same {-3,-1,1,3} floats).
+    // k_ctrl: per output byte, the rotate-right amount that lands code l's two
+    // bits in the low 2 bits. data is `packed` broadcast to both qwords, so
+    // bytes 0..7 read codes 0..7 and bytes 8..15 read codes 8..15.
+    const __m128i k_ctrl = _mm_setr_epi8(0, 2, 4, 6, 8, 10, 12, 14,
+                                         16, 18, 20, 22, 24, 26, 28, 30);
+    const __m128i k_lut  = _mm_setr_epi8(-3, -1, 1, 3, 0, 0, 0, 0,
+                                         0, 0, 0, 0, 0, 0, 0, 0);
+    const __m128i k_lo2  = _mm_set1_epi8(0x3);
+#endif
+
     for (size_t ii = i0; ii + ASYM_B2_LANES <= i1; ii += ASYM_B2_LANES) {
         __m512 acc = _mm512_setzero_ps();
         for (size_t w = 0; w < d; w++) {
             // 4 bytes from this dim row, holding 16 codes' 2-bit values
             uint32_t packed = *(const uint32_t *)(codes + w * row_bytes + (ii >> 2));
-            // unpack to 16 int8 levels via small scalar table; the
-            // optimizer keeps this register-resident inside the inner loop
+            __m512 v;
+#if defined(__AVX512VBMI__) && defined(__AVX512VL__)
+            __m128i data  = _mm_set1_epi64x((long long)(unsigned long long)packed);
+            __m128i bytes = _mm_multishift_epi64_epi8(k_ctrl, data);
+            __m128i code8 = _mm_and_si128(bytes, k_lo2);
+            __m128i lev8  = _mm_shuffle_epi8(k_lut, code8);          // int8 levels
+            v = _mm512_cvtepi32_ps(_mm512_cvtepi8_epi32(lev8));
+#else
+            // scalar fallback: unpack to 16 int8 levels via small table
             float vf[16];
             for (int l = 0; l < 16; l++) {
-                uint8_t code = (uint8_t)((packed >> (l * 2)) & 0x3);
                 static const int8_t levels[4] = {-3, -1, 1, 3};
-                vf[l] = (float)levels[code];
+                vf[l] = (float)levels[(packed >> (l * 2)) & 0x3];
             }
-            __m512 v = _mm512_loadu_ps(vf);
+            v = _mm512_loadu_ps(vf);
+#endif
             __m512 qb = _mm512_set1_ps(q[w]);
             acc = _mm512_fmadd_ps(qb, v, acc);
         }
