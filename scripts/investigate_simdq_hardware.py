@@ -11,15 +11,24 @@ whichever machine it's invoked on, and writes a structured markdown report:
                  16-way concurrent harness. Requires a Milvus standalone at
                  --milvus-uri (default http://localhost:19530).
 
-Synthetic random unit vectors are used throughout: both Milvus FLAT and the
-simdq scan are data-independent for speed, so synthetic numbers match real-NQ
-numbers within noise (verified in docs/simdq_768_investigation_avx2.md).
+By default, synthetic random unit vectors are used. Both Milvus FLAT and the
+simdq scan are data-independent for *speed*, so synthetic numbers match real
+data within noise (verified in docs/simdq_768_investigation_avx2.md). Pass
+--vectors to swap in a real dataset: comma-separated list, each entry is
+either a .npy file (shape N×D, float32) or a SimdqIndex directory that was
+built with store_floats=True. Each source becomes one row in the result
+tables; --N and --dims are ignored in that mode. Queries remain synthetic
+(query distribution doesn't affect speed).
 
 Usage:
-    python scripts/investigate_simdq_hardware.py                  # quick smoke
-    python scripts/investigate_simdq_hardware.py --N 276007       # full sweep
-    python scripts/investigate_simdq_hardware.py --no-milvus      # skip Milvus
-    python scripts/investigate_simdq_hardware.py --rebuild        # build .so first
+    python scripts/investigate_simdq_hardware.py                       # quick smoke
+    python scripts/investigate_simdq_hardware.py --N 276007            # full synthetic
+    python scripts/investigate_simdq_hardware.py --no-milvus           # skip Milvus
+    python scripts/investigate_simdq_hardware.py --rebuild             # build .so first
+    python scripts/investigate_simdq_hardware.py \
+        --vectors path/to/nq97m.npy,path/to/nq311m.npy                 # real datasets
+    python scripts/investigate_simdq_hardware.py \
+        --vectors experiments/nq_new/simdq_data/nq_dev-...-granite311m-..  # simdq index
 
 The report file is written to docs/simdq_<hostname>_investigation.md so
 multiple machines' replays can sit side-by-side.
@@ -131,6 +140,42 @@ def _unit(n: int, d: int, rng: np.random.Generator) -> np.ndarray:
     return x
 
 
+def _load_source(spec: str | None, default_N: int, default_D: int | None,
+                 seed: int) -> tuple[str, np.ndarray]:
+    """Resolve a dataset spec into (label, vecs (np.float32, contiguous)).
+
+    spec=None       -> synthetic random unit vectors at (default_N, default_D)
+    spec="path.npy" -> np.load(path); shape (N, D)
+    spec="path/"    -> SimdqIndex.load(path).floats_mmap (must have_floats=True)
+
+    Both Milvus FLAT and the simdq scan are data-independent for *speed*, so
+    `.npy` files / simdq indexes are the natural way to plug a real corpus
+    (e.g. NQ encoder outputs) into the same sweep without re-encoding.
+    """
+    if spec is None:
+        assert default_D is not None
+        rng = np.random.default_rng(seed)
+        return (f"synthetic-{default_D}d",
+                _unit(default_N, default_D, rng))
+    p = Path(spec)
+    if p.suffix == ".npy":
+        vecs = np.load(p)
+        if vecs.dtype != np.float32:
+            vecs = vecs.astype(np.float32, copy=False)
+        vecs = np.ascontiguousarray(vecs)
+        return (p.stem, vecs)
+    # Otherwise treat as a SimdqIndex directory.
+    from docuverse.engines.retrieval.simdq.simdq_index import SimdqIndex
+    idx = SimdqIndex.load(p)
+    if not idx.has_floats:
+        raise ValueError(
+            f"simdq index {p} has no stored floats — rebuild with "
+            f"store_floats=True, or pass an .npy file instead.")
+    vecs = np.ascontiguousarray(
+        np.asarray(idx.floats_mmap, dtype=np.float32))
+    return (p.name, vecs)
+
+
 def _median_serial(call, qs) -> float:
     t = np.empty(len(qs), dtype=np.float64)
     for i in range(len(qs)):
@@ -149,12 +194,13 @@ def _conc_ms_per_q(call, qs, workers: int) -> float:
 
 # ---------- Phase 1 / 6/8: dim x thread sweep ----------------------------- #
 
-def sweep_one(family, b, dim, N, threads, queries, warmup, K, alpha, seed):
-    """Median ms/query at each thread count for one (family, b, dim, N)."""
+def sweep_one(family, b, vecs, qs_pool, threads, warmup, queries, K, alpha):
+    """Median ms/query at each thread count for one (family, b, source).
+
+    vecs: (N, D) corpus, contiguous float32.
+    qs_pool: (warmup + queries, D) query batch, the same one reused across t.
+    """
     from docuverse.engines.retrieval.simdq.simdq_index import SimdqIndex
-    rng = np.random.default_rng(seed)
-    vecs = _unit(N, dim, rng)
-    qs = _unit(queries + warmup, dim, rng)
     idx = SimdqIndex.build(
         vecs, family=family, b=b, d=None,
         projection="identity", store_floats=True,
@@ -163,30 +209,36 @@ def sweep_one(family, b, dim, N, threads, queries, warmup, K, alpha, seed):
     out: dict[int, float] = {}
     for t in threads:
         for i in range(warmup):
-            idx.search(qs[i], K=K, K_prime=K_prime, num_threads=t)
+            idx.search(qs_pool[i], K=K, K_prime=K_prime, num_threads=t)
         out[t] = _median_serial(
             lambda q: idx.search(q, K=K, K_prime=K_prime, num_threads=t),
-            qs[warmup:warmup + queries],
+            qs_pool[warmup:warmup + queries],
         )
     return out
 
 
-def run_sweep_phase(label, family, b, dims, N, threads, queries, warmup,
+def run_sweep_phase(label, family, b, sources, threads, queries, warmup,
                     K, alpha, seed, blas_threads=None):
-    """Run a sweep across dims, optionally pinning BLAS to `blas_threads`."""
+    """Run a sweep across sources, optionally pinning BLAS to `blas_threads`.
+
+    sources: list of (label, vecs) tuples.
+    """
     from threadpoolctl import threadpool_limits
     print(f"\n## {label}  (BLAS={'default' if blas_threads is None else blas_threads})")
     ctx = (threadpool_limits(limits=blas_threads, user_api="blas")
            if blas_threads is not None else _NullCtx())
-    rows: list[tuple[int, dict[int, float]]] = []
+    rng = np.random.default_rng(seed)
+    rows: list[tuple[str, int, dict[int, float]]] = []
     with ctx:
-        for D in dims:
-            out = sweep_one(family, b, D, N, threads, queries, warmup,
-                            K, alpha, seed)
-            rows.append((D, out))
+        for src_label, vecs in sources:
+            D = int(vecs.shape[1])
+            qs_pool = _unit(warmup + queries, D, rng)
+            out = sweep_one(family, b, vecs, qs_pool, threads,
+                            warmup, queries, K, alpha)
+            rows.append((src_label, D, out))
             cells = "  ".join(f"t={t if t else 'all':>3}={out[t]:7.3f}"
                               for t in threads)
-            print(f"  D={D:4d}  {cells}")
+            print(f"  {src_label:<28s} (D={D:4d})  {cells}")
     return rows
 
 
@@ -197,9 +249,9 @@ class _NullCtx:
 
 # ---------- Phase 5b: head-to-head vs Milvus FLAT ------------------------- #
 
-def bench_head_to_head(uri, N, dims, queries, K, alpha, workers, warmup, seed):
-    """Same 16-conc harness as scripts/bench_simdq_vs_milvus.py, but synthetic
-    in-process indexes — runs Milvus, simdq b=2, simdq Hamming at each dim."""
+def bench_head_to_head(uri, sources, queries, K, alpha, workers, warmup, seed):
+    """Same 16-conc harness as scripts/bench_simdq_vs_milvus.py, with one
+    Milvus FLAT + simdq b=2 + simdq Hamming triple per source."""
     try:
         from pymilvus import MilvusClient, DataType
     except ImportError as e:
@@ -213,8 +265,8 @@ def bench_head_to_head(uri, N, dims, queries, K, alpha, workers, warmup, seed):
     rng = np.random.default_rng(seed)
     cli = MilvusClient(uri=uri)
     out: list[dict] = []
-    for D in dims:
-        vecs = _unit(N, D, rng)
+    for src_label, vecs in sources:
+        N, D = vecs.shape
         qs = _unit(queries, D, rng)
 
         # --- Milvus FLAT ---
@@ -261,9 +313,11 @@ def bench_head_to_head(uri, N, dims, queries, K, alpha, workers, warmup, seed):
             lambda q: idxh.search(q, K=K, K_prime=K_prime, num_threads=1),
             qs, workers)
 
-        row = {"D": D, "milvus": m_cc, "asym_b2": s2_cc, "hamming": sh_cc}
+        row = {"label": src_label, "D": D, "N": N,
+               "milvus": m_cc, "asym_b2": s2_cc, "hamming": sh_cc}
         out.append(row)
-        print(f"  D={D:4d}  Milvus={m_cc:6.2f}  b=2={s2_cc:6.2f}  "
+        print(f"  {src_label:<28s} (D={D:4d},N={N})  "
+              f"Milvus={m_cc:6.2f}  b=2={s2_cc:6.2f}  "
               f"1-bit={sh_cc:6.2f}  (b=2/1-bit ratio {s2_cc/sh_cc:5.1f}x)")
     return out
 
@@ -277,9 +331,9 @@ def write_report(report_path, isa, p1_default, p1_blas1, p68, head, params):
     A(f"# simdq hardware investigation — {isa['hostname']}")
     A("")
     A(f"_Auto-generated by `scripts/investigate_simdq_hardware.py` "
-      f"on {date.today().isoformat()}. N={params['N']}, K={params['K']}, "
-      f"K'={params['K_prime']}, queries={params['queries']}, "
-      f"workers={params['workers']}._")
+      f"on {date.today().isoformat()}. dataset={params['dataset']}, "
+      f"K={params['K']}, K'={params['K_prime']}, "
+      f"queries={params['queries']}, workers={params['workers']}._")
     A("")
     A("## Environment")
     A("")
@@ -305,13 +359,13 @@ def write_report(report_path, isa, p1_default, p1_blas1, p68, head, params):
     A("")
 
     def _sweep_md_table(rows, threads):
-        hdr = "| dim | " + " | ".join(
+        hdr = "| source | dim | " + " | ".join(
             f"t={t if t else 'all'}" for t in threads) + " |"
-        sep = "|---" * (len(threads) + 1) + "|"
+        sep = "|---" * (len(threads) + 2) + "|"
         body = []
-        for D, out in rows:
+        for label, D, out in rows:
             cells = " | ".join(f"{out[t]:.2f}" for t in threads)
-            body.append(f"| {D} | {cells} |")
+            body.append(f"| {label} | {D} | {cells} |")
         return "\n".join([hdr, sep] + body)
 
     A("## Phase 1 — asymmetric b=2 dim × thread sweep")
@@ -340,10 +394,11 @@ def write_report(report_path, isa, p1_default, p1_blas1, p68, head, params):
     if head:
         A("## Phase 5b — head-to-head vs Milvus FLAT (16-way concurrent)")
         A("")
-        A("| dim | Milvus FLAT | simdq b=2 | simdq 1-bit | b=2/1-bit |")
-        A("|---|---|---|---|---|")
+        A("| source | dim | N | Milvus FLAT | simdq b=2 | simdq 1-bit | b=2/1-bit |")
+        A("|---|---|---|---|---|---|---|")
         for row in head:
-            A(f"| {row['D']} | {row['milvus']:.2f} | {row['asym_b2']:.2f} | "
+            A(f"| {row['label']} | {row['D']} | {row['N']} | "
+              f"{row['milvus']:.2f} | {row['asym_b2']:.2f} | "
               f"{row['hamming']:.2f} | "
               f"{row['asym_b2']/row['hamming']:.1f}× |")
         A("")
@@ -375,9 +430,14 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--N", type=int, default=50000,
-                    help="corpus size (276007 to mirror the reference run)")
+                    help="synthetic corpus size (ignored if --vectors is set)")
     ap.add_argument("--dims", default="384,768",
-                    help="comma-separated dims to sweep")
+                    help="synthetic dims to sweep (ignored if --vectors is set)")
+    ap.add_argument("--vectors", default=None,
+                    help="comma-separated dataset specs to replace synthetic data. "
+                         "Each spec is either a .npy file (shape N×D, float32) or "
+                         "a SimdqIndex directory built with store_floats=True. "
+                         "Example: --vectors path/to/nq97m.npy,path/to/nq311m.npy")
     ap.add_argument("--threads", default="1,2,4,8,16,0",
                     help="comma-separated num_threads (0 = all cores)")
     ap.add_argument("--queries", type=int, default=200)
@@ -400,6 +460,16 @@ def main():
     threads = [int(x) for x in args.threads.split(",")]
     K_prime = max(args.top_k, min(args.top_k * args.alpha, 256))
 
+    if args.vectors:
+        sources = [_load_source(s.strip(), args.N, None, args.seed)
+                   for s in args.vectors.split(",") if s.strip()]
+        print(f"# dataset: {len(sources)} loaded source(s)")
+        for lbl, vecs in sources:
+            print(f"#   {lbl}  shape={tuple(vecs.shape)}  dtype={vecs.dtype}")
+    else:
+        sources = [_load_source(None, args.N, D, args.seed) for D in dims]
+        print(f"# dataset: synthetic, N={args.N}, dims={dims}")
+
     if args.rebuild:
         print("# rebuilding native extension via setup.py build_ext --inplace")
         r = subprocess.run(
@@ -421,15 +491,15 @@ def main():
           f"vpmultishift={isa['so_counts'].get('vpmultishift', 0)})")
 
     p1_default = run_sweep_phase(
-        "Phase 1 — asym b=2", "asymmetric", 2, dims, args.N, threads,
+        "Phase 1 — asym b=2", "asymmetric", 2, sources, threads,
         args.queries, args.warmup, args.top_k, args.alpha, args.seed,
         blas_threads=None)
     p1_blas1 = run_sweep_phase(
-        "Phase 1 — asym b=2", "asymmetric", 2, dims, args.N, threads,
+        "Phase 1 — asym b=2", "asymmetric", 2, sources, threads,
         args.queries, args.warmup, args.top_k, args.alpha, args.seed,
         blas_threads=1)
     p68 = run_sweep_phase(
-        "Phase 6/8 — Hamming SoA", "hamming", None, dims, args.N, threads,
+        "Phase 6/8 — Hamming SoA", "hamming", None, sources, threads,
         args.queries, args.warmup, args.top_k, args.alpha, args.seed,
         blas_threads=None)
 
@@ -437,7 +507,7 @@ def main():
     if not args.no_milvus:
         try:
             head = bench_head_to_head(
-                args.milvus_uri, args.N, dims, args.queries,
+                args.milvus_uri, sources, args.queries,
                 args.top_k, args.alpha, args.workers, args.warmup, args.seed)
         except Exception as e:
             print(f"# Phase 5b skipped: {e}", file=sys.stderr)
@@ -446,8 +516,11 @@ def main():
     out_path = (Path(args.out) if args.out
                 else REPO_ROOT / "docs" /
                 f"simdq_{isa['hostname']}_investigation.md")
+    dataset_label = (f"synthetic N={args.N}" if not args.vectors
+                     else f"{len(sources)} loaded source(s) from --vectors")
     write_report(out_path, isa, p1_default, p1_blas1, p68, head,
-                 params=dict(N=args.N, K=args.top_k, K_prime=K_prime,
+                 params=dict(dataset=dataset_label,
+                             K=args.top_k, K_prime=K_prime,
                              queries=args.queries, workers=args.workers,
                              threads=threads))
     print(f"\n# report -> {out_path}")
