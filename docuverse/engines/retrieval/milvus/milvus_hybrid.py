@@ -13,8 +13,8 @@ from docuverse.engines.retrieval.milvus.milvus_sparse import MilvusSparseEngine
 try:
     from pymilvus import (
         FieldSchema, CollectionSchema, DataType, MilvusClient,
-        Collection, AnnSearchRequest, RRFRanker, connections, utility, WeightedRanker
-)
+        AnnSearchRequest, RRFRanker, WeightedRanker,
+    )
 except:
     print(f"You need to install pymilvus to be using Milvus functionality!")
     raise RuntimeError("fYou need to install pymilvus to be using Milvus functionality!")
@@ -112,10 +112,8 @@ class MilvusHybridEngine(MilvusEngine):
         Class method to test the engine.
     """
     def __init__(self, config: DocUVerseConfig|RetrievalArguments|dict, **kwargs) -> None:
-        self.collection = None
         self.model_names = None
         self.embedding_names = []
-        self.connection = None
         self.reranker = None
         self.index_params = None
         self.models = None
@@ -174,13 +172,8 @@ class MilvusHybridEngine(MilvusEngine):
             print("Hybrid search doesn't work on files databases, only on the server, for now.")
             raise NotImplemented()
 
-        connections.connect(host=self.server.host, port=self.server.port,
-                            secure=get_param(self.server, "secure", False),
-                            server_pem_path=get_param(self.server, "server_pem_path", None))
         for m in self.models:
             m.check_client()
-        if self.has_index(self.config.index_name):
-            self.collection = Collection(name=self.config.index_name)
 
 
     def _create_data(self, corpus, texts, show_progress_bar=True, tqdms=None, tm=None):
@@ -222,7 +215,8 @@ class MilvusHybridEngine(MilvusEngine):
             num_tries = 0
             while num_tries < 10:
                 try:
-                    self.collection.insert(data[i:i+tbatch_size])
+                    self.client.insert(collection_name=self.config.index_name,
+                                       data=data[i:i+tbatch_size])
                     break # exit the while loop
                 except Exception as e:
                     num_tries += 1
@@ -247,10 +241,16 @@ class MilvusHybridEngine(MilvusEngine):
             index_name = self.config.index_name
 
         schema = CollectionSchema(fields, index_name, consistency=ConsistencyLevel.Eventually)
-        self.collection = Collection(name=index_name, schema=schema)
+        combined = self.client.prepare_index_params()
+        seen_fields = set()
         for m, emb_name in zip(self.models, self.embedding_names):
-            index_params = m.prepare_index_params()
-            self.collection.create_index(emb_name, index_params)
+            for entry in m.prepare_index_params(embeddings_name=emb_name):
+                if entry.field_name in seen_fields:
+                    continue
+                seen_fields.add(entry.field_name)
+                combined.append(entry)
+        self.client.create_collection(index_name, schema=schema, index_params=combined,
+                                      consistency_level="Eventually")
 
     def prepare_index_params(self, embeddings_name="embeddings"):
         raise NotImplementedError
@@ -293,7 +293,7 @@ class MilvusHybridEngine(MilvusEngine):
         data = [m.encode_query(question, tm=tm) for m in self.models]
         tm.add_timing("encode")
         requests = []
-        self.collection.load()
+        self.client.load_collection(self.config.index_name)
         for s, d, m, name in zip(search_params, data, self.models, self.embedding_names):
             if self._check_zero_size_sparse_vector(d):
                 if self.config.verbose:
@@ -310,8 +310,8 @@ class MilvusHybridEngine(MilvusEngine):
         if len(requests)==1: # The hybrid call requires the same number of arguments in all calls,
             # so we're duplicating the first request.
             requests.append(requests[0])
-        res = self.collection.hybrid_search(requests, self.reranker,
-                                            limit=self.config.top_k, output_fields=self.output_fields)
+        res = self.client.hybrid_search(self.config.index_name, requests, self.reranker,
+                                        limit=self.config.top_k, output_fields=self.output_fields)
         res_as_dict = [hit.to_dict() for hit in res[0]]
         result = SearchResult(question=question, data=res_as_dict)
         result.remove_duplicates(self.config.duplicate_removal,
