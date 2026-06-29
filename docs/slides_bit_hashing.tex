@@ -601,73 +601,40 @@ granite-311m \scriptsize(768d) & 0.607 & 0.607 & 0.607 \\
 \end{columns}
 
 \vspace{3pt}
-\onslide<2->{
-\textcolor{hi}{\textbf{Quality holds for all modes.}} \textbf{1-bit Hamming + fp32
-rescore is fastest \emph{and} smallest} --- up to $\sim$29$\times$ vs Milvus FLAT, lossless at 768d.
-}
-\onslide<3->{
-\begin{itemize}\setlength\itemsep{1pt}\footnotesize
-  \item $b{=}2$ 768d $49\to0.9$~ms: skip identity \texttt{W@q} (BLAS oversubscription)
-    {}+ in-register \texttt{vpmultishiftqb} code-unpack.
-  \item \textbf{1-bit}: SoA storage kills the per-query AoS$\to$SoA transpose
-    ($3.4\to0.4$~ms, L3-resident); fp32 rescore keeps it lossless.
-\end{itemize}
+\onslide<2->{\small
+\textcolor{hi}{\textbf{Quality holds for all modes.}} \textbf{1-bit Hamming + fp32 rescore is fastest \emph{and} smallest} --- lossless at 768d. ISA matters: see next slide.
 }
 \end{frame}
 
 % ---------------------------------------------------------------
 \begin{frame}{Hardware portability: AVX-512 vs.\ AVX2}
 
-\textbf{Same code, two CPUs}, identical harness, ms/query at 16-way concurrent.
-Quality identical (lossless rescore).
+{\small Same code, two CPUs, identical 16-conc harness. Quality identical (lossless rescore).}
 
-\vspace{3pt}
-\begin{center}\small
+\vspace{2pt}
+\begin{center}\scriptsize
+\renewcommand{\arraystretch}{0.92}
 \begin{tabular}{l c cc c}
 \toprule
-Mode (dim)                  & B/doc & 9950X3D     & 5955WX     & ratio \\
-                            &       & (AVX-512)   & (AVX2)     &       \\
+Mode (dim)                  & B/doc & 9950X3D (AVX-512) & 5955WX (AVX2) & ratio \\
 \midrule
-Milvus FLAT (fp32), 384d    & 1536  & 5.0  & 5.10  & 1.0$\times$ \\
-Milvus FLAT (fp32), 768d    & 3072  & 11.7 & 10.90 & 0.9$\times$ \\
+Milvus FLAT, 384d           & 1536  & 5.0  & 5.10  & 1.0$\times$ \\
+Milvus FLAT, 768d           & 3072  & 11.7 & 10.90 & 0.9$\times$ \\
 asym $b{=}2$, 384d          & 96    & 0.43 & 3.76  & 8.7$\times$ \\
 asym $b{=}2$, 768d          & 192   & 0.81 & 7.23  & 8.9$\times$ \\
-\textbf{1-bit (Hamming)}, 384d & \textbf{48} & 0.23 & \textbf{\textcolor{key}{0.11}} & \textbf{0.5$\times$} \\
-\textbf{1-bit (Hamming)}, 768d & \textbf{96} & 0.40 & \textbf{\textcolor{key}{0.17}} & \textbf{0.4$\times$} \\
+\textbf{1-bit}, 384d        & \textbf{48} & 0.23 & \textbf{\textcolor{key}{0.11}} & \textbf{0.5$\times$} \\
+\textbf{1-bit}, 768d        & \textbf{96} & 0.40 & \textbf{\textcolor{key}{0.17}} & \textbf{0.4$\times$} \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\vspace{1pt}
-\onslide<2->{
-\small
-\textbf{Milvus FLAT is ISA-blind} — it's memory + RPC bound. The 5955WX's
-8-channel DDR4 narrowly beats the 9950X3D's 2-channel DDR5 once the corpus
-exits cache.
-}
+\scriptsize
+\onslide<2->{\textbf{Milvus FLAT is ISA-blind} — memory + RPC bound; the 5955WX's 8-ch DDR4 narrowly beats 2-ch DDR5.\par}
+\onslide<3->{\textbf{Asym $b{=}2$ collapses on AVX2}: no \texttt{vpmultishiftqb} (VBMI), scalar unpack stalls FMA. Single-thread 768d: 13\,ms (AVX-512+Lever-1) vs 134\,ms (AVX2).\par}
+\onslide<4->{\textbf{1-bit is \emph{faster} on AVX2}: \texttt{popcnt}+\texttt{xor} is memory-bound, and this box has more bandwidth.\par}
 
-\vspace{1pt}
-\onslide<3->{
-\small
-\textbf{Asym $b{=}2$ collapses on AVX2.} Lever-1 unpack is \texttt{vpmultishiftqb}
-(AVX-512 VBMI only); without it, scalar unpack stalls the FMA pipeline. Single-thread
-768d: \textbf{13~ms} (AVX-512+Lever-1) vs \textbf{134~ms} (AVX2) — $\sim$10$\times$.
-}
-
-\vspace{1pt}
-\onslide<4->{
-\small
-\textbf{1-bit goes \emph{faster} on AVX2.} The kernel is \texttt{popcnt}+\texttt{xor},
-already memory-bound; the Threadripper's wider DDR4 bus + larger L3 bandwidth wins.
-}
-
-\vspace{1pt}
-\onslide<5->{
-\textcolor{hi}{\textbf{Takeaway:}} Asym vs.\ 1-bit ratio: $\sim$2$\times$ on
-AVX-512, \textbf{$\sim$42$\times$ on AVX2}.
-\textcolor{acc}{The deployment default flips with the ISA} — an AVX2
-\texttt{vpshufb}-LUT analog of Lever-1 would close most of the asym gap.
-}
+\vspace{2pt}
+\onslide<5->{\small\textcolor{hi}{\textbf{Takeaway:}} asym/1-bit ratio: $\sim$2$\times$ on AVX-512, \textbf{$\sim$42$\times$ on AVX2}. \textcolor{acc}{Deployment default flips with the ISA.}}
 \end{frame}
 
 % ---------------------------------------------------------------
