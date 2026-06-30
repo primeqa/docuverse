@@ -14,21 +14,27 @@ whichever machine it's invoked on, and writes a structured markdown report:
 By default, synthetic random unit vectors are used. Both Milvus FLAT and the
 simdq scan are data-independent for *speed*, so synthetic numbers match real
 data within noise (verified in docs/simdq_768_investigation_avx2.md). Pass
---vectors to swap in a real dataset: comma-separated list, each entry is
-either a .npy file (shape N×D, float32) or a SimdqIndex directory that was
-built with store_floats=True. Each source becomes one row in the result
-tables; --N and --dims are ignored in that mode. Queries remain synthetic
-(query distribution doesn't affect speed).
+--vectors to swap in a real DB corpus and --queries-file to swap in
+pre-encoded query vectors. Both accept .npy files (shape N×D, float32) or, for
+--vectors, a SimdqIndex directory built with store_floats=True. Each source
+becomes one row in the result tables; --N and --dims are ignored in that mode.
 
 Usage:
     python scripts/investigate_simdq_hardware.py                       # quick smoke
     python scripts/investigate_simdq_hardware.py --N 276007            # full synthetic
     python scripts/investigate_simdq_hardware.py --no-milvus           # skip Milvus
     python scripts/investigate_simdq_hardware.py --rebuild             # build .so first
+    # Real DB corpus, synthetic queries (queries are data-independent for speed):
     python scripts/investigate_simdq_hardware.py \
-        --vectors path/to/nq97m.npy,path/to/nq311m.npy                 # real datasets
+        --vectors path/to/nq97m.npy,path/to/nq311m.npy
+    # Existing simdq index dirs (built with store_floats=True):
     python scripts/investigate_simdq_hardware.py \
-        --vectors experiments/nq_new/simdq_data/nq_dev-...-granite311m-..  # simdq index
+        --vectors experiments/nq_new/simq_data/nq_dev-...-granite97m-...,\
+experiments/nq_new/simq_data/nq_dev-...-granite311m-...
+    # Real DB + real queries, paired 1:1:
+    python scripts/investigate_simdq_hardware.py \
+        --vectors db97m.npy,db311m.npy \
+        --queries-file q97m.npy,q311m.npy
 
 The report file is written to docs/simdq_<hostname>_investigation.md so
 multiple machines' replays can sit side-by-side.
@@ -176,6 +182,52 @@ def _load_source(spec: str | None, default_N: int, default_D: int | None,
     return (p.name, vecs)
 
 
+def _load_queries(spec: str | None, D: int, n_required: int,
+                  rng: np.random.Generator) -> np.ndarray:
+    """Resolve a query spec to a contiguous float32 (n_required, D) array.
+
+    spec=None       -> synthetic random unit vectors at (n_required, D)
+    spec="path.npy" -> np.load(path); must be float32 (auto-cast) with width D;
+                       the first n_required rows are returned. If the file has
+                       fewer queries than n_required, it errors.
+    """
+    if spec is None:
+        return _unit(n_required, D, rng)
+    p = Path(spec)
+    q = np.load(p)
+    if q.ndim != 2:
+        raise ValueError(f"queries file {p} must be 2D, got shape {q.shape}")
+    if q.shape[1] != D:
+        raise ValueError(
+            f"queries file {p} width={q.shape[1]}, but source D={D}; "
+            f"queries must match the corpus dim.")
+    if q.shape[0] < n_required:
+        raise ValueError(
+            f"queries file {p} has {q.shape[0]} queries; need {n_required}.")
+    if q.dtype != np.float32:
+        q = q.astype(np.float32, copy=False)
+    return np.ascontiguousarray(q[:n_required])
+
+
+def _resolve_query_specs(specs_str: str | None, n_sources: int) -> list[str | None]:
+    """Pair --queries-file (None|single path|comma-list) with --vectors entries.
+
+    None              -> [None, None, ...]  (all synthetic)
+    "path.npy"        -> [path] * n_sources  (same file reused)
+    "path1,path2,..." -> exactly n_sources entries; an empty slot means synthetic
+    """
+    if not specs_str:
+        return [None] * n_sources
+    parts = [p.strip() or None for p in specs_str.split(",")]
+    if len(parts) == 1:
+        return parts * n_sources
+    if len(parts) != n_sources:
+        raise ValueError(
+            f"--queries-file lists {len(parts)} paths, but --vectors lists "
+            f"{n_sources} sources. Either pass one shared file or one per source.")
+    return parts
+
+
 def _median_serial(call, qs) -> float:
     t = np.empty(len(qs), dtype=np.float64)
     for i in range(len(qs)):
@@ -217,11 +269,13 @@ def sweep_one(family, b, vecs, qs_pool, threads, warmup, queries, K, alpha):
     return out
 
 
-def run_sweep_phase(label, family, b, sources, threads, queries, warmup,
-                    K, alpha, seed, blas_threads=None):
+def run_sweep_phase(label, family, b, sources, query_specs, threads, queries,
+                    warmup, K, alpha, seed, blas_threads=None):
     """Run a sweep across sources, optionally pinning BLAS to `blas_threads`.
 
     sources: list of (label, vecs) tuples.
+    query_specs: list parallel to sources; each entry is None (synthetic) or
+        a path to a .npy file with (>=warmup+queries, D) pre-encoded queries.
     """
     from threadpoolctl import threadpool_limits
     print(f"\n## {label}  (BLAS={'default' if blas_threads is None else blas_threads})")
@@ -230,15 +284,16 @@ def run_sweep_phase(label, family, b, sources, threads, queries, warmup,
     rng = np.random.default_rng(seed)
     rows: list[tuple[str, int, dict[int, float]]] = []
     with ctx:
-        for src_label, vecs in sources:
+        for (src_label, vecs), q_spec in zip(sources, query_specs):
             D = int(vecs.shape[1])
-            qs_pool = _unit(warmup + queries, D, rng)
+            qs_pool = _load_queries(q_spec, D, warmup + queries, rng)
             out = sweep_one(family, b, vecs, qs_pool, threads,
                             warmup, queries, K, alpha)
             rows.append((src_label, D, out))
             cells = "  ".join(f"t={t if t else 'all':>3}={out[t]:7.3f}"
                               for t in threads)
-            print(f"  {src_label:<28s} (D={D:4d})  {cells}")
+            qtag = "real" if q_spec else "synth"
+            print(f"  {src_label:<28s} (D={D:4d}, q={qtag})  {cells}")
     return rows
 
 
@@ -249,9 +304,13 @@ class _NullCtx:
 
 # ---------- Phase 5b: head-to-head vs Milvus FLAT ------------------------- #
 
-def bench_head_to_head(uri, sources, queries, K, alpha, workers, warmup, seed):
+def bench_head_to_head(uri, sources, query_specs, queries, K, alpha,
+                       workers, warmup, seed):
     """Same 16-conc harness as scripts/bench_simdq_vs_milvus.py, with one
-    Milvus FLAT + simdq b=2 + simdq Hamming triple per source."""
+    Milvus FLAT + simdq b=2 + simdq Hamming triple per source.
+
+    query_specs: parallel to sources; None = synthetic queries, else .npy path.
+    """
     try:
         from pymilvus import MilvusClient, DataType
     except ImportError as e:
@@ -265,9 +324,11 @@ def bench_head_to_head(uri, sources, queries, K, alpha, workers, warmup, seed):
     rng = np.random.default_rng(seed)
     cli = MilvusClient(uri=uri)
     out: list[dict] = []
-    for src_label, vecs in sources:
+    for (src_label, vecs), q_spec in zip(sources, query_specs):
         N, D = vecs.shape
-        qs = _unit(queries, D, rng)
+        # warmup uses the first `warmup` slots, timed run uses the next `queries`
+        qs_pool = _load_queries(q_spec, D, warmup + queries, rng)
+        qs = qs_pool[warmup:warmup + queries]
 
         # --- Milvus FLAT ---
         coll = f"hwbench_{D}_{N}"
@@ -289,7 +350,7 @@ def bench_head_to_head(uri, sources, queries, K, alpha, workers, warmup, seed):
         m_call = lambda q: cli.search(
             coll, [q.tolist()], limit=K, search_params=sp, anns_field="v")
         for i in range(warmup):
-            m_call(qs[i])
+            m_call(qs_pool[i])
         try:
             m_cc = _conc_ms_per_q(m_call, qs, workers)
         finally:
@@ -299,7 +360,7 @@ def bench_head_to_head(uri, sources, queries, K, alpha, workers, warmup, seed):
         idx2 = SimdqIndex.build(vecs, family="asymmetric", b=2, d=None,
                                 projection="identity", store_floats=True)
         for i in range(warmup):
-            idx2.search(qs[i], K=K, K_prime=K_prime, num_threads=1)
+            idx2.search(qs_pool[i], K=K, K_prime=K_prime, num_threads=1)
         s2_cc = _conc_ms_per_q(
             lambda q: idx2.search(q, K=K, K_prime=K_prime, num_threads=1),
             qs, workers)
@@ -308,15 +369,17 @@ def bench_head_to_head(uri, sources, queries, K, alpha, workers, warmup, seed):
         idxh = SimdqIndex.build(vecs, family="hamming", b=None, d=None,
                                 projection="identity", store_floats=True)
         for i in range(warmup):
-            idxh.search(qs[i], K=K, K_prime=K_prime, num_threads=1)
+            idxh.search(qs_pool[i], K=K, K_prime=K_prime, num_threads=1)
         sh_cc = _conc_ms_per_q(
             lambda q: idxh.search(q, K=K, K_prime=K_prime, num_threads=1),
             qs, workers)
 
         row = {"label": src_label, "D": D, "N": N,
+               "queries": ("real" if q_spec else "synth"),
                "milvus": m_cc, "asym_b2": s2_cc, "hamming": sh_cc}
         out.append(row)
-        print(f"  {src_label:<28s} (D={D:4d},N={N})  "
+        qtag = "real" if q_spec else "synth"
+        print(f"  {src_label:<28s} (D={D:4d},N={N},q={qtag})  "
               f"Milvus={m_cc:6.2f}  b=2={s2_cc:6.2f}  "
               f"1-bit={sh_cc:6.2f}  (b=2/1-bit ratio {s2_cc/sh_cc:5.1f}x)")
     return out
@@ -394,10 +457,11 @@ def write_report(report_path, isa, p1_default, p1_blas1, p68, head, params):
     if head:
         A("## Phase 5b — head-to-head vs Milvus FLAT (16-way concurrent)")
         A("")
-        A("| source | dim | N | Milvus FLAT | simdq b=2 | simdq 1-bit | b=2/1-bit |")
-        A("|---|---|---|---|---|---|---|")
+        A("| source | dim | N | queries | Milvus FLAT | simdq b=2 | simdq 1-bit | b=2/1-bit |")
+        A("|---|---|---|---|---|---|---|---|")
         for row in head:
             A(f"| {row['label']} | {row['D']} | {row['N']} | "
+              f"{row.get('queries', 'synth')} | "
               f"{row['milvus']:.2f} | {row['asym_b2']:.2f} | "
               f"{row['hamming']:.2f} | "
               f"{row['asym_b2']/row['hamming']:.1f}× |")
@@ -438,6 +502,12 @@ def main():
                          "Each spec is either a .npy file (shape N×D, float32) or "
                          "a SimdqIndex directory built with store_floats=True. "
                          "Example: --vectors path/to/nq97m.npy,path/to/nq311m.npy")
+    ap.add_argument("--queries-file", default=None, dest="queries_file",
+                    help="path(s) to a .npy of pre-encoded query vectors "
+                         "(>= warmup+queries rows, width matching the source D). "
+                         "Pass a single path to reuse it across all sources, or a "
+                         "comma-separated list to pair 1:1 with --vectors entries. "
+                         "An empty slot in the list means 'synthetic for this source'.")
     ap.add_argument("--threads", default="1,2,4,8,16,0",
                     help="comma-separated num_threads (0 = all cores)")
     ap.add_argument("--queries", type=int, default=200)
@@ -469,6 +539,11 @@ def main():
     else:
         sources = [_load_source(None, args.N, D, args.seed) for D in dims]
         print(f"# dataset: synthetic, N={args.N}, dims={dims}")
+    query_specs = _resolve_query_specs(args.queries_file, len(sources))
+    if any(query_specs):
+        for (lbl, _), qs in zip(sources, query_specs):
+            print(f"#   queries[{lbl}] = "
+                  f"{'real (' + qs + ')' if qs else 'synthetic'}")
 
     if args.rebuild:
         print("# rebuilding native extension via setup.py build_ext --inplace")
@@ -491,23 +566,23 @@ def main():
           f"vpmultishift={isa['so_counts'].get('vpmultishift', 0)})")
 
     p1_default = run_sweep_phase(
-        "Phase 1 — asym b=2", "asymmetric", 2, sources, threads,
+        "Phase 1 — asym b=2", "asymmetric", 2, sources, query_specs, threads,
         args.queries, args.warmup, args.top_k, args.alpha, args.seed,
         blas_threads=None)
     p1_blas1 = run_sweep_phase(
-        "Phase 1 — asym b=2", "asymmetric", 2, sources, threads,
+        "Phase 1 — asym b=2", "asymmetric", 2, sources, query_specs, threads,
         args.queries, args.warmup, args.top_k, args.alpha, args.seed,
         blas_threads=1)
     p68 = run_sweep_phase(
-        "Phase 6/8 — Hamming SoA", "hamming", None, sources, threads,
-        args.queries, args.warmup, args.top_k, args.alpha, args.seed,
+        "Phase 6/8 — Hamming SoA", "hamming", None, sources, query_specs,
+        threads, args.queries, args.warmup, args.top_k, args.alpha, args.seed,
         blas_threads=None)
 
     head = None
     if not args.no_milvus:
         try:
             head = bench_head_to_head(
-                args.milvus_uri, sources, args.queries,
+                args.milvus_uri, sources, query_specs, args.queries,
                 args.top_k, args.alpha, args.workers, args.warmup, args.seed)
         except Exception as e:
             print(f"# Phase 5b skipped: {e}", file=sys.stderr)

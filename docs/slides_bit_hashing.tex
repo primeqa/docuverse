@@ -593,8 +593,8 @@ granite-311m \scriptsize(768d) & 0.607 & 0.607 & 0.607 \\
 311m (768d)                               & 11.7 & 0.81 & \textbf{\textcolor{key}{0.40}} \\
 \midrule
 \multicolumn{4}{l}{\textit{AVX2 (5955WX)}}\\
-97m  (384d)                               & 5.1  & 3.76 & \textbf{\textcolor{key}{0.11}} \\
-311m (768d)                               & 10.9 & 7.23 & \textbf{\textcolor{key}{0.17}} \\
+97m  (384d)                               & 6.8  & 2.89 & \textbf{\textcolor{key}{0.10}} \\
+311m (768d)                               & 12.0 & 8.03 & \textbf{\textcolor{key}{0.17}} \\
 \bottomrule
 \end{tabular}\\[3pt]
 {B/doc: 1-bit 48/96, $b{=}2$ 96/192, fp32 1536/3072.}
@@ -618,23 +618,23 @@ granite-311m \scriptsize(768d) & 0.607 & 0.607 & 0.607 \\
 \toprule
 Mode (dim)                  & B/doc & 9950X3D (AVX-512) & 5955WX (AVX2) & ratio \\
 \midrule
-Milvus FLAT, 384d           & 1536  & 5.0  & 5.10  & 1.0$\times$ \\
-Milvus FLAT, 768d           & 3072  & 11.7 & 10.90 & 0.9$\times$ \\
-asym $b{=}2$, 384d          & 96    & 0.43 & 3.76  & 8.7$\times$ \\
-asym $b{=}2$, 768d          & 192   & 0.81 & 7.23  & 8.9$\times$ \\
-\textbf{1-bit}, 384d        & \textbf{48} & 0.23 & \textbf{\textcolor{key}{0.11}} & \textbf{0.5$\times$} \\
+Milvus FLAT, 384d           & 1536  & 5.0  & 6.84  & 1.4$\times$ \\
+Milvus FLAT, 768d           & 3072  & 11.7 & 12.00 & 1.0$\times$ \\
+asym $b{=}2$, 384d          & 96    & 0.43 & 2.89  & 6.7$\times$ \\
+asym $b{=}2$, 768d          & 192   & 0.81 & 8.03  & 9.9$\times$ \\
+\textbf{1-bit}, 384d        & \textbf{48} & 0.23 & \textbf{\textcolor{key}{0.10}} & \textbf{0.4$\times$} \\
 \textbf{1-bit}, 768d        & \textbf{96} & 0.40 & \textbf{\textcolor{key}{0.17}} & \textbf{0.4$\times$} \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 \scriptsize
-\onslide<2->{\textbf{Milvus FLAT is ISA-blind} — memory + RPC bound; the 5955WX's 8-ch DDR4 narrowly beats 2-ch DDR5.\par}
+\onslide<2->{\textbf{Milvus FLAT is roughly ISA-agnostic} — memory + RPC bound, not FMA-throughput-bound; cross-ISA gap is within $\sim$30\%.\par}
 \onslide<3->{\textbf{Asym $b{=}2$ collapses on AVX2}: no \texttt{vpmultishiftqb} (VBMI), scalar unpack stalls FMA. Single-thread 768d: 13\,ms (AVX-512+Lever-1) vs 134\,ms (AVX2).\par}
-\onslide<4->{\textbf{1-bit is \emph{faster} on AVX2}: \texttt{popcnt}+\texttt{xor} is memory-bound, and this box has more bandwidth.\par}
+\onslide<4->{\textbf{1-bit is \emph{faster} on AVX2}: \texttt{popcnt}+\texttt{xor} is memory-bound, and the 5955WX's 8-ch DDR4 beats the 9950X3D's 2-ch DDR5.\par}
 
 \vspace{2pt}
-\onslide<5->{\small\textcolor{hi}{\textbf{Takeaway:}} asym/1-bit ratio: $\sim$2$\times$ on AVX-512, \textbf{$\sim$42$\times$ on AVX2}. \textcolor{acc}{Deployment default flips with the ISA.}}
+\onslide<5->{\small\textcolor{hi}{\textbf{Takeaway:}} asym/1-bit ratio: $\sim$2$\times$ on AVX-512, \textbf{$\sim$47$\times$ on AVX2}. \textcolor{acc}{Deployment default flips with the ISA.}}
 \end{frame}
 
 % ---------------------------------------------------------------

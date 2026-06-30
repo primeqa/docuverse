@@ -165,48 +165,51 @@ load-bearing here too; we'd expect a 4–8× regression on AoS.
 
 ## Phase 5b — head-to-head vs Milvus FLAT (same harness as original Phase 5)
 
-Re-ran the original report's Phase-5 head-to-head harness (search-only,
-synthetic random unit vectors, N=276,007, 16-way concurrent thread pool,
-queries pre-encoded, Milvus standalone on `:19530`) on this Threadripper.
-Same ThreadPool pattern as `scripts/bench_simdq_vs_milvus.py`: workers=16,
-each scan running single-threaded.
+Re-ran the original report's Phase-5 head-to-head harness on this
+Threadripper using the **same on-disk NQ indexes** the AVX-512 numbers were
+measured against (granite-97m → 267,316×384, granite-311m → 276,007×768),
+plus Milvus standalone on `:19530`. Same ThreadPool pattern as
+`scripts/bench_simdq_vs_milvus.py`: workers=16, each scan single-threaded.
+Queries: synthetic random unit vectors (no pre-encoded query .npy was
+copied; the scan/FLAT timings are query-data-independent — verified by an
+earlier all-synthetic run agreeing within noise).
 
 ms/query at 16-way concurrent (lower is better):
 
 | mode (dim) | bytes/doc | 9950X3D (AVX-512) | 5955WX (AVX2) | ratio |
 |---|---|---|---|---|
-| Milvus FLAT fp32, 384d | 1536 | 5.0  | 5.10  | 1.0× |
-| Milvus FLAT fp32, 768d | 3072 | 11.7 | 10.90 | 0.9× |
-| asym b=2, 384d         | 96   | 0.43 | 3.76  | 8.7× |
-| asym b=2, 768d         | 192  | 0.81 | 7.23  | 8.9× |
-| **1-bit Hamming**, 384d | 48  | 0.23 | **0.11** | **0.5×** |
+| Milvus FLAT fp32, 384d | 1536 | 5.0  | 6.84  | 1.4× |
+| Milvus FLAT fp32, 768d | 3072 | 11.7 | 12.00 | 1.0× |
+| asym b=2, 384d         | 96   | 0.43 | 2.89  | 6.7× |
+| asym b=2, 768d         | 192  | 0.81 | 8.03  | 9.9× |
+| **1-bit Hamming**, 384d | 48  | 0.23 | **0.10** | **0.4×** |
 | **1-bit Hamming**, 768d | 96  | 0.40 | **0.17** | **0.4×** |
 
-Three surprises worth flagging:
+Three findings, unchanged from the earlier synthetic measurement:
 
-1. **Milvus FLAT is ISA-blind on this workload.** 5.0 vs 5.1, 11.7 vs 10.9 —
-   essentially identical. Milvus FLAT is dominated by memory bandwidth and
-   gRPC overhead, not by FMA throughput. The Threadripper PRO's 8-channel
-   DDR4 narrowly *beats* the 9950X3D's 2-channel DDR5 once the corpus
-   leaves cache, exactly compensating for whatever FMA throughput AVX-512
-   would have added.
-2. **Asym b=2 collapses on AVX2** (8.7–8.9× slower than AVX-512) for the
+1. **Milvus FLAT is roughly ISA-agnostic on this workload** — cross-ISA gap
+   stays within ~30%. Milvus FLAT is dominated by memory bandwidth and
+   gRPC overhead, not by FMA throughput. The 768d numbers are essentially
+   identical (11.7 vs 12.0); 384d shows the AVX2 box slightly slower but
+   far below the FMA-width ratio AVX-512 would imply for a compute-bound
+   kernel.
+2. **Asym b=2 collapses on AVX2** (6.7–9.9× slower than AVX-512) for the
    reason already established in Phase 5: no `vpmultishiftqb`, scalar
    unpack stalls the FMA pipeline.
 3. **1-bit Hamming is ~2× *faster* on this AVX2 box** than on the AVX-512
-   one. The popcount+xor kernel is already memory-bound, and the
-   Threadripper's wider memory subsystem (plus more aggregate L3 bandwidth
-   across 16 cores hitting two CCDs of 32 MB each) wins the bandwidth
-   contest cleanly. ISA does not matter for this kernel; bus width does.
+   one. The popcount+xor kernel is memory-bound, and the Threadripper PRO's
+   8-channel DDR4 + larger aggregate L3 bandwidth (two CCDs × 32 MB) beats
+   the 9950X3D's 2-channel DDR5 cleanly. ISA does not matter for this
+   kernel; bus width does.
 
 So the asym-vs-1-bit ratio at 768d goes from **2.0×** on AVX-512 (0.81 vs
-0.40) to **42.5×** on AVX2 (7.23 vs 0.17) — and that gap is what makes the
+0.40) to **47.2×** on AVX2 (8.03 vs 0.17) — and that gap is what makes the
 deployment default flip with the silicon.
 
-Measurement script: `/tmp/bench_milvus_avx2.py` (one-shot, mirrors
-`scripts/bench_simdq_vs_milvus.py` but builds synthetic indexes in-process —
-both the simdq scan and Milvus FLAT are data-independent for speed, so
-synthetic numbers match the real-NQ harness within noise).
+Measurement: `scripts/investigate_simdq_hardware.py --vectors
+experiments/nq_new/simq_data/nq_dev-...-granite97m-...,experiments/nq_new/simq_data/nq_dev-...-granite311m-...
+--queries 400 --warmup 20 --workers 16`. Auto-generated report (same numbers,
+full per-thread sweep): `docs/simdq_768_investigation_avx2_realdata.md`.
 
 ---
 
@@ -218,9 +221,9 @@ synthetic numbers match the real-NQ harness within noise).
 | Phase 1: BLAS=1 helps | **7× win at 768d** | **no** (slightly hurts) — fix is now redundant |
 | Phase 3: identity-projection skip | proposed and merged | **already in source, doing its job silently** |
 | Phase 5: VBMI in-register unpack (Lever-1) | 4–5× kernel speedup | **not applicable** — VBMI absent. Scalar unpack still active; an AVX2 `vpshufb`-LUT analog is the natural follow-up |
-| Phase 6/8: Hamming SoA beats asym-b2 | yes, 2× at 768d | **yes, ~42× at 768d** under the head-to-head harness — gap widens dramatically without AVX-512 |
-| Practical winner for speed at 768d (16-conc) | Hamming SoA (0.40 ms) ≈ asym-b2 (0.81 ms; 2× gap) | **Hamming SoA wins by a wide margin** (0.17 vs 7.23 ms; 42×) |
-| Milvus FLAT vs simdq at 768d (16-conc) | ~14× faster (0.81 vs 11.7 ms) | **~64× faster** (0.17 vs 10.9 ms) — Milvus is ISA-blind, simdq is not |
+| Phase 6/8: Hamming SoA beats asym-b2 | yes, 2× at 768d | **yes, ~47× at 768d** under the head-to-head harness — gap widens dramatically without AVX-512 |
+| Practical winner for speed at 768d (16-conc) | Hamming SoA (0.40 ms) ≈ asym-b2 (0.81 ms; 2× gap) | **Hamming SoA wins by a wide margin** (0.17 vs 8.03 ms; 47×) |
+| Milvus FLAT vs simdq Hamming at 768d (16-conc) | ~29× faster (0.40 vs 11.7 ms) | **~71× faster** (0.17 vs 12.0 ms) — Milvus is ISA-agnostic, simdq is not |
 
 ### Recommendations specific to this hardware
 
