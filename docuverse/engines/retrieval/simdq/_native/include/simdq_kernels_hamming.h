@@ -16,7 +16,11 @@
 
 
 #include "simdq_common.h"
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
 #include <immintrin.h>
+#elif defined(__aarch64__) || defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 #if defined(__AVX512VPOPCNTDQ__)
 #define KERNEL_NAME "AVX512-VPOPCNTDQ"
@@ -193,6 +197,109 @@ static inline void scan_shard(const uint64_t *dbT, size_t n, size_t words,
     for (int j = 0; j < NQ; j++) {
         for (int l = 0; l < LANES; l++)
             if (bd[j][l] < best_d[j]) { best_d[j] = bd[j][l]; best_i[j] = bi[j][l]; }
+        for (size_t k = i; k < i1; k++) {                     // tail
+            int h = hamming_soa(dbT, n, words, k, qs + j * words);
+            if (h < best_d[j]) { best_d[j] = h; best_i[j] = (int64_t)k; }
+        }
+    }
+}
+
+#elif defined(__aarch64__) || defined(__ARM_NEON)
+#define KERNEL_NAME "NEON-vcnt"
+#define LANES 2   // codes per iteration (128-bit = 2 x u64)
+
+/*
+ * Per-lane popcount of a uint64x2. NEON has native single-cycle vcntq_u8
+ * for byte popcount; the pairwise-widening-add chain
+ * (vpaddlq_u8 -> u16, vpaddlq_u16 -> u32, vpaddlq_u32 -> u64) reduces the
+ * 16 byte counts to a per-u64-lane sum.
+ */
+static inline uint64x2_t popcnt_u64x2(uint64x2_t x) {
+    uint8x16_t cnts = vcntq_u8(vreinterpretq_u8_u64(x));
+    return vpaddlq_u32(vpaddlq_u16(vpaddlq_u8(cnts)));
+}
+
+/*
+ * Reduces 2 (distance, index) lane pairs to the scalar minimum. Same
+ * semantics as min_lanes8 above but for the 2-lane NEON accumulator:
+ * strict less-than keeps the lower lane on ties (so lane 0 wins when
+ * distances tie).
+ */
+static inline void min_lanes2(uint64x2_t vd, uint64x2_t vi,
+                              int64_t *best_d, int64_t *best_i) {
+    uint64_t d2[2], i2[2];
+    vst1q_u64(d2, vd);
+    vst1q_u64(i2, vi);
+    *best_d = INT64_MAX; *best_i = 0;
+    if ((int64_t)d2[0] < *best_d) { *best_d = (int64_t)d2[0]; *best_i = (int64_t)i2[0]; }
+    if ((int64_t)d2[1] < *best_d) { *best_d = (int64_t)d2[1]; *best_i = (int64_t)i2[1]; }
+}
+
+static inline size_t scan_soa512(const uint64_t *dbT, size_t n, size_t words,
+                                 const uint64_t *q) {
+    uint64x2_t bestd = vdupq_n_u64((uint64_t)INT64_MAX);
+    uint64x2_t besti = vdupq_n_u64(0);
+    const uint64_t idx_init[2] = {0, 1};
+    uint64x2_t idx = vld1q_u64(idx_init);
+    const uint64x2_t step = vdupq_n_u64(LANES);
+    for (size_t i = 0; i + LANES <= n; i += LANES) {
+        uint64x2_t acc = vdupq_n_u64(0);
+        for (size_t w = 0; w < words; w++) {
+            uint64x2_t d = vld1q_u64(dbT + w * n + i);
+            uint64x2_t x = veorq_u64(d, vdupq_n_u64(q[w]));
+            acc = vaddq_u64(acc, popcnt_u64x2(x));
+        }
+        uint64x2_t lt = vcltq_u64(acc, bestd);
+        bestd = vbslq_u64(lt, acc, bestd);
+        besti = vbslq_u64(lt, idx, besti);
+        idx = vaddq_u64(idx, step);
+    }
+    int64_t best, bi;
+    min_lanes2(bestd, besti, &best, &bi);
+    for (size_t k = n & ~(size_t)(LANES - 1); k < n; k++) {   // tail
+        int h = hamming_soa(dbT, n, words, k, q);
+        if (h < best) { best = h; bi = (int64_t)k; }
+    }
+    return (size_t)bi;
+}
+
+/*
+ * Batched NEON scan of codes [i0, i1) for NQ queries at once. Each 128-bit
+ * database load is reused for all NQ queries (1 load -> NQ XOR+popcounts),
+ * matching the AVX-512/AVX2 batched contract. Writes best distance and
+ * index per query to best_d / best_i.
+ */
+static inline void scan_shard(const uint64_t *dbT, size_t n, size_t words,
+                              size_t i0, size_t i1,
+                              const uint64_t *qs,
+                              int64_t best_d[NQ], int64_t best_i[NQ]) {
+    uint64x2_t bd[NQ], bi[NQ];
+    for (int j = 0; j < NQ; j++) {
+        bd[j] = vdupq_n_u64((uint64_t)INT64_MAX);
+        bi[j] = vdupq_n_u64(0);
+    }
+    const uint64_t idx_init[2] = {(uint64_t)i0, (uint64_t)i0 + 1};
+    uint64x2_t idx = vld1q_u64(idx_init);
+    const uint64x2_t step = vdupq_n_u64(LANES);
+    size_t i = i0;
+    for (; i + LANES <= i1; i += LANES) {
+        uint64x2_t acc[NQ];
+        for (int j = 0; j < NQ; j++) acc[j] = vdupq_n_u64(0);
+        for (size_t w = 0; w < words; w++) {
+            uint64x2_t d = vld1q_u64(dbT + w * n + i);          // one load,
+            for (int j = 0; j < NQ; j++)                        // NQ uses
+                acc[j] = vaddq_u64(acc[j],
+                         popcnt_u64x2(veorq_u64(d, vdupq_n_u64(qs[j * words + w]))));
+        }
+        for (int j = 0; j < NQ; j++) {
+            uint64x2_t lt = vcltq_u64(acc[j], bd[j]);
+            bd[j] = vbslq_u64(lt, acc[j], bd[j]);
+            bi[j] = vbslq_u64(lt, idx, bi[j]);
+        }
+        idx = vaddq_u64(idx, step);
+    }
+    for (int j = 0; j < NQ; j++) {
+        min_lanes2(bd[j], bi[j], &best_d[j], &best_i[j]);
         for (size_t k = i; k < i1; k++) {                     // tail
             int h = hamming_soa(dbT, n, words, k, qs + j * words);
             if (h < best_d[j]) { best_d[j] = h; best_i[j] = (int64_t)k; }

@@ -12,7 +12,11 @@
 
 #include "simdq_topk.h"
 #include <assert.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
 #include <immintrin.h>
+#elif defined(__aarch64__) || defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 #include <math.h>
 #include <stdint.h>
 
@@ -150,6 +154,94 @@ static inline void scan_asym_b1_shard_topk(const uint8_t *codes, size_t N, size_
         }
         float sc[8] __attribute__((aligned(32)));
         _mm256_store_ps(sc, acc);
+        int64_t thr = simdq_topk_threshold(&heap);
+        for (int l = 0; l < ASYM_B1_LANES; l++) {
+            int64_t neg = -(int64_t)(sc[l] * (float)(1 << 20));
+            if (neg < thr) {
+                simdq_topk_offer(&heap, neg, (int64_t)(ii + l));
+                thr = simdq_topk_threshold(&heap);
+            }
+        }
+    }
+    size_t i = i1 - ((i1 - i0) % ASYM_B1_LANES);
+    for (; i < i1; i++) {
+        float s = 0.0f;
+        for (size_t w = 0; w < d; w++) {
+            int8_t v = (codes[w * row_bytes + (i >> 3)] & (1u << (i & 7))) ? 1 : -1;
+            s += q[w] * (float)v;
+        }
+        int64_t neg = -(int64_t)(s * (float)(1 << 20));
+        if (neg < simdq_topk_threshold(&heap))
+            simdq_topk_offer(&heap, neg, (int64_t)i);
+    }
+    int64_t ks[256], is[256];
+    int n = simdq_topk_extract_sorted(&heap, ks, is);
+    for (int r = 0; r < n; r++) {
+        out_s[r] = -(float)ks[r] / (float)(1 << 20);
+        out_i[r] = is[r];
+    }
+}
+
+static inline void scan_asym_b1_topk(const uint8_t *codes, size_t N, size_t d,
+                                     const float *q, int K,
+                                     float *out_s, int64_t *out_i) {
+    scan_asym_b1_shard_topk(codes, N, d, 0, N, q, K, out_s, out_i);
+}
+
+#elif defined(__aarch64__) || defined(__ARM_NEON)
+#define ASYM_B1_KERNEL_NAME "NEON"
+#define ASYM_B1_LANES 8
+
+/*
+ * NEON port. Matches AVX2 lane count (8 codes/block, one byte/dim) using
+ * two float32x4_t accumulators. Bit expansion mirrors the AVX2 trick:
+ * broadcast the byte to 8 u8 lanes, AND against per-lane single-bit masks,
+ * cmpeq-with-zero to get 0xFF-where-clear, sign-extend to 32-bit per lane,
+ * and vbslq_f32-select -1.0 (clear) vs +1.0 (set).
+ *
+ * N stays (needed for row_bytes = (N + 7) / 8, the dim-stride).
+ * d is the number of dimensions.
+ * i0/i1 define the code range to scan.
+ */
+static inline void scan_asym_b1_shard_topk(const uint8_t *codes, size_t N, size_t d,
+                                           size_t i0, size_t i1,
+                                           const float *q, int K,
+                                           float *out_s, int64_t *out_i) {
+    assert(K > 0 && K <= 256);
+    const size_t row_bytes = (N + 7) / 8;
+    int64_t hkeys[256], hidxs[256];
+    simdq_topk_t heap;
+    simdq_topk_init(&heap, K, hkeys, hidxs);
+
+    static const uint8_t lane_mask_data[8] = {1, 2, 4, 8, 16, 32, 64, 128};
+    const uint8x8_t lane_mask = vld1_u8(lane_mask_data);
+    const float32x4_t pos1 = vdupq_n_f32( 1.0f);
+    const float32x4_t neg1 = vdupq_n_f32(-1.0f);
+
+    for (size_t ii = i0; ii + ASYM_B1_LANES <= i1; ii += ASYM_B1_LANES) {
+        float32x4_t acc0 = vdupq_n_f32(0.0f);
+        float32x4_t acc1 = vdupq_n_f32(0.0f);
+        for (size_t w = 0; w < d; w++) {
+            uint8_t bits = codes[w * row_bytes + (ii >> 3)];
+            uint8x8_t bbroad = vdup_n_u8(bits);
+            uint8x8_t isset  = vand_u8(bbroad, lane_mask);
+            // 0xFF where bit is CLEAR, 0x00 where SET (cmpeq-zero is sign-agnostic).
+            uint8x8_t clear8 = vceq_u8(isset, vdup_n_u8(0));
+            // Sign-extend byte mask to int16, then int32, preserving 0xFF -> 0xFFFFFFFF.
+            int16x8_t clear16 = vmovl_s8(vreinterpret_s8_u8(clear8));
+            uint32x4_t clear_lo = vreinterpretq_u32_s32(vmovl_s16(vget_low_s16(clear16)));
+            uint32x4_t clear_hi = vreinterpretq_u32_s32(vmovl_s16(vget_high_s16(clear16)));
+            // vbslq_f32(mask, a, b): (mask & a) | (~mask & b).
+            // clear lane (mask=all-ones) -> pick a=neg1; set lane (mask=0) -> pick b=pos1.
+            float32x4_t v_lo = vbslq_f32(clear_lo, neg1, pos1);
+            float32x4_t v_hi = vbslq_f32(clear_hi, neg1, pos1);
+            float32x4_t qb = vdupq_n_f32(q[w]);
+            acc0 = vfmaq_f32(acc0, qb, v_lo);
+            acc1 = vfmaq_f32(acc1, qb, v_hi);
+        }
+        float sc[8] __attribute__((aligned(16)));
+        vst1q_f32(sc, acc0);
+        vst1q_f32(sc + 4, acc1);
         int64_t thr = simdq_topk_threshold(&heap);
         for (int l = 0; l < ASYM_B1_LANES; l++) {
             int64_t neg = -(int64_t)(sc[l] * (float)(1 << 20));

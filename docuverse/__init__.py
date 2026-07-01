@@ -7,6 +7,31 @@ is materialized on first access via :pep:`562` ``__getattr__``.
 """
 from __future__ import annotations
 
+# macOS OpenMP-runtime preload. torch, sklearn, and faiss each bundle their
+# own libomp.dylib; the simdq C extension (_simdq_native) links against the
+# Homebrew libomp. If any of those torch/sklearn/faiss copies loads first,
+# the simdq extension's OpenMP regions segfault in a way that's not
+# recoverable without a process restart. Preloading Homebrew's libomp with
+# RTLD_GLOBAL at package init is the only reliable order-independent fix.
+# Silent no-op if the file is missing (Linux, unbrewed macOS installs).
+import os as _os
+import sys as _sys
+
+if _sys.platform == "darwin":
+    import ctypes as _ctypes
+    for _libomp in (
+        "/opt/homebrew/opt/libomp/lib/libomp.dylib",
+        "/usr/local/opt/libomp/lib/libomp.dylib",
+    ):
+        if _os.path.exists(_libomp):
+            try:
+                _ctypes.CDLL(_libomp, mode=_ctypes.RTLD_GLOBAL)
+            except OSError:
+                pass
+            break
+    del _ctypes
+del _os, _sys
+
 # Cheap re-exports stay eager (no heavy deps).
 from .presets import list_presets, load_preset
 

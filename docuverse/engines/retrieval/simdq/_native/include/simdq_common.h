@@ -11,7 +11,19 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <time.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
 #include <nmmintrin.h>
+#endif
+
+/*
+ * Portable 64-bit popcount. On x86 with -mpopcnt/-march=native this compiles
+ * to the single-cycle SSE4.2 POPCNT instruction; on aarch64 clang lowers it
+ * to a NEON CNT + horizontal reduction (also single-issue). Either way
+ * matches the "hardware popcount" contract the callers assume.
+ */
+static inline int simdq_popcount64(uint64_t x) {
+    return __builtin_popcountll((unsigned long long)x);
+}
 
 #ifndef NQ
 #define NQ 8      // queries per batch (batched kernels; override with -DNQ=...)
@@ -75,14 +87,14 @@ static inline int hamming_soa(const uint64_t *dbT, size_t n, size_t words,
                               size_t k, const uint64_t *q) {
     int h = 0;
     for (size_t w = 0; w < words; w++)
-        h += (int)_mm_popcnt_u64(q[w] ^ dbT[w * n + k]);
+        h += (int)simdq_popcount64(q[w] ^ dbT[w * n + k]);
     return h;
 }
 
 /*
  * Baseline kernel: scalar linear scan of an AoS database. For each code,
  * XORs the `words` word pairs with the query and sums hardware popcounts
- * (_mm_popcnt_u64, the single-cycle SSE4.2 POPCNT instruction):
+ * (simdq_popcount64, the single-cycle SSE4.2 POPCNT instruction):
  *   h = sum_w popcnt(q[w] ^ d[w])
  * Returns the index of the code with the smallest distance (top-1).
  */
@@ -93,7 +105,7 @@ static inline size_t scan_scalar_aos(const uint64_t *db, size_t n, size_t words,
         const uint64_t *d = db + i * words;
         int h = 0;
         for (size_t w = 0; w < words; w++)
-            h += (int)_mm_popcnt_u64(q[w] ^ d[w]);
+            h += (int)simdq_popcount64(q[w] ^ d[w]);
         if (h < best) { best = h; bi = i; }
     }
     return bi;
