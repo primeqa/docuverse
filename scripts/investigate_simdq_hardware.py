@@ -249,6 +249,10 @@ def _conc_ms_per_q(call, qs, workers: int) -> float:
 def sweep_one(family, b, vecs, qs_pool, threads, warmup, queries, K, alpha):
     """Median ms/query at each thread count for one (family, b, source).
 
+    Returns {"rescore": {t: ms}, "no_rescore": {t: ms}}. The same built index
+    is reused for both — passing K_prime == K short-circuits the fp32
+    rescore block (see _search_hamming / _search_asym in simdq_index.py).
+
     vecs: (N, D) corpus, contiguous float32.
     qs_pool: (warmup + queries, D) query batch, the same one reused across t.
     """
@@ -257,15 +261,19 @@ def sweep_one(family, b, vecs, qs_pool, threads, warmup, queries, K, alpha):
         vecs, family=family, b=b, d=None,
         projection="identity", store_floats=True,
     )
-    K_prime = max(K, min(K * alpha, 256))
-    out: dict[int, float] = {}
+    K_prime_re = max(K, min(K * alpha, 256))
+    K_prime_no = K
+    out: dict[str, dict[int, float]] = {"rescore": {}, "no_rescore": {}}
     for t in threads:
-        for i in range(warmup):
-            idx.search(qs_pool[i], K=K, K_prime=K_prime, num_threads=t)
-        out[t] = _median_serial(
-            lambda q: idx.search(q, K=K, K_prime=K_prime, num_threads=t),
-            qs_pool[warmup:warmup + queries],
-        )
+        for mode, K_prime in (("rescore", K_prime_re),
+                              ("no_rescore", K_prime_no)):
+            for i in range(warmup):
+                idx.search(qs_pool[i], K=K, K_prime=K_prime, num_threads=t)
+            out[mode][t] = _median_serial(
+                lambda q, kp=K_prime, tt=t: idx.search(
+                    q, K=K, K_prime=kp, num_threads=tt),
+                qs_pool[warmup:warmup + queries],
+            )
     return out
 
 
@@ -282,7 +290,7 @@ def run_sweep_phase(label, family, b, sources, query_specs, threads, queries,
     ctx = (threadpool_limits(limits=blas_threads, user_api="blas")
            if blas_threads is not None else _NullCtx())
     rng = np.random.default_rng(seed)
-    rows: list[tuple[str, int, dict[int, float]]] = []
+    rows: list[tuple[str, int, dict[str, dict[int, float]]]] = []
     with ctx:
         for (src_label, vecs), q_spec in zip(sources, query_specs):
             D = int(vecs.shape[1])
@@ -290,10 +298,12 @@ def run_sweep_phase(label, family, b, sources, query_specs, threads, queries,
             out = sweep_one(family, b, vecs, qs_pool, threads,
                             warmup, queries, K, alpha)
             rows.append((src_label, D, out))
-            cells = "  ".join(f"t={t if t else 'all':>3}={out[t]:7.3f}"
-                              for t in threads)
             qtag = "real" if q_spec else "synth"
-            print(f"  {src_label:<28s} (D={D:4d}, q={qtag})  {cells}")
+            for mode in ("rescore", "no_rescore"):
+                cells = "  ".join(f"t={t if t else 'all':>3}={out[mode][t]:7.3f}"
+                                  for t in threads)
+                tag = "rescore   " if mode == "rescore" else "no-rescore"
+                print(f"  {src_label:<28s} (D={D:4d}, q={qtag}, {tag})  {cells}")
     return rows
 
 
@@ -320,7 +330,8 @@ def bench_head_to_head(uri, sources, query_specs, queries, K, alpha,
 
     print(f"\n## Phase 5b — head-to-head vs Milvus FLAT  "
           f"(uri={uri}, workers={workers})")
-    K_prime = max(K, min(K * alpha, 256))
+    K_prime_re = max(K, min(K * alpha, 256))
+    K_prime_no = K
     rng = np.random.default_rng(seed)
     cli = MilvusClient(uri=uri)
     out: list[dict] = []
@@ -356,32 +367,38 @@ def bench_head_to_head(uri, sources, query_specs, queries, K, alpha,
         finally:
             cli.drop_collection(coll)
 
+        def _time_variant(idx, kp):
+            for i in range(warmup):
+                idx.search(qs_pool[i], K=K, K_prime=kp, num_threads=1)
+            return _conc_ms_per_q(
+                lambda q: idx.search(q, K=K, K_prime=kp, num_threads=1),
+                qs, workers)
+
         # --- simdq b=2 ---
         idx2 = SimdqIndex.build(vecs, family="asymmetric", b=2, d=None,
                                 projection="identity", store_floats=True)
-        for i in range(warmup):
-            idx2.search(qs_pool[i], K=K, K_prime=K_prime, num_threads=1)
-        s2_cc = _conc_ms_per_q(
-            lambda q: idx2.search(q, K=K, K_prime=K_prime, num_threads=1),
-            qs, workers)
+        s2_cc    = _time_variant(idx2, K_prime_re)
+        s2_no_cc = _time_variant(idx2, K_prime_no)
 
         # --- simdq Hamming ---
         idxh = SimdqIndex.build(vecs, family="hamming", b=None, d=None,
                                 projection="identity", store_floats=True)
-        for i in range(warmup):
-            idxh.search(qs_pool[i], K=K, K_prime=K_prime, num_threads=1)
-        sh_cc = _conc_ms_per_q(
-            lambda q: idxh.search(q, K=K, K_prime=K_prime, num_threads=1),
-            qs, workers)
+        sh_cc    = _time_variant(idxh, K_prime_re)
+        sh_no_cc = _time_variant(idxh, K_prime_no)
 
         row = {"label": src_label, "D": D, "N": N,
                "queries": ("real" if q_spec else "synth"),
-               "milvus": m_cc, "asym_b2": s2_cc, "hamming": sh_cc}
+               "milvus": m_cc,
+               "asym_b2": s2_cc, "asym_b2_no_rescore": s2_no_cc,
+               "hamming": sh_cc, "hamming_no_rescore": sh_no_cc}
         out.append(row)
         qtag = "real" if q_spec else "synth"
         print(f"  {src_label:<28s} (D={D:4d},N={N},q={qtag})  "
-              f"Milvus={m_cc:6.2f}  b=2={s2_cc:6.2f}  "
-              f"1-bit={sh_cc:6.2f}  (b=2/1-bit ratio {s2_cc/sh_cc:5.1f}x)")
+              f"Milvus={m_cc:6.2f}  "
+              f"b=2 re/no={s2_cc:6.2f}/{s2_no_cc:6.2f}  "
+              f"1-bit re/no={sh_cc:6.2f}/{sh_no_cc:6.2f}  "
+              f"(re b=2/1-bit {s2_cc/sh_cc:4.1f}x, "
+              f"no b=2/1-bit {s2_no_cc/sh_no_cc:4.1f}x)")
     return out
 
 
@@ -421,53 +438,77 @@ def write_report(report_path, isa, p1_default, p1_blas1, p68, head, params):
     A(f"- Python: {platform.python_version()}, numpy: {np.__version__}")
     A("")
 
-    def _sweep_md_table(rows, threads):
+    def _sweep_md_table(rows, threads, mode):
         hdr = "| source | dim | " + " | ".join(
             f"t={t if t else 'all'}" for t in threads) + " |"
         sep = "|---" * (len(threads) + 2) + "|"
         body = []
-        for label, D, out in rows:
-            cells = " | ".join(f"{out[t]:.2f}" for t in threads)
-            body.append(f"| {label} | {D} | {cells} |")
+        for src_label, D, out in rows:
+            cells = " | ".join(f"{out[mode][t]:.2f}" for t in threads)
+            body.append(f"| {src_label} | {D} | {cells} |")
         return "\n".join([hdr, sep] + body)
+
+    def _sweep_md_pair(rows, threads):
+        return (
+            "**With fp32 rescore** (`K'=" + str(params["K_prime"]) + "`, "
+            "gather + `cand_floats @ q_proj` + argsort):\n\n"
+            + _sweep_md_table(rows, threads, "rescore") + "\n\n"
+            + "**No rescore** (`K'=K=" + str(params["K"]) + "`, codes-only "
+            "ranking — Hamming distance / b=2 scaled scores):\n\n"
+            + _sweep_md_table(rows, threads, "no_rescore")
+        )
 
     A("## Phase 1 — asymmetric b=2 dim × thread sweep")
     A("")
-    A("Median ms/query for `SimdqIndex.search` (projection + native scan + "
-      "fp32 rescore). Identity projection, so the Phase-3 fix means there's "
-      "no `W@q` to oversubscribe BLAS.")
+    A("Median ms/query for `SimdqIndex.search`. Each source is timed twice on "
+      "the same built index: once with the fp32 rescore stage (gather from "
+      "`floats_mmap`, then `cand_floats @ q_proj`, then argsort of `K'` "
+      "candidates), and once with `K'=K` which short-circuits the rescore "
+      "block (see `_search_asym` in `simdq_index.py`). Identity projection, so "
+      "the Phase-3 fix means there's no `W@q` to oversubscribe BLAS.")
     A("")
     A("### Default BLAS")
     A("")
-    A(_sweep_md_table(p1_default, params["threads"]))
+    A(_sweep_md_pair(p1_default, params["threads"]))
     A("")
     A("### `OPENBLAS_NUM_THREADS=1` (via `threadpool_limits`)")
     A("")
-    A(_sweep_md_table(p1_blas1, params["threads"]))
+    A(_sweep_md_pair(p1_blas1, params["threads"]))
     A("")
     A("> On hardware where the Phase-3 identity-skip is active, BLAS=1 "
       "should change ~nothing. If it does change a lot, an unintended "
-      "GEMV is still firing per query.")
+      "GEMV is still firing per query. The rescore vs no-rescore gap "
+      "isolates the cost of the fp32 rerank stage on top of the native "
+      "scan.")
     A("")
     A("## Phase 6/8 — Hamming SoA dim × thread sweep")
     A("")
-    A(_sweep_md_table(p68, params["threads"]))
+    A(_sweep_md_pair(p68, params["threads"]))
     A("")
 
     if head:
         A("## Phase 5b — head-to-head vs Milvus FLAT (16-way concurrent)")
         A("")
-        A("| source | dim | N | queries | Milvus FLAT | simdq b=2 | simdq 1-bit | b=2/1-bit |")
-        A("|---|---|---|---|---|---|---|---|")
+        A("Each simdq entry is `rescore / no-rescore` ms/query — the same "
+          "built index, timed twice (K'=" + str(params["K_prime"]) +
+          " vs K'=" + str(params["K"]) + ").")
+        A("")
+        A("| source | dim | N | queries | Milvus FLAT | simdq b=2 (re / no) | "
+          "simdq 1-bit (re / no) | b=2/1-bit (re) | b=2/1-bit (no) |")
+        A("|---|---|---|---|---|---|---|---|---|")
         for row in head:
             A(f"| {row['label']} | {row['D']} | {row['N']} | "
               f"{row.get('queries', 'synth')} | "
-              f"{row['milvus']:.2f} | {row['asym_b2']:.2f} | "
-              f"{row['hamming']:.2f} | "
-              f"{row['asym_b2']/row['hamming']:.1f}× |")
+              f"{row['milvus']:.2f} | "
+              f"{row['asym_b2']:.2f} / {row['asym_b2_no_rescore']:.2f} | "
+              f"{row['hamming']:.2f} / {row['hamming_no_rescore']:.2f} | "
+              f"{row['asym_b2']/row['hamming']:.1f}× | "
+              f"{row['asym_b2_no_rescore']/row['hamming_no_rescore']:.1f}× |")
         A("")
         A("ms/query, 16 query workers, each scan single-threaded (matches "
-          "`scripts/bench_simdq_vs_milvus.py`).")
+          "`scripts/bench_simdq_vs_milvus.py`). The `no` column removes the "
+          "fp32 rerank stage — codes-only ranking, so scores are approximate "
+          "but the scan cost is isolated.")
         A("")
     else:
         A("## Phase 5b — head-to-head vs Milvus FLAT")
