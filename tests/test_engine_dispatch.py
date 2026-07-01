@@ -64,8 +64,12 @@ def test_known_db_engine_dispatches(name):
     Three acceptable outcomes (all mean dispatch worked):
       1. Engine instantiated (optional dep installed + stub config sufficient).
       2. ``ImportError`` (optional dep missing — the dispatcher saw the name).
-      3. ``TypeError`` / ``AttributeError`` from the engine constructor
-         choking on our minimal stub config (it still got *to* the engine).
+      3. ``TypeError`` / ``AttributeError`` / ``KeyError`` / ``OSError`` from
+         the engine constructor choking on our minimal stub config (it still
+         got *to* the engine). ``OSError`` covers the lancedb-sparse path
+         where the sparse embedder tries to load a HuggingFace model from
+         the empty ``model_name`` in the stub and transformers re-raises
+         ``HFValidationError`` as ``OSError``.
 
     What must NOT happen: the dispatcher returning ``None`` (unknown name)
     or raising ``NotImplementedError`` ("Unknown engine type:").
@@ -75,7 +79,7 @@ def test_known_db_engine_dispatches(name):
         engine = retrievers.create_retrieval_engine(cfg)
     except ImportError:
         return  # optional dep missing → dispatch reached the right branch
-    except (TypeError, AttributeError, KeyError):
+    except (TypeError, AttributeError, KeyError, OSError):
         return  # engine constructor needed more config → dispatch was correct
     except RuntimeError as e:
         # Several engine modules re-raise their ImportError as RuntimeError
