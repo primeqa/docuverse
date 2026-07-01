@@ -7,7 +7,11 @@
 
 #include "simdq_topk.h"
 #include <assert.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
 #include <immintrin.h>
+#elif defined(__aarch64__) || defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 #include <math.h>
 #include <stdint.h>
 
@@ -137,6 +141,83 @@ static inline void scan_asym_b4_shard_topk(const uint8_t *codes, size_t N, size_
         }
         float sc[8] __attribute__((aligned(32)));
         _mm256_store_ps(sc, acc);
+        int64_t thr = simdq_topk_threshold(&heap);
+        for (int l = 0; l < ASYM_B4_LANES; l++) {
+            int64_t neg = -(int64_t)(sc[l] * (float)(1 << 20));
+            if (neg < thr) {
+                simdq_topk_offer(&heap, neg, (int64_t)(ii + l));
+                thr = simdq_topk_threshold(&heap);
+            }
+        }
+    }
+    size_t i = i1 - ((i1 - i0) % ASYM_B4_LANES);
+    for (; i < i1; i++) {
+        float s = 0.0f;
+        for (size_t w = 0; w < d; w++) {
+            uint8_t byte = codes[w * row_bytes + (i >> 1)];
+            int8_t v = (int8_t)(2 * (int)((byte >> ((i & 1) * 4)) & 0xF) - 15);
+            s += q[w] * (float)v;
+        }
+        int64_t neg = -(int64_t)(s * (float)(1 << 20));
+        if (neg < simdq_topk_threshold(&heap))
+            simdq_topk_offer(&heap, neg, (int64_t)i);
+    }
+    int64_t ks[256], is[256];
+    int n = simdq_topk_extract_sorted(&heap, ks, is);
+    for (int r = 0; r < n; r++) {
+        out_s[r] = -(float)ks[r] / (float)(1 << 20);
+        out_i[r] = is[r];
+    }
+}
+
+static inline void scan_asym_b4_topk(const uint8_t *codes, size_t N, size_t d,
+                                     const float *q, int K,
+                                     float *out_s, int64_t *out_i) {
+    scan_asym_b4_shard_topk(codes, N, d, 0, N, q, K, out_s, out_i);
+}
+
+#elif defined(__aarch64__) || defined(__ARM_NEON)
+#define ASYM_B4_KERNEL_NAME "NEON"
+#define ASYM_B4_LANES 8
+
+/*
+ * NEON port. Matches the AVX2 layout: 8-code blocks, one packed uint32 per
+ * dim holds all 8 codes, unpack scalar to a small float buffer, then load
+ * into two float32x4_t accumulators and FMA against a broadcast query lane.
+ *
+ * N stays (needed for row_bytes = (N + 1) / 2, the dim-stride).
+ * d is the number of dimensions (inner-loop bound; replaces compile-time D).
+ * i0/i1 define the code range to scan.
+ */
+static inline void scan_asym_b4_shard_topk(const uint8_t *codes, size_t N, size_t d,
+                                           size_t i0, size_t i1,
+                                           const float *q, int K,
+                                           float *out_s, int64_t *out_i) {
+    assert(K > 0 && K <= 256);
+    const size_t row_bytes = (N + 1) / 2;
+    int64_t hkeys[256], hidxs[256];
+    simdq_topk_t heap;
+    simdq_topk_init(&heap, K, hkeys, hidxs);
+
+    for (size_t ii = i0; ii + ASYM_B4_LANES <= i1; ii += ASYM_B4_LANES) {
+        float32x4_t acc0 = vdupq_n_f32(0.0f);
+        float32x4_t acc1 = vdupq_n_f32(0.0f);
+        for (size_t w = 0; w < d; w++) {
+            uint32_t packed = *(const uint32_t *)(codes + w * row_bytes + (ii >> 1));
+            float vf[8];
+            for (int l = 0; l < 8; l++) {
+                uint8_t code = (uint8_t)((packed >> (l * 4)) & 0xF);
+                vf[l] = (float)(2 * (int)code - 15);
+            }
+            float32x4_t v_lo = vld1q_f32(vf);
+            float32x4_t v_hi = vld1q_f32(vf + 4);
+            float32x4_t qb = vdupq_n_f32(q[w]);
+            acc0 = vfmaq_f32(acc0, qb, v_lo);
+            acc1 = vfmaq_f32(acc1, qb, v_hi);
+        }
+        float sc[8] __attribute__((aligned(16)));
+        vst1q_f32(sc, acc0);
+        vst1q_f32(sc + 4, acc1);
         int64_t thr = simdq_topk_threshold(&heap);
         for (int l = 0; l < ASYM_B4_LANES; l++) {
             int64_t neg = -(int64_t)(sc[l] * (float)(1 << 20));

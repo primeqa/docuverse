@@ -6,6 +6,15 @@ find_package(OpenMP REQUIRED)
 
 set(COMMON_FLAGS -O3 -march=native)
 
+# The _avx2 test variants and the simd_parity cross-SIMD diff are x86-only.
+# On aarch64/arm64 they can't compile (-mavx2 is not a valid clang flag) and
+# there's no alternate SIMD path to diff against, so we skip them.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i.86)$")
+    set(SIMDQ_IS_X86 TRUE)
+else()
+    set(SIMDQ_IS_X86 FALSE)
+endif()
+
 # ---- benchmark binaries ----
 
 add_executable(bench_hamming_top1 bench/bench_hamming_top1.c)
@@ -43,12 +52,14 @@ target_include_directories(test_kernels_hamming PRIVATE include)
 target_link_libraries(test_kernels_hamming PRIVATE OpenMP::OpenMP_C)
 add_test(NAME kernels_hamming_native COMMAND test_kernels_hamming)
 
-# AVX2 nibble-LUT path, forced even on AVX-512 hardware
+# AVX2 nibble-LUT path, forced even on AVX-512 hardware (x86 only)
+if(SIMDQ_IS_X86)
 add_executable(test_kernels_hamming_avx2 tests/test_kernels_hamming.c)
 target_compile_options(test_kernels_hamming_avx2 PRIVATE -O3 -mavx2 -mpopcnt)
 target_include_directories(test_kernels_hamming_avx2 PRIVATE include)
 target_link_libraries(test_kernels_hamming_avx2 PRIVATE OpenMP::OpenMP_C)
 add_test(NAME kernels_hamming_avx2 COMMAND test_kernels_hamming_avx2)
+endif()
 
 add_executable(test_topk tests/test_topk.c)
 target_compile_options(test_topk PRIVATE ${COMMON_FLAGS})
@@ -61,11 +72,13 @@ target_include_directories(test_kernels_hamming_topk PRIVATE include)
 target_link_libraries(test_kernels_hamming_topk PRIVATE OpenMP::OpenMP_C)
 add_test(NAME kernels_hamming_topk_native COMMAND test_kernels_hamming_topk)
 
+if(SIMDQ_IS_X86)
 add_executable(test_kernels_hamming_topk_avx2 tests/test_kernels_hamming_topk.c)
 target_compile_options(test_kernels_hamming_topk_avx2 PRIVATE -O3 -mavx2 -mpopcnt)
 target_include_directories(test_kernels_hamming_topk_avx2 PRIVATE include)
 target_link_libraries(test_kernels_hamming_topk_avx2 PRIVATE OpenMP::OpenMP_C)
 add_test(NAME kernels_hamming_topk_avx2 COMMAND test_kernels_hamming_topk_avx2)
+endif()
 
 add_executable(test_pack tests/test_pack.c)
 target_compile_options(test_pack PRIVATE ${COMMON_FLAGS})
@@ -79,11 +92,13 @@ target_include_directories(test_kernels_asym_b1 PRIVATE include)
 target_link_libraries(test_kernels_asym_b1 PRIVATE m)
 add_test(NAME kernels_asym_b1_native COMMAND test_kernels_asym_b1)
 
+if(SIMDQ_IS_X86)
 add_executable(test_kernels_asym_b1_avx2 tests/test_kernels_asym_b1.c)
 target_compile_options(test_kernels_asym_b1_avx2 PRIVATE -O3 -mavx2 -mfma)
 target_include_directories(test_kernels_asym_b1_avx2 PRIVATE include)
 target_link_libraries(test_kernels_asym_b1_avx2 PRIVATE m)
 add_test(NAME kernels_asym_b1_avx2 COMMAND test_kernels_asym_b1_avx2)
+endif()
 
 add_executable(test_kernels_asym_b2 tests/test_kernels_asym_b2.c)
 target_compile_options(test_kernels_asym_b2 PRIVATE ${COMMON_FLAGS})
@@ -91,11 +106,13 @@ target_include_directories(test_kernels_asym_b2 PRIVATE include)
 target_link_libraries(test_kernels_asym_b2 PRIVATE m)
 add_test(NAME kernels_asym_b2_native COMMAND test_kernels_asym_b2)
 
+if(SIMDQ_IS_X86)
 add_executable(test_kernels_asym_b2_avx2 tests/test_kernels_asym_b2.c)
 target_compile_options(test_kernels_asym_b2_avx2 PRIVATE -O3 -mavx2 -mfma)
 target_include_directories(test_kernels_asym_b2_avx2 PRIVATE include)
 target_link_libraries(test_kernels_asym_b2_avx2 PRIVATE m)
 add_test(NAME kernels_asym_b2_avx2 COMMAND test_kernels_asym_b2_avx2)
+endif()
 
 add_executable(test_kernels_asym_b4 tests/test_kernels_asym_b4.c)
 target_compile_options(test_kernels_asym_b4 PRIVATE ${COMMON_FLAGS})
@@ -103,11 +120,13 @@ target_include_directories(test_kernels_asym_b4 PRIVATE include)
 target_link_libraries(test_kernels_asym_b4 PRIVATE m)
 add_test(NAME kernels_asym_b4_native COMMAND test_kernels_asym_b4)
 
+if(SIMDQ_IS_X86)
 add_executable(test_kernels_asym_b4_avx2 tests/test_kernels_asym_b4.c)
 target_compile_options(test_kernels_asym_b4_avx2 PRIVATE -O3 -mavx2 -mfma)
 target_include_directories(test_kernels_asym_b4_avx2 PRIVATE include)
 target_link_libraries(test_kernels_asym_b4_avx2 PRIVATE m)
 add_test(NAME kernels_asym_b4_avx2 COMMAND test_kernels_asym_b4_avx2)
+endif()
 
 add_executable(test_kernels_asym_parallel tests/test_kernels_asym_parallel.c)
 target_compile_options(test_kernels_asym_parallel PRIVATE ${COMMON_FLAGS})
@@ -115,11 +134,13 @@ target_include_directories(test_kernels_asym_parallel PRIVATE include)
 target_link_libraries(test_kernels_asym_parallel PRIVATE OpenMP::OpenMP_C m)
 add_test(NAME kernels_asym_parallel_native COMMAND test_kernels_asym_parallel)
 
+if(SIMDQ_IS_X86)
 add_executable(test_kernels_asym_parallel_avx2 tests/test_kernels_asym_parallel.c)
 target_compile_options(test_kernels_asym_parallel_avx2 PRIVATE -O3 -mavx2 -mfma)
 target_include_directories(test_kernels_asym_parallel_avx2 PRIVATE include)
 target_link_libraries(test_kernels_asym_parallel_avx2 PRIVATE OpenMP::OpenMP_C m)
 add_test(NAME kernels_asym_parallel_avx2 COMMAND test_kernels_asym_parallel_avx2)
+endif()
 
 add_executable(test_kernels_multi_D tests/test_kernels_multi_D.c)
 target_compile_options(test_kernels_multi_D PRIVATE ${COMMON_FLAGS})
@@ -127,13 +148,15 @@ target_include_directories(test_kernels_multi_D PRIVATE include)
 target_link_libraries(test_kernels_multi_D PRIVATE OpenMP::OpenMP_C m)
 add_test(NAME kernels_multi_D_native COMMAND test_kernels_multi_D)
 
+if(SIMDQ_IS_X86)
 add_executable(test_kernels_multi_D_avx2 tests/test_kernels_multi_D.c)
 target_compile_options(test_kernels_multi_D_avx2 PRIVATE -O3 -mavx2 -mfma -mpopcnt)
 target_include_directories(test_kernels_multi_D_avx2 PRIVATE include)
 target_link_libraries(test_kernels_multi_D_avx2 PRIVATE OpenMP::OpenMP_C m)
 add_test(NAME kernels_multi_D_avx2 COMMAND test_kernels_multi_D_avx2)
+endif()
 
-# ---- T2: cross-SIMD parity ----
+# ---- T2: cross-SIMD parity (x86 only) ----
 #
 # Same source compiled twice. simd_parity_native runs whichever SIMD path
 # -march=native picks (AVX-512 on Sapphire Rapids / AMD Zen4+, AVX2 on
@@ -149,7 +172,11 @@ add_test(NAME kernels_multi_D_avx2 COMMAND test_kernels_multi_D_avx2)
 # (tools/parity_check.py) that strict-checks the hamming section and
 # tolerance-checks the asym section. Until that happens, the strict
 # diff is the simpler and tighter assertion.
+#
+# aarch64 has no analogous alternate SIMD path to compare against (there's
+# only NEON), so we skip this whole block off x86.
 
+if(SIMDQ_IS_X86)
 add_executable(test_simd_parity_native tests/test_simd_parity.c)
 target_compile_options(test_simd_parity_native PRIVATE ${COMMON_FLAGS})
 target_include_directories(test_simd_parity_native PRIVATE include)
@@ -173,3 +200,4 @@ add_test(NAME simd_parity_dlopen
         simd_parity_native.out simd_parity_avx2.out)
 set_tests_properties(simd_parity_dlopen
     PROPERTIES FIXTURES_REQUIRED simd_parity_outputs)
+endif()

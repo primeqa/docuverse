@@ -16,7 +16,11 @@
 #include "simdq_common.h"
 #include "simdq_topk.h"
 #include <assert.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
 #include <immintrin.h>
+#elif defined(__aarch64__) || defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 #include <string.h>
 
 // Reference top-1 helper used by the K=1 test (independent of SIMD).
@@ -127,6 +131,62 @@ static inline void scan_hamming_shard_topk(const uint64_t *dbT, size_t n,
         for (int l = 0; l < HAMMING_TOPK_LANES; l++)
             if (d4[l] < thr) {
                 simdq_topk_offer(&heap, d4[l], (int64_t)(i + l));
+                thr = simdq_topk_threshold(&heap);
+            }
+    }
+    for (size_t k = i; k < i1; k++) {
+        int h = hamming_soa(dbT, n, words, k, q);
+        if ((int64_t)h < simdq_topk_threshold(&heap))
+            simdq_topk_offer(&heap, (int64_t)h, (int64_t)k);
+    }
+    simdq_topk_extract_sorted(&heap, out_d, out_i);
+}
+
+#elif defined(__aarch64__) || defined(__ARM_NEON)
+#define HAMMING_TOPK_KERNEL_NAME "NEON-vcnt"
+#define HAMMING_TOPK_LANES 2
+
+/*
+ * Per-lane popcount of a uint64x2 via native NEON vcntq_u8 + pairwise
+ * widening add chain (byte->u16->u32->u64). Same helper as the top-1
+ * kernel uses; duplicated locally because these two headers are never
+ * included in the same TU (see #error guard above).
+ */
+static inline uint64x2_t popcnt_u64x2_topk(uint64x2_t x) {
+    uint8x16_t cnts = vcntq_u8(vreinterpretq_u8_u64(x));
+    return vpaddlq_u32(vpaddlq_u16(vpaddlq_u8(cnts)));
+}
+
+/*
+ * Single-query top-K Hamming SoA scan over codes [i0, i1) on NEON.
+ * Inner loop mirrors scan_hamming_shard_topk for AVX2/AVX-512: XOR each
+ * word against broadcast query, popcount, accumulate into a per-lane
+ * u64 distance. After each 2-code block, read out the 2 per-lane
+ * distances and offer to a bounded max-heap of size K.
+ */
+static inline void scan_hamming_shard_topk(const uint64_t *dbT, size_t n,
+                                           size_t words, size_t i0, size_t i1,
+                                           const uint64_t *q, int K,
+                                           int64_t *out_d, int64_t *out_i) {
+    assert(K > 0 && K <= 256);
+    int64_t hkeys[256], hidxs[256];
+    simdq_topk_t heap;
+    simdq_topk_init(&heap, K, hkeys, hidxs);
+
+    size_t i = i0;
+    for (; i + HAMMING_TOPK_LANES <= i1; i += HAMMING_TOPK_LANES) {
+        uint64x2_t acc = vdupq_n_u64(0);
+        for (size_t w = 0; w < words; w++) {
+            uint64x2_t d = vld1q_u64(dbT + w * n + i);
+            uint64x2_t x = veorq_u64(d, vdupq_n_u64(q[w]));
+            acc = vaddq_u64(acc, popcnt_u64x2_topk(x));
+        }
+        uint64_t d2[HAMMING_TOPK_LANES];
+        vst1q_u64(d2, acc);
+        int64_t thr = simdq_topk_threshold(&heap);
+        for (int l = 0; l < HAMMING_TOPK_LANES; l++)
+            if ((int64_t)d2[l] < thr) {
+                simdq_topk_offer(&heap, (int64_t)d2[l], (int64_t)(i + l));
                 thr = simdq_topk_threshold(&heap);
             }
     }

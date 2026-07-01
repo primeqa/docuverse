@@ -76,11 +76,27 @@ def _read_cpuinfo() -> dict[str, str]:
                 info[k] = v
     except FileNotFoundError:
         pass
+    # macOS fallback: /proc/cpuinfo doesn't exist; pull the CPU name from
+    # sysctl and synthesize a "flags" field with NEON (aarch64) so the
+    # detection code below can pick the right kernel path label.
+    if not info and platform.system() == "Darwin":
+        try:
+            r = subprocess.run(
+                ["sysctl", "-n", "machdep.cpu.brand_string"],
+                capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and r.stdout.strip():
+                info["model name"] = r.stdout.strip()
+        except (FileNotFoundError, subprocess.SubprocessError):
+            pass
+        machine = platform.machine().lower()
+        if machine in ("arm64", "aarch64"):
+            info["flags"] = "neon asimd"
     return info
 
 
 def _lscpu_cache() -> dict[str, str]:
     out: dict[str, str] = {}
+    # Linux: lscpu.
     try:
         r = subprocess.run(["lscpu"], capture_output=True, text=True, timeout=5)
         for line in r.stdout.splitlines():
@@ -90,21 +106,73 @@ def _lscpu_cache() -> dict[str, str]:
                     out[key] = line.split(":", 1)[1].strip()
     except (FileNotFoundError, subprocess.SubprocessError):
         pass
+    # macOS: pull the equivalent facts from sysctl. Apple Silicon exposes
+    # perflevel0 (P-cores) and perflevel1 (E-cores) separately, so we
+    # aggregate to a "P+E" note. Cache sizes are per-core L1 / L2; there's
+    # no unified L3 on Apple Silicon, so we omit it rather than fake it.
+    if not out and platform.system() == "Darwin":
+        def _sysctl(key: str) -> str | None:
+            try:
+                r = subprocess.run(["sysctl", "-n", key],
+                                   capture_output=True, text=True, timeout=5)
+                return r.stdout.strip() if r.returncode == 0 else None
+            except (FileNotFoundError, subprocess.SubprocessError):
+                return None
+        p_cores = _sysctl("hw.perflevel0.physicalcpu")
+        e_cores = _sysctl("hw.perflevel1.physicalcpu")
+        total_cores = _sysctl("hw.physicalcpu")
+        total_logical = _sysctl("hw.logicalcpu")
+        if p_cores and e_cores:
+            out["Core(s) per socket"] = f"{total_cores} ({p_cores}P + {e_cores}E)"
+        elif total_cores:
+            out["Core(s) per socket"] = total_cores
+        out["Socket(s)"] = "1"
+        if total_logical and total_cores and int(total_logical) > int(total_cores):
+            out["Thread(s) per core"] = str(int(total_logical) // int(total_cores))
+        else:
+            out["Thread(s) per core"] = "1"
+        l1d = _sysctl("hw.perflevel0.l1dcachesize") or _sysctl("hw.l1dcachesize")
+        l2 = _sysctl("hw.perflevel0.l2cachesize") or _sysctl("hw.l2cachesize")
+        if l1d:
+            out["L1d cache"] = f"{int(l1d) // 1024} KiB (per P-core)"
+        if l2:
+            out["L2 cache"] = f"{int(l2) // (1024*1024)} MiB (shared P-cluster)"
     return out
 
 
 def _objdump_isa_counts(so_path: Path) -> dict[str, int]:
-    """Disassemble the simdq .so and count ISA-marker mnemonics."""
+    """Disassemble the simdq .so and count ISA-marker mnemonics.
+
+    Uses objdump on ELF; falls back to `otool -tv` on Mach-O (macOS). NEON
+    mnemonics (fmla / cnt.16b / tbl.16b) are counted alongside the x86 ones
+    so a single script can identify AVX-512 / AVX2 / NEON kernel paths.
+    """
     counts = {"ymm": 0, "zmm": 0, "vfmadd": 0,
-              "vpshufb": 0, "vpmultishift": 0, "vpdpbusd": 0}
+              "vpshufb": 0, "vpmultishift": 0, "vpdpbusd": 0,
+              "fmla": 0, "cnt.16b": 0, "tbl.16b": 0}
     if not so_path.exists():
         return counts
+    text = ""
+    # ELF path
     try:
         r = subprocess.run(["objdump", "-d", str(so_path)],
                            capture_output=True, text=True, timeout=30)
+        if r.returncode == 0 and r.stdout:
+            text = r.stdout
     except (FileNotFoundError, subprocess.SubprocessError):
+        pass
+    # Mach-O fallback
+    if not text:
+        try:
+            r = subprocess.run(["otool", "-tv", str(so_path)],
+                               capture_output=True, text=True, timeout=30)
+            if r.returncode == 0 and r.stdout:
+                text = r.stdout
+        except (FileNotFoundError, subprocess.SubprocessError):
+            pass
+    if not text:
         return counts
-    for line in r.stdout.splitlines():
+    for line in text.splitlines():
         for k in counts:
             if k in line:
                 counts[k] += 1
@@ -117,6 +185,22 @@ def detect_isa() -> dict:
     cache = _lscpu_cache()
     so_glob = sorted(SIMDQ_DIR.glob("_simdq_native*.so"))
     so_counts = _objdump_isa_counts(so_glob[0]) if so_glob else {}
+    # Pick the kernel-path label from disassembly evidence: AVX-512 VBMI wins
+    # if we see vpmultishift, then plain AVX-512 on zmm, then AVX2 on ymm.
+    # If the disassembly has no x86 vector markers but is loaded with NEON
+    # instructions (fmla+cnt.16b), report NEON.
+    if so_counts.get("vpmultishift", 0) > 0:
+        kernel_path = "AVX-512 (VBMI/Lever-1)"
+    elif so_counts.get("zmm", 0) > 0:
+        kernel_path = "AVX-512"
+    elif so_counts.get("ymm", 0) > 0:
+        kernel_path = "AVX2-FMA"
+    elif so_counts.get("fmla", 0) > 0 and so_counts.get("cnt.16b", 0) > 0:
+        kernel_path = "NEON (aarch64)"
+    elif so_counts.get("fmla", 0) > 0:
+        kernel_path = "NEON (aarch64, asym only?)"
+    else:
+        kernel_path = "<scalar?>"
     return {
         "model": cpuinfo.get("model name", "<unknown>"),
         "hostname": socket.gethostname(),
@@ -125,16 +209,12 @@ def detect_isa() -> dict:
         "has_avx512vbmi": "avx512vbmi" in flags,
         "has_gfni": "gfni" in flags,
         "has_vpopcntdq": "avx512_vpopcntdq" in flags,
+        "has_neon": ("neon" in flags) or ("asimd" in flags),
         "fma": "fma" in flags,
         "cache": cache,
         "compiled_so": str(so_glob[0]) if so_glob else None,
         "so_counts": so_counts,
-        "kernel_path": (
-            "AVX-512 (VBMI/Lever-1)"
-            if so_counts.get("vpmultishift", 0) > 0
-            else ("AVX-512" if so_counts.get("zmm", 0) > 0
-                  else ("AVX2-FMA" if so_counts.get("ymm", 0) > 0 else "<scalar?>"))
-        ),
+        "kernel_path": kernel_path,
     }
 
 
@@ -426,15 +506,21 @@ def write_report(report_path, isa, p1_default, p1_blas1, p68, head, params):
     for k, label in [("has_avx2", "AVX2"), ("has_avx512f", "AVX-512F"),
                      ("has_avx512vbmi", "AVX-512 VBMI"),
                      ("has_gfni", "GFNI"), ("has_vpopcntdq", "VPOPCNTDQ"),
-                     ("fma", "FMA")]:
-        flags.append(f"{label}: {'yes' if isa[k] else 'NO'}")
+                     ("fma", "FMA"), ("has_neon", "NEON")]:
+        flags.append(f"{label}: {'yes' if isa.get(k) else 'NO'}")
     A(f"- SIMD: {', '.join(flags)}")
     A(f"- Compiled `.so`: `{isa['compiled_so']}`")
-    A(f"- Kernel path (from disassembly): **{isa['kernel_path']}** "
-      f"(ymm={isa['so_counts'].get('ymm', 0)}, "
-      f"zmm={isa['so_counts'].get('zmm', 0)}, "
-      f"vfmadd={isa['so_counts'].get('vfmadd', 0)}, "
-      f"vpmultishift={isa['so_counts'].get('vpmultishift', 0)})")
+    if "NEON" in isa["kernel_path"]:
+        A(f"- Kernel path (from disassembly): **{isa['kernel_path']}** "
+          f"(fmla={isa['so_counts'].get('fmla', 0)}, "
+          f"cnt.16b={isa['so_counts'].get('cnt.16b', 0)}, "
+          f"tbl.16b={isa['so_counts'].get('tbl.16b', 0)})")
+    else:
+        A(f"- Kernel path (from disassembly): **{isa['kernel_path']}** "
+          f"(ymm={isa['so_counts'].get('ymm', 0)}, "
+          f"zmm={isa['so_counts'].get('zmm', 0)}, "
+          f"vfmadd={isa['so_counts'].get('vfmadd', 0)}, "
+          f"vpmultishift={isa['so_counts'].get('vpmultishift', 0)})")
     A(f"- Python: {platform.python_version()}, numpy: {np.__version__}")
     A("")
 
