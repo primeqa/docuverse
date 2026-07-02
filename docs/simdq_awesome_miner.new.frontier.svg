@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 896 412" width="896" height="412" role="img" aria-label="Throughput (queries per second, log scale) vs nDCG@10 for each engine, one panel per model">
+<style>
+svg{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;}
+:root{--surface:#fcfcfb;--ink:#0b0b0b;--ink-2:#52514e;--ink-3:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--c0:#2a78d6; --c1:#1baf7a; --c2:#eda100; --c3:#008300;}
+@media (prefers-color-scheme: dark){:root{--surface:#1a1a19;--ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#898781;--grid:#2c2c2a;--axis:#383835;--c0:#3987e5; --c1:#199e70; --c2:#c98500; --c3:#008300;}}
+</style>
+<rect width="896" height="412" rx="8" fill="var(--surface)"/>
+<text x="64" y="26" font-size="15" font-weight="600" fill="var(--ink)">Throughput vs. retrieval quality — Phase 5b engines</text>
+<text x="64" y="46" font-size="12" fill="var(--ink-2)">queries/s across 16 concurrent workers (log scale) vs nDCG@10 — up and right is better</text>
+<circle cx="69" cy="66" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<text x="80" y="70" font-size="12" fill="var(--ink-2)">Milvus</text>
+<circle cx="144" cy="66" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<text x="155" y="70" font-size="12" fill="var(--ink-2)">FAISS</text>
+<circle cx="212" cy="66" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<text x="223" y="70" font-size="12" fill="var(--ink-2)">simdq asym b=2</text>
+<circle cx="336" cy="66" r="4.5" fill="var(--c3)" stroke="var(--surface)" stroke-width="2"/>
+<text x="346" y="70" font-size="12" fill="var(--ink-2)">simdq 1-bit ham</text>
+<text x="8" y="108" font-size="11" fill="var(--ink-3)">queries/s</text>
+<text x="56" y="364.0" font-size="11" text-anchor="end" fill="var(--ink-3)">50</text>
+<text x="56" y="332.3" font-size="11" text-anchor="end" fill="var(--ink-3)">100</text>
+<text x="56" y="300.7" font-size="11" text-anchor="end" fill="var(--ink-3)">200</text>
+<text x="56" y="258.8" font-size="11" text-anchor="end" fill="var(--ink-3)">500</text>
+<text x="56" y="227.2" font-size="11" text-anchor="end" fill="var(--ink-3)">1,000</text>
+<text x="56" y="195.5" font-size="11" text-anchor="end" fill="var(--ink-3)">2,000</text>
+<text x="56" y="153.7" font-size="11" text-anchor="end" fill="var(--ink-3)">5,000</text>
+<text x="56" y="122.0" font-size="11" text-anchor="end" fill="var(--ink-3)">10,000</text>
+<text x="259" y="108" font-size="12.5" font-weight="600" text-anchor="middle" fill="var(--ink)">granite-97m-r2 (384d)</text>
+<line x1="64" y1="360.0" x2="454" y2="360.0" stroke="var(--grid)" stroke-width="1"/>
+<line x1="64" y1="328.3" x2="454" y2="328.3" stroke="var(--grid)" stroke-width="1"/>
+<line x1="64" y1="296.7" x2="454" y2="296.7" stroke="var(--grid)" stroke-width="1"/>
+<line x1="64" y1="254.8" x2="454" y2="254.8" stroke="var(--grid)" stroke-width="1"/>
+<line x1="64" y1="223.2" x2="454" y2="223.2" stroke="var(--grid)" stroke-width="1"/>
+<line x1="64" y1="191.5" x2="454" y2="191.5" stroke="var(--grid)" stroke-width="1"/>
+<line x1="64" y1="149.7" x2="454" y2="149.7" stroke="var(--grid)" stroke-width="1"/>
+<line x1="64" y1="118.0" x2="454" y2="118.0" stroke="var(--grid)" stroke-width="1"/>
+<line x1="94.6" y1="118" x2="94.6" y2="360" stroke="var(--grid)" stroke-width="1"/>
+<text x="94.6" y="378" font-size="11" text-anchor="middle" fill="var(--ink-3)">0.425</text>
+<line x1="196.3" y1="118" x2="196.3" y2="360" stroke="var(--grid)" stroke-width="1"/>
+<text x="196.3" y="378" font-size="11" text-anchor="middle" fill="var(--ink-3)">0.450</text>
+<line x1="298.1" y1="118" x2="298.1" y2="360" stroke="var(--grid)" stroke-width="1"/>
+<text x="298.1" y="378" font-size="11" text-anchor="middle" fill="var(--ink-3)">0.475</text>
+<line x1="399.8" y1="118" x2="399.8" y2="360" stroke="var(--grid)" stroke-width="1"/>
+<text x="399.8" y="378" font-size="11" text-anchor="middle" fill="var(--ink-3)">0.500</text>
+<line x1="64" y1="360" x2="454" y2="360" stroke="var(--axis)" stroke-width="1"/>
+<text x="259" y="398" font-size="11" text-anchor="middle" fill="var(--ink-3)">nDCG@10</text>
+<circle cx="308.9" cy="313.6" r="5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="303.4" cy="201.7" r="5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="310.0" cy="304.3" r="5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="306.5" cy="135.9" r="5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="309.9" cy="176.3" r="5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="140.7" cy="172.9" r="5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="309.4" cy="162.0" r="5" fill="var(--c3)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="90.9" cy="141.7" r="5" fill="var(--c3)" stroke="var(--surface)" stroke-width="2"/>
+<text x="316.5" y="139.9" font-size="11" text-anchor="start" fill="var(--ink-2)">FAISS HNSW</text>
+<text x="100.9" y="145.7" font-size="11" text-anchor="start" fill="var(--ink-2)">1-bit ham no rescore</text>
+<text x="319.4" y="166.0" font-size="11" text-anchor="start" fill="var(--ink-2)">1-bit ham +rescore</text>
+<text x="150.7" y="176.9" font-size="11" text-anchor="start" fill="var(--ink-2)">asym b=2 no rescore</text>
+<text x="319.9" y="180.3" font-size="11" text-anchor="start" fill="var(--ink-2)">asym b=2 +rescore</text>
+<text x="313.4" y="205.7" font-size="11" text-anchor="start" fill="var(--ink-2)">Milvus HNSW</text>
+<text x="320.0" y="308.3" font-size="11" text-anchor="start" fill="var(--ink-2)">FAISS FlatIP</text>
+<text x="318.9" y="321.3" font-size="11" text-anchor="start" fill="var(--ink-2)">Milvus FLAT</text>
+<text x="685" y="108" font-size="12.5" font-weight="600" text-anchor="middle" fill="var(--ink)">granite-311m-r2 (768d)</text>
+<line x1="490" y1="360.0" x2="880" y2="360.0" stroke="var(--grid)" stroke-width="1"/>
+<line x1="490" y1="328.3" x2="880" y2="328.3" stroke="var(--grid)" stroke-width="1"/>
+<line x1="490" y1="296.7" x2="880" y2="296.7" stroke="var(--grid)" stroke-width="1"/>
+<line x1="490" y1="254.8" x2="880" y2="254.8" stroke="var(--grid)" stroke-width="1"/>
+<line x1="490" y1="223.2" x2="880" y2="223.2" stroke="var(--grid)" stroke-width="1"/>
+<line x1="490" y1="191.5" x2="880" y2="191.5" stroke="var(--grid)" stroke-width="1"/>
+<line x1="490" y1="149.7" x2="880" y2="149.7" stroke="var(--grid)" stroke-width="1"/>
+<line x1="490" y1="118.0" x2="880" y2="118.0" stroke="var(--grid)" stroke-width="1"/>
+<line x1="520.6" y1="118" x2="520.6" y2="360" stroke="var(--grid)" stroke-width="1"/>
+<text x="520.6" y="378" font-size="11" text-anchor="middle" fill="var(--ink-3)">0.425</text>
+<line x1="622.3" y1="118" x2="622.3" y2="360" stroke="var(--grid)" stroke-width="1"/>
+<text x="622.3" y="378" font-size="11" text-anchor="middle" fill="var(--ink-3)">0.450</text>
+<line x1="724.1" y1="118" x2="724.1" y2="360" stroke="var(--grid)" stroke-width="1"/>
+<text x="724.1" y="378" font-size="11" text-anchor="middle" fill="var(--ink-3)">0.475</text>
+<line x1="825.8" y1="118" x2="825.8" y2="360" stroke="var(--grid)" stroke-width="1"/>
+<text x="825.8" y="378" font-size="11" text-anchor="middle" fill="var(--ink-3)">0.500</text>
+<line x1="490" y1="360" x2="880" y2="360" stroke="var(--axis)" stroke-width="1"/>
+<text x="685" y="398" font-size="11" text-anchor="middle" fill="var(--ink-3)">nDCG@10</text>
+<circle cx="851.5" cy="325.0" r="5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="849.6" cy="197.2" r="5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="853.1" cy="338.7" r="5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="844.3" cy="136.4" r="5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="852.3" cy="206.0" r="5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="708.5" cy="203.9" r="5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="852.0" cy="185.2" r="5" fill="var(--c3)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="730.4" cy="169.7" r="5" fill="var(--c3)" stroke="var(--surface)" stroke-width="2"/>
+<text x="834.3" y="140.4" font-size="11" text-anchor="end" fill="var(--ink-2)">FAISS HNSW</text>
+<text x="740.4" y="173.7" font-size="11" text-anchor="start" fill="var(--ink-2)">1-bit ham no rescore</text>
+<text x="842.0" y="189.2" font-size="11" text-anchor="end" fill="var(--ink-2)">1-bit ham +rescore</text>
+<text x="839.6" y="202.2" font-size="11" text-anchor="end" fill="var(--ink-2)">Milvus HNSW</text>
+<text x="718.5" y="215.2" font-size="11" text-anchor="start" fill="var(--ink-2)">asym b=2 no rescore</text>
+<text x="842.3" y="228.2" font-size="11" text-anchor="end" fill="var(--ink-2)">asym b=2 +rescore</text>
+<text x="841.5" y="329.0" font-size="11" text-anchor="end" fill="var(--ink-2)">Milvus FLAT</text>
+<text x="843.1" y="342.7" font-size="11" text-anchor="end" fill="var(--ink-2)">FAISS FlatIP</text>
+</svg>
