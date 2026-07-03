@@ -163,29 +163,76 @@ class SearchEngine:
     def ingest(self, corpus: SearchCorpus|list[SearchCorpus], **kwargs):
         self.retriever.ingest(corpus=corpus, **kwargs)
 
+    # ------------------------------------------------------------------
+    # One-call facade: index / search / evaluate. Each is a thin wrapper
+    # over read_data/ingest, search, and compute_score so a new user never
+    # has to plumb intermediate objects between calls.
+    # ------------------------------------------------------------------
+
+    def index(self, documents=None, update: bool = False, **kwargs) -> "SearchEngine":
+        """Read, tile and ingest documents in one call.
+
+        ``documents`` may be a file path (jsonl/tsv/csv, optionally
+        compressed), a glob, a ``ds:<dataset>`` HuggingFace spec, a list of
+        dicts with ``id``/``text`` (and optional extra) fields, or ``None``
+        to use ``config.input_passages``. Returns ``self`` so calls chain.
+        """
+        corpus = self.read_data(documents)
+        self.ingest(corpus, update=update, **kwargs)
+        return self
+
+    def evaluate(self, results: List[SearchResult], queries=None) -> EvaluationOutput:
+        """Score ``results`` against gold judgments.
+
+        ``queries`` defaults to the queries used in the last ``search()``
+        call, falling back to ``config.input_queries``.
+        """
+        if queries is None:
+            queries = getattr(self, "_last_queries", None)
+        if queries is None:
+            queries = self.read_questions()
+        return self.compute_score(queries, results)
+
+    def _coerce_queries(self, queries):
+        """Accept a path, a list of strings, a list of dicts, or ready Query objects."""
+        if queries is None or isinstance(queries, str):
+            return self.read_questions(queries)
+        if isinstance(queries, list) and queries:
+            if isinstance(queries[0], str):
+                return self.read_questions(
+                    [{"id": str(i), "text": q} for i, q in enumerate(queries)])
+            if isinstance(queries[0], dict):
+                return self.read_questions(queries)
+        return queries
+
     def has_index(self, index_name):
         return self.retriever.has_index(index_name=index_name)
 
     def get_retriever_info(self):
         return self.retriever.info()
 
-    def search(self, queries: Union[SearchQueries, list[SearchQueries.Query]]) -> List[SearchResult]:
+    def search(self, queries: Union[SearchQueries, list[SearchQueries.Query], list[str], list[dict], str, None] = None) -> List[SearchResult]:
+        queries = self._coerce_queries(queries)
+        self._last_queries = queries
         self.write_necessary = False
         answers, cache_file = self.read_cache_file(extension=".retrieve.pkl.bz2")
         if answers is None:
             if len(queries) == 0:
-                 print(f"No queries to seaarch. Check {self.config.input_queries}")
+                 print(f"No queries to search. Check {self.config.input_queries}")
             self.retriever.reconnect_if_necessary()
+            # batch_query_encoding=False preserves the per-query encode path so
+            # per-query latency benchmarks measure encoding inside search().
+            batch_queries = getattr(self.config, "batch_query_encoding", True)
             # If the retriever can run the whole batch itself, let it: it can
             # batch-encode all queries in one GPU pass (in this process, no
             # fork-after-CUDA) and then parallelize the CPU search with threads.
-            if hasattr(self.retriever, "search_all"):
+            if batch_queries and hasattr(self.retriever, "search_all"):
                 answers = self.retriever.search_all(
                     queries, num_threads=self.config.num_search_threads)
             else:
                 # Let a retriever batch-encode all queries up front (one GPU pass)
                 # instead of encoding once per query inside parallel_process.
-                if hasattr(self.retriever, "precompute_query_embeddings"):
+                if batch_queries and hasattr(self.retriever, "precompute_query_embeddings"):
                     self.retriever.precompute_query_embeddings(queries)
                 answers = parallel_process(self.retriever.search, queries,
                                            num_threads=self.config.num_search_threads,
@@ -230,9 +277,15 @@ class SearchEngine:
         return answers, cache_file
 
     def _get_cache_file(self, extension):
-        base_cache_file = os.path.basename(self.config.output_file.replace(".json", extension))
-        cache_file = os.path.join(self.config.cache_dir, base_cache_file)
-        return cache_file
+        # Strip only a trailing .json/.jsonl extension. A bare str.replace of
+        # ".json" would also corrupt ".jsonl" names and any path containing
+        # ".json" in the middle.
+        base = os.path.basename(self.config.output_file)
+        for ext in (".jsonl", ".json"):
+            if base.endswith(ext):
+                base = base[: -len(ext)]
+                break
+        return os.path.join(self.config.cache_dir, base + extension)
 
     def write_cache_file(self, values, cache_file):
         if cache_file is not None:
@@ -247,11 +300,11 @@ class SearchEngine:
 
     def write_output(self, output, output_file:str|None|bytes=None, overwrite=False):
         """
-        Writes the output of the system, saving copiees.
+        Writes the output of the system, backing up any existing file first.
+        Always writes: results served from cache are written too (a method
+        named write_output that silently does nothing is a footgun).
         """
         import json
-        if not self.write_necessary:
-            return
         if output_file is None:
             output_file = self.config.output_file
         if output_file is None:
@@ -338,10 +391,11 @@ class SearchEngine:
         if retriever_config is None:
             retriever_config = self.config.retriever_config
         if no_cache is not None:
-            retriever_config = deepcopy(self.config.retriever_config)
+            retriever_config = deepcopy(retriever_config)
             retriever_config.no_cache = no_cache
 
-        tiler = self.tiler if self.tiler is not None else self.create_tiler(retriever_config)
+        if tiler is None:
+            tiler = self.tiler if self.tiler is not None else self.create_tiler(retriever_config)
         return SearchData.read_data(input_files=file,
                                     tiler=tiler,
                                     **vars(retriever_config))

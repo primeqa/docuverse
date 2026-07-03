@@ -1,4 +1,4 @@
-from copy import deepcopy
+from copy import copy
 
 from docuverse.engines.search_result import SearchResult
 from docuverse.utils import get_param
@@ -103,10 +103,13 @@ class Reranker(object):
         self.tm.add_timing("cosine::sort")
         op = SearchResult(answer.question, [])
         for _doc, sim in sorted_similarities:
-            doc1 = deepcopy(_doc)
+            # Shallow copy: we only overwrite .score on the copy; deepcopy of
+            # every passage (texts included) dominated rerank post-processing.
+            doc1 = copy(_doc)
+            doc1.__dict__ = dict(_doc.__dict__)
             doc1.score = float(sim)
             op.append(doc1)
         if self.top_k > 0:
-            op.retrieved_passages.extend(deepcopy(answer.retrieved_passages[self.top_k:]))
+            op.retrieved_passages.extend(copy(d) for d in answer.retrieved_passages[self.top_k:])
         self.tm.add_timing("cosine::copy_data")
         return op

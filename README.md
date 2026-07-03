@@ -68,15 +68,18 @@ engine = SearchEngine.from_preset(
     "milvus-dense",
     model_name="ibm-granite/granite-embedding-small-english-r2",
     index_name="docuverse_quickstart",
-    input_passages="examples/quickstart/passages.jsonl",
-    input_queries="examples/quickstart/queries.jsonl",
     output_file="examples/quickstart/output.json",
 )
-engine.ingest(engine.read_data())
-queries = engine.read_questions()
-results = engine.search(queries)
-print(engine.compute_score(queries, results))
+engine.index("examples/quickstart/passages.jsonl")
+results = engine.search("examples/quickstart/queries.jsonl")
+print(engine.evaluate(results))
 ```
+
+`index()` accepts a file path (jsonl/tsv/csv, optionally compressed), a glob,
+a `ds:<hf-dataset>` spec, or a list of `{"id": ..., "text": ...}` dicts;
+`search()` additionally accepts a plain list of question strings. The
+lower-level `read_data`/`ingest`/`read_questions`/`compute_score` calls remain
+available when you need the intermediate objects.
 
 **Python — explicit YAML** (when you want the config in version control):
 
@@ -129,15 +132,13 @@ engine = SearchEngine.from_preset(
 )
 
 passages = [{"id": f"d{i}", "text": text} for i, text in enumerate(documents)]
-engine.ingest(engine.read_data(file=passages))
+engine.index(passages)
 
-question_records = [{"id": f"q{i}", "text": q} for i, q in enumerate(queries)]
-search_queries = engine.read_questions(file=question_records)
-results = engine.search(search_queries)
+results = engine.search(queries)   # a plain list of question strings works
 
-for query, result in zip(search_queries, results):
+for query, result in zip(queries, results):
     top = result[0]
-    print(f"Q: {query.text}\n  → {top.text[:80]}...\n")
+    print(f"Q: {query}\n  → {top.text[:80]}...\n")
 ```
 
 The pattern generalises: any `read_data` / `read_questions` call accepts a
@@ -162,8 +163,19 @@ DocUVerse looks for config files under `./config/<rel_path>` (with a
 `./config/<basename>` legacy fallback that emits one `DeprecationWarning`),
 plus operator-level `$DOCUVERSE_HOME/...` and per-user `~/.docuverse/...`
 overrides. See [`config/README.md`](config/README.md) for the full
-six-tier resolver and the categorized layout (`servers/`, `engines/`,
-`recipes/`, `data_formats/`).
+six-tier resolver and the categorized layout (`servers/`, `engines/`).
+
+Useful switches:
+
+- `DOCUVERSE_NONINTERACTIVE=1` (env var) — auto-answer every interactive
+  prompt ("cache file exists, read?", "recreate index?") with its default.
+  Set it in CI, notebooks and batch jobs.
+- `batch_query_encoding: false` (config) — encode each query individually
+  inside `search()` instead of one batched model pass up front. Slower, but
+  required when benchmarking per-query latency, since batching moves query
+  encoding out of the per-query timing.
+- `tile_overlap` — readable alias for `stride` (the token/char overlap
+  between consecutive document tiles).
 
 ## 🔭 Learn more
 

@@ -173,3 +173,34 @@ examples/tmp.ipynb
 
 /research/ash-paper-internal-copy.pdf
 /research/papers/16-ASH-Tepper-Willke-IBM-2026.md
+
+# --- local experiment litter (never commit from the repo root) ---
+*.logfile
+logfile
+error.log
+*.xlsx
+*.dat
+/output/
+/scratch/
+/tmp/
+/test_db/
+/latency*/
+/en-latency*/
+/ml-latency*/
+/bad-ml-latency*/
+/bv-output/
+/models/
+/ibm-granite/
+/granite-*/
+*.pkl.bz2
+latency_results.jsonl
+run_cmmds
+# LaTeX build artifacts in docs/
+docs/*.aux
+docs/*.fdb_latexmk
+docs/*.fls
+docs/*.nav
+docs/*.out
+docs/*.snm
+docs/*.toc
+docs/*.vrb
