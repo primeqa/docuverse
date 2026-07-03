@@ -111,7 +111,8 @@ class TextTiler:
         if text is None:
             return []
         else:
-            text = text.replace(r'\n+', '\n').replace(r' +', ' ')
+            text = re.sub(r'\n+', '\n', text)
+            text = re.sub(r' +', ' ', text)
         pieces = []
 
         if text.find("With this app") >= 0 or text.find("App ID") >= 0:
@@ -165,6 +166,18 @@ class TextTiler:
         else:
             text = re.sub(TextTiler.url_re, 'URL', text)
         return text
+
+    def get_tokenized_lengths(self, texts: List[str], exclude_special_tokens=True) -> List[int]:
+        """Batched counterpart of get_tokenized_length: one tokenizer call for
+        all texts (fast tokenizers batch in Rust) instead of a Python loop of
+        per-text calls. Falls back to character counts in char mode."""
+        if self.count_type == self.COUNT_TYPE_CHAR or self.tokenizer is None:
+            return [len(t) for t in texts]
+        if not texts:
+            return []
+        toks = self.tokenizer(texts)["input_ids"]
+        adjust = 0 if exclude_special_tokens else self.tokenizer_num_special_tokens
+        return [len(t) - adjust for t in toks]
 
     def get_tokenized_length(self, text, exclude_special_tokens=True, forced_tok=False):
         """
@@ -264,13 +277,18 @@ class TextTiler:
                         _ends.append(sents[i + 1].begin if i < len(sents) - 1 else len(text))
 
                     num_sents = max_num_sentences # len(list(parsed_text.sentences))
+                    # One batched tokenizer call for all sentence spans instead
+                    # of a per-sentence call inside the loop.
+                    _spans = [text[_begins[i]:(_begins[i + 1] if i < num_sents - 1 else len(text))]
+                              for i in range(num_sents)]
+                    _span_lengths = self.get_tokenized_lengths(_spans)
                     for i, sent in enumerate(sents):
                         if i > max_num_sentences:
                             break
                         stext = sent.text
                         begin = _begins[i]
                         end = _begins[i + 1] if i < num_sents - 1 else len(text)
-                        slen = self.get_tokenized_length(text[begin:end])
+                        slen = _span_lengths[i]
                         if slen > max_length:
                             tokens = list(sent.tokens)
                             too_long = [[tokens[k].begin, tokens[k + 1].begin] for k in range(len(tokens) - 1)]
@@ -339,37 +357,44 @@ class TextTiler:
                         added_titles = [False for _ in positions]
                     elif self.count_type == self.COUNT_TYPE_CHAR:
                         init_pos = 0
-                        end_pos = max_length
                         texts = []
                         positions = []
                         added_titles = []
                         title_length = len(title)
                         max_len = len(text)
                         idx = 0
-                        while init_pos < max_length:
+                        while init_pos < max_len:
                             clen = max_length
                             if self._need_to_add_title(idx, title_handling):
                                 clen -= title_length + 1
-                            end_pos = min(init_pos + clen, max_len)
-                            while not text[end_pos].isspace() and end_pos >= init_pos:
-                                end_pos -= 1
+                            hard_end = min(init_pos + clen, max_len)
+                            end_pos = hard_end
+                            if end_pos < max_len:
+                                # Prefer breaking on whitespace; if the window has
+                                # none, hard-break mid-word rather than emit an
+                                # empty tile (which would stall the loop).
+                                ws = end_pos
+                                while ws > init_pos and not text[ws].isspace():
+                                    ws -= 1
+                                if ws > init_pos:
+                                    end_pos = ws
                             texts.append(get_expanded_text(text[init_pos:end_pos], title,
                                                            pos, title_handling, title_in_text))
                             positions.append([init_pos, end_pos])
                             added_titles.append(self._need_to_add_title(idx, title_handling, title_in_text))
-                            init_pos = end_pos - stride
-                            init_pos1 = init_pos
-                            while not text[init_pos].isspace() and init_pos < end_pos:
-                                init_pos += 1
-                            # If there are only non-space chars till the end of the current chunk, then break forcesully
-                            # in the middle of text.
-                            if init_pos < end_pos:
-                                init_pos += 1
-                            else:
-                                init_pos = init_pos1
+                            if end_pos >= max_len:
+                                break
+                            next_pos = max(end_pos - stride, 0)
+                            # Advance to the next whitespace inside the overlap so
+                            # tiles start on word boundaries when possible.
+                            probe = next_pos
+                            while probe < end_pos and not text[probe].isspace():
+                                probe += 1
+                            if probe < end_pos:
+                                next_pos = probe + 1
+                            # Guarantee forward progress.
+                            init_pos = next_pos if next_pos > init_pos else end_pos
                             idx += 1
-                            if idx > 100:
-                                raise RuntimeError(f"Data too big: {idx} fragments.")
 
                 return texts, positions, added_titles
         return [], [], []
@@ -489,8 +514,8 @@ class TextTiler:
             return title_handling == 'all'
 
     def trim_text(self, text, title, title_in_text):
-        if self.text_trim_to_type == self.COUNT_TYPE_CHAR:
-            text = text[:self.text_trim_to_type]
+        if self.text_trim_to_type == 'char':
+            text = text[:self.text_trim_to]
             return text, None, None
         else:
             if self.aligned_on_sentences:

@@ -48,7 +48,8 @@ class TestSearchData(unittest.TestCase):
             tiler=tiler,
         )
         self.assertIsInstance(filename, str)
-        self.assertTrue(filename.endswith('.pickle.xz'))
+        # Cache switched from LZMA to gzip-1 (much faster writes).
+        self.assertTrue(filename.endswith('.pickle.gz'))
 
     def test_read_cache_file_if_needed(self):
         # No cache file on disk → empty list, not None.

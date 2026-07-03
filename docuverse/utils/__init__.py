@@ -52,6 +52,10 @@ def _recursive_get(dictionary: Any, key: str, default: Any) -> Any:
         current = dictionary if isinstance(dictionary, dict) else dictionary.__dict__
 
         for k in keys:
+            if current is None:
+                # e.g. config.search_params is None while looking up
+                # "search_params.oversample" — the path is simply absent.
+                return default
             if isinstance(current, list):
                 index = _is_number(k)
                 if index is not None:  # Fix bug: was 'val' instead of 'vv'
@@ -60,6 +64,8 @@ def _recursive_get(dictionary: Any, key: str, default: Any) -> Any:
                 else:
                     raise RuntimeError(f"Could not find key {k} in list: {current}")
             if not isinstance(current, dict):
+                if not hasattr(current, '__dict__'):
+                    return default
                 current = current.__dict__
             if k in current:
                 current = current[k]
@@ -649,8 +655,8 @@ def open_stream(file_name: str, write: bool = False, binary=False):
     if write:
         mode = "w"
         cache_dir = os.path.dirname(file_name)
-        if cache_dir and not os.path.exists(cache_dir):
-            os.makedirs(cache_dir)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
     else:
         mode = "r"
         if not os.path.exists(file_name):
@@ -828,11 +834,15 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
     import multiprocessing as mp
 
     # Use 'fork' context for fast startup (avoids re-importing modules).
-    # Fall back to 'spawn' if fork is unavailable (e.g., macOS with CUDA).
+    # The workers rely on fork-inherited module globals (_parallel_data etc.),
+    # so if fork is unavailable (e.g. macOS/Windows), spawn workers would
+    # crash with empty globals — use threads instead.
     try:
         ctx = mp.get_context('fork')
     except ValueError:
-        ctx = mp.get_context('spawn')
+        return parallel_process(process_func, data, num_threads,
+                                post_func=post_func, post_label=post_label,
+                                msg=msg, use_threads=True)
 
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -1051,8 +1061,8 @@ def vector_is_empty(vector):
 
 def prepare_for_save_and_backup(output_file, overwrite=False):
     path = os.path.dirname(output_file)
-    if not os.path.exists(path):
-        os.makedirs(path)
+    if path:  # empty for bare filenames — os.makedirs("") raises
+        os.makedirs(path, exist_ok=True)
     if not overwrite and os.path.exists(output_file):
         # Make a copy before writing over
         import shutil
@@ -1143,22 +1153,24 @@ def _trim_json(data, max_string_len: int=9999):
     """
     Trims JSON-compatible data structures to ensure string values do not exceed a
     specified length. This function recursively traverses dictionaries, lists,
-    and strings, limiting string values to a maximum length of 9999 characters.
+    and strings, limiting string values to max_string_len characters.
+    A non-positive max_string_len means "no trimming" (matching the
+    max_text_size=-1 config convention).
 
     Args:
         data: The JSON-compatible data structure to be trimmed. This can be a
             dictionary, list, or string.
 
     Returns:
-        The trimmed JSON-compatible data structure with string values limited to a
-        maximum length of 9999 characters.
-
+        The trimmed JSON-compatible data structure.
     """
+    if max_string_len is None or max_string_len <= 0:
+        return data
     if isinstance(data, dict):
         for k, v in data.items():
-            data[k] = _trim_json(v)
+            data[k] = _trim_json(v, max_string_len)
     elif isinstance(data, list):
-        data = [_trim_json(v) for v in data]
+        data = [_trim_json(v, max_string_len) for v in data]
     elif isinstance(data, str):
         data = data[:max_string_len]
     return data

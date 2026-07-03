@@ -70,10 +70,12 @@ class DefaultProcessor:
         if DefaultProcessor.stopwords is None:
             stopword_file = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
                                          "resources", "stopwords.json")
-            stopwords_list = orjson.loads("".join(open(stopword_file).readlines()))
+            with open(stopword_file) as f:
+                stopwords_list = orjson.loads(f.read())
             stopwords = {}
             for lang, vals in stopwords_list.items():
                 stopwords[lang] = re.compile(f"\\b({'|'.join(vals)})\\b", re.IGNORECASE)
+            DefaultProcessor.stopwords = stopwords
 
     def _init(self, **kwargs):
         pass
@@ -299,7 +301,9 @@ class SearchData:
                             aligned: bool = True,
                             tiler: TextTiler = None,
                             title_handling="all",
-                            cache_dir: str = default_cache_dir):
+                            cache_dir: str = default_cache_dir,
+                            doc_based: bool = True,
+                            max_num_documents: int | None = None):
         def prune_list(list):
             return [d for d in list if d]
         tok_dir_name = os.path.basename(tiler.tokenizer.name_or_path) \
@@ -307,7 +311,9 @@ class SearchData:
             else "none"
         if tok_dir_name == "":
             tok_dir_name = os.path.basename(os.path.dirname(tiler.tokenizer.name_or_path))
-        extension = "pickle.xz"
+        # gzip-1 is ~10-50x faster to write than single-threaded LZMA at an
+        # acceptable ratio; the cache is a throwaway artifact, not an archive.
+        extension = "pickle.gz"
         cache_file_name = os.path.join(cache_dir,
                                        "_".join(
                                            prune_list([
@@ -316,7 +322,13 @@ class SearchData:
                                                f"{stride}",
                                                f"{aligned}" if aligned else "unaligned",
                                                f"{title_handling}",
-                                               f"trim={tiler.text_trim_to}" if tiler.text_trim_to else "",
+                                               f"trim={tiler.text_trim_to}" if (tiler is not None and tiler.text_trim_to) else "",
+                                               # A truncated read must not poison the
+                                               # full-corpus cache (and vice versa), and
+                                               # doc- vs passage-based tiling produce
+                                               # different passages from the same file.
+                                               f"first{max_num_documents}" if max_num_documents else "",
+                                               "" if doc_based else "psg",
                                                f"{tok_dir_name}.{extension}"
                                            ])
                                        ))
@@ -355,10 +367,18 @@ class SearchData:
     def write_cache_file(cache_filename, passages, use_cache=True):
         if not use_cache:
             return
+        if cache_filename.endswith(".gz"):
+            # Fast compression for the cache path; reads go through
+            # open_stream, which handles .gz transparently.
+            import gzip
+            cache_dir = os.path.dirname(cache_filename)
+            if cache_dir:
+                os.makedirs(cache_dir, exist_ok=True)
+            with gzip.open(cache_filename, "wb", compresslevel=1) as output_stream:
+                pickle.dump(passages, output_stream)
+            return
         output_stream = open_stream(cache_filename, write=True, binary=True)
         pickle.dump(passages, output_stream)
-        # for p in passages:
-        #     output_stream.write(f"{orjson.dumps(p)}\n".encode("utf-8"))
         output_stream.close()
 
     @classmethod
@@ -426,8 +446,8 @@ class SearchData:
                                           template=itm,
                                           title_handling=title_handling)
             else:
+                tpassages = []
                 for pi, passage in enumerate(unit[data_template.passage_header]):
-                    tpassages = []
                     passage_id = get_param(passage, data_template.passage_id_header, str(pi))
                     try:
                         tpassages.extend(
@@ -443,8 +463,7 @@ class SearchData:
                         )
                     except Exception as e:
                         print(f"Error while processing passage {id}-{passage_id}: {e}")
-                    return tpassages
-                return None
+                return tpassages
 
     @staticmethod
     def remove_stopwords(txt, **kwargs):
@@ -484,6 +503,7 @@ class SearchData:
         aligned_on_sentences = get_param(kwargs, 'aligned_on_sentences', True)
         num_threads = kwargs.get('num_preprocessor_threads', 1)
         max_num_documents = kwargs.get('max_num_documents')
+        limited_read = max_num_documents is not None
         if max_num_documents is None:
             max_num_documents = 100000000
         else:
@@ -495,7 +515,8 @@ class SearchData:
             data_template = beir_data_template
 
         docid_filter   = cls.read_filter(kwargs.get('docid_filter', {}))
-        exclude_docids = cls.read_filter(kwargs.get('exclude_docids', {}))
+        exclude_docids = cls.read_filter(kwargs.get('exclude_docid_filter')
+                                         or kwargs.get('exclude_docids', {}))
         uniform_product_name = kwargs.get('uniform_product_name')
         unmapped_ids = []
         return_unmapped_ids = kwargs.get('return_unmapped', None)
@@ -555,14 +576,15 @@ class SearchData:
             cache_filename = cls.get_cached_filename(
                 cache_key, max_doc_size=max_doc_length, stride=stride,
                 aligned=aligned_on_sentences, title_handling=title_handling,
-                tiler=tiler)
+                tiler=tiler, doc_based=doc_based,
+                max_num_documents=max_num_documents if limited_read else None)
 
         # ── Step 2: Check cache → return early if hit ───────────────────────
         if cache_filename:
             cached_passages = cls.read_cache_file_if_needed(cache_filename, files)
             if cached_passages:
                 passages = (cached_passages[:max_num_documents]
-                            if 'max_num_documents' in kwargs else cached_passages)
+                            if limited_read else cached_passages)
                 num_docs = len(passages)
                 if docid_filter:
                     passages = [d for d in passages if get_orig_docid(d['id']) in docid_filter]
@@ -975,12 +997,15 @@ class SearchData:
                     for key in indata.keys():
                             # Check if column has any string values containing '[' and convert it to a list.
                             # For some reason, that's how arrays are represented in the csv column.
+                            # Sample the first values only — scanning every cell of
+                            # every column is O(cells) for a format property that is
+                            # uniform per column.
                             has_bracket_strings = False
-                            for val in indata[key].dropna():
+                            for val in indata[key].dropna().head(100):
                                 if isinstance(val, str) and '[' in val:
                                     has_bracket_strings = True
                                     break
-                            
+
                             if has_bracket_strings:
                                 indata[key] = indata[key].map(convert_to_list)
                     data = indata.to_dict(orient="records")

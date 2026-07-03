@@ -186,6 +186,13 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                **kwargs) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
         embs = []
+        if isinstance(texts, str):
+            # A bare string would otherwise be treated as a list of characters
+            # and produce one embedding per character.
+            return self.encode([texts], _batch_size=_batch_size,
+                               show_progress_bar=show_progress_bar,
+                               tqdm_instance=tqdm_instance,
+                               prompt_name=prompt_name, tm=tm, **kwargs)[0]
         if _batch_size == -1:
             _batch_size = self.batch_size
         if show_progress_bar is None:
@@ -199,7 +206,8 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                 for i in range(0, len(texts), _batch_size):
                     i_end = min(i + _batch_size, len(texts))
                     tems = self._encode_data(texts=stexts[i:i_end], _batch_size=_batch_size,
-                                             show_progress_bar=False, tm=tm)
+                                             show_progress_bar=False,
+                                             prompt_name=prompt_name, tm=tm)
                     embs.extend(tems)
                     del tems  # Free memory immediately
                     tqdm_instance.update(i_end - i)
@@ -362,17 +370,17 @@ class DenseEmbeddingFunction(EmbeddingFunction):
         if tm is None:
             tm = timer(timer.get_top_method("encode"))
 
-        # Phase 1: Tokenize all batches
-        all_features = []
-        for start_index in range(0, len(sentences_sorted), batch_size):
+        # Tokenize and forward per batch (interleaved). Staging *all* tokenized
+        # batches before the first forward pass held the entire input's token
+        # tensors in RAM at once; interleaving caps memory at one batch while
+        # add_timing still accumulates per-label totals for the two phases.
+        all_embeddings = []
+        batch_starts = range(0, len(sentences_sorted), batch_size)
+        tm.mark()
+        for start_index in tqdm(batch_starts, desc="Encoding", disable=not show_progress_bar):
             batch = sentences_sorted[start_index:start_index + batch_size]
             features = tokenize_fn(batch)
-            all_features.append(features)
-        tm.add_timing("encode::tokenize")
-
-        # Phase 2: Forward pass on all batches
-        all_embeddings = []
-        for features in tqdm(all_features, desc="Encoding", disable=not show_progress_bar):
+            tm.add_timing("encode::tokenize")
             features = batch_to_device(features, device)
             features.update(extra_features)
             with torch.no_grad():
@@ -381,9 +389,9 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                 if normalize_embeddings:
                     embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
                 all_embeddings.extend(embeddings.cpu())
-        if device.type == 'cuda':
-            torch.cuda.synchronize()
-        tm.add_timing("encode::model_forward")
+            if device.type == 'cuda':
+                torch.cuda.synchronize()
+            tm.add_timing("encode::model_forward")
 
         # Unsort back to original order
         all_embeddings = [all_embeddings[idx] for idx in np.argsort(length_sorted_idx)]
@@ -394,5 +402,11 @@ class DenseEmbeddingFunction(EmbeddingFunction):
 
     @staticmethod
     def normalize(passage_vectors):
-        return [v / np.linalg.norm(v) for v in passage_vectors if np.linalg.norm(v) > 0]
+        # Zero vectors are kept as-is (not dropped): removing entries would
+        # silently misalign every subsequent embedding with its text.
+        result = []
+        for v in passage_vectors:
+            norm = np.linalg.norm(v)
+            result.append(v / norm if norm > 0 else v)
+        return result
 
