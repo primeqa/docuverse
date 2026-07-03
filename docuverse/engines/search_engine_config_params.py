@@ -119,7 +119,7 @@ class RetrievalArguments(GenericArguments):
         }
     )
 
-    top_k: Optional[str] = field(
+    top_k: Optional[int] = field(
         default=10,
         metadata={
             "help": "The maximum number of results to return."
@@ -174,8 +174,9 @@ class RetrievalArguments(GenericArguments):
     stride: Optional[int] = field(
         default=None,
         metadata={
-            "help": "Argument that works in conjunction with --max_doc_length: it will define the "
-                    "increment of the window start while tiling the documents."
+            "help": "The overlap (in max_doc_length units) between consecutive tiles when splitting "
+                    "documents — HuggingFace-tokenizer 'stride' semantics. Prefer the clearer alias "
+                    "`tile_overlap`; if both are given, `stride` wins."
         }
     )
 
@@ -198,8 +199,9 @@ class RetrievalArguments(GenericArguments):
     tile_overlap: Optional[int] = field(
         default=None,
         metadata={
-            "help": "The counterargument to stride - it's defined as max_doc_length-stride. Sometimes"
-                    "it's easier to think in terms of overlap than in terms of stride."
+            "help": "Readable alias for `stride`: the number of tokens/chars shared between "
+                    "consecutive tiles. (The tiling code uses HF semantics where stride *is* the "
+                    "overlap, so the two are the same quantity.) Ignored when `stride` is set."
         }
     )
 
@@ -338,9 +340,31 @@ class RetrievalArguments(GenericArguments):
     )
 
     bulk_batch: Optional[int] = field(
-        default=40,
+        default=512,
         metadata={
-            "help": "If provided, the documents will be ingested with the provided bulk batch size."
+            "help": "Database insert batch size (documents per bulk/insert request). "
+                    "The old default of 40 severely under-filled Elasticsearch bulk "
+                    "requests and Milvus inserts."
+        }
+    )
+
+    encode_batch_size: Optional[int] = field(
+        default=512,
+        metadata={
+            "help": "Number of documents fed to the embedding model per encode call during "
+                    "ingestion. Decoupled from bulk_batch (the DB insert size) so the GPU "
+                    "is not throttled to database-sized batches; the embedder still "
+                    "micro-batches internally by its own batch_size."
+        }
+    )
+
+    batch_query_encoding: Optional[bool] = field(
+        default=True,
+        metadata={
+            "help": "If true (default), all query texts are encoded in one batched model pass "
+                    "before searching (much faster). Set to false to encode each query "
+                    "individually inside search() — required when benchmarking per-query "
+                    "latency, since batching moves encoding out of the per-query timing."
         }
     )
 
@@ -640,13 +664,15 @@ class RetrievalArguments(GenericArguments):
         # if self.hybrid == "":
             self.hybrid = {}
         if self.db_engine in ['milvus-bm25', 'milvus_bm25'] and self.milvus_idf_file is None:
-            self.milvus_idf_file = os.path.join(self.project_dir, f"{self.index_name}.idf")
+            self.milvus_idf_file = os.path.join(self.project_dir or ".", f"{self.index_name}.idf")
         if self.sparse_config is None:
             self.sparse_config = SparseConfig()
         elif isinstance(self.sparse_config, dict):
             self.sparse_config = SparseConfig(**self.sparse_config)
         elif not isinstance(self.sparse_config, SparseConfig):
             raise NotImplementedError
+        if self.stride is None and self.tile_overlap is not None:
+            self.stride = int(self.tile_overlap)
         if self.trim_text_to is not None:
             if isinstance(self.trim_text_to, str):
                 if self.trim_text_to.endswith("c"):
@@ -675,7 +701,9 @@ class EngineArguments(GenericArguments):
     actions: Optional[str] = field(
         default="ir",
         metadata={
-            "help": "The actions that can be done: i(ingest), r(retrieve), R(rerank), u(update), e(evaluate)"
+            "help": "The actions to perform. Either single-letter flags — i(ngest), r(etrieve), "
+                    "R(erank), u(pdate), e(valuate), e.g. 'ire' — or full words, comma-separated: "
+                    "'ingest,retrieve,evaluate'."
         }
     )
 
@@ -735,10 +763,24 @@ class EngineArguments(GenericArguments):
     def __post_init__(self):
         for _, val in self.action_flags.items():
             setattr(self, val, False)
-        for a in self.actions:
-            action_flag = self.action_flags.get(a)
-            if action_flag is not None:
-                setattr(self, action_flag, True)
+        actions = self.actions or ""
+        full_names = set(self.action_flags.values())
+        if "," in actions or actions.strip() in full_names:
+            # Word form: "ingest,retrieve,evaluate" (single letters also accepted).
+            for tok in (t.strip() for t in actions.split(",")):
+                if tok in full_names:
+                    setattr(self, tok, True)
+                elif tok in self.action_flags:
+                    setattr(self, self.action_flags[tok], True)
+                elif tok:
+                    print(f"WARNING: unknown action {tok!r} — expected one of "
+                          f"{sorted(full_names)} or letters {sorted(self.action_flags)}.")
+        else:
+            # Letter form: "ire".
+            for a in actions:
+                action_flag = self.action_flags.get(a)
+                if action_flag is not None:
+                    setattr(self, action_flag, True)
 
 
 @dataclass
@@ -932,7 +974,9 @@ class EvaluationConfig:
             if 'evaluation' in data:
                 data = data['evaluation']
         elif isinstance(config, EvaluationArguments):
-            data = vars(config)
+            # Copy: vars() returns the live __dict__, and data.update(kwargs)
+            # below would otherwise mutate the caller's config object.
+            data = dict(vars(config))
         elif isinstance(config, dict):
             if 'evaluation' in config:
                 data = config['evaluation']

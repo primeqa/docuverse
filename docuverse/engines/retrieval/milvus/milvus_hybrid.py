@@ -121,6 +121,7 @@ class MilvusHybridEngine(MilvusEngine):
         self.config = config
         self.shared_tokenizer = get_param(config, 'hybrid.shared_tokenizer',
                                           get_param(kwargs, 'shared_tokenizer', False))
+        self._collection_loaded = False
 
         super().__init__(config, **kwargs)
 
@@ -169,8 +170,8 @@ class MilvusHybridEngine(MilvusEngine):
     def init_client(self): #override the parent functionality
         super().init_client()
         if self.server.type == "file":
-            print("Hybrid search doesn't work on files databases, only on the server, for now.")
-            raise NotImplemented()
+            raise NotImplementedError(
+                "Hybrid search doesn't work on file databases, only on a Milvus server, for now.")
 
         for m in self.models:
             m.check_client()
@@ -293,7 +294,11 @@ class MilvusHybridEngine(MilvusEngine):
         data = [m.encode_query(question, tm=tm) for m in self.models]
         tm.add_timing("encode")
         requests = []
-        self.client.load_collection(self.config.index_name)
+        # load_collection is idempotent server-side but costs a round-trip;
+        # once per process is enough (collections stay loaded).
+        if not self._collection_loaded:
+            self.client.load_collection(self.config.index_name)
+            self._collection_loaded = True
         for s, d, m, name in zip(search_params, data, self.models, self.embedding_names):
             if self._check_zero_size_sparse_vector(d):
                 if self.config.verbose:

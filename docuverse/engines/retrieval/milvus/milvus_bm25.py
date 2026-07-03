@@ -84,6 +84,8 @@ class MilvusBM25Engine(MilvusEngine):
                     tm=None):
         # print("Computing embeddings for the input.")
         embeddings = []
+        if batch_size is None or batch_size <= 0:
+            batch_size = max(1, len(texts))
         if tqdm_instance is None:
             t=tqdm(desc="Encoding documents (BM25)", total=len(texts), disable=not show_progress_bar)
         else:
@@ -104,6 +106,10 @@ class MilvusBM25Engine(MilvusEngine):
 
     def encode_query(self, question, tm=None):
         return self.bm25_ef.encode_queries([question.text])[[0],:]
+
+    def encode_queries_batch(self, texts):
+        encs = self.bm25_ef.encode_queries(texts)
+        return [encs[[i], :] for i in range(len(texts))]
 
     def get_search_request(self, text):
         data = self.encode_data([text], batch_size=1, show_progress=False)

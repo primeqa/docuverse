@@ -74,6 +74,15 @@ class MilvusSparseEngine(MilvusEngine):
                                                )
         return query_vector
 
+    def encode_queries_batch(self, texts):
+        # One batched forward pass with query-side expansion limits.
+        return self.model.encode(texts,
+                                 max_terms=self.model.model.query_max_tokens,
+                                 encode_question=get_param(self.config,
+                                                           'sparse_config.runtime_query_encoding',
+                                                           True),
+                                 show_progress_bar=False)
+
     @classmethod
     def test(cls):
         collection_name = "hello_sparse"

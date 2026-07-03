@@ -13,6 +13,10 @@ def create_retrieval_engine(retriever_config: dict):
    """
    name: str | None = retriever_config.get('db_engine')
    engine = None
+   # Canonicalize: underscores and dashes are interchangeable in engine names
+   # ("milvus_dense" == "milvus-dense"); file: specs are left untouched.
+   if name and not name.startswith("file:"):
+       name = name.lower().replace("_", "-")
    print(f"Retrieval engine: {name}")
    if name.startswith('elastic-') or name.startswith('es-'):
        import docuverse.engines.retrieval.elastic as elastic

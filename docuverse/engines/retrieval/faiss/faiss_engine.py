@@ -51,6 +51,7 @@ class FAISSEngine(RetrievalEngine):
         self.metadata_store = {}  # Stores metadata for each document
 
         # Configuration
+        self._query_embedding_cache = {}
         self.load_model_config(config_params)
         self.text_header = self.TEXT_HEADER
         self.title_header = self.TITLE_HEADER
@@ -133,9 +134,12 @@ class FAISSEngine(RetrievalEngine):
                 quantizer = faiss.IndexFlatIP(self.hidden_dim)
                 self.index = faiss.IndexIVFFlat(quantizer, self.hidden_dim, nlist)
             elif self.index_type == "HNSW":
-                # Hierarchical Navigable Small World graph
+                # Hierarchical Navigable Small World graph. Use inner product
+                # to match the Flat/IVFFlat indexes (embeddings are normalized,
+                # so IP == cosine); the default METRIC_L2 would silently flip
+                # score semantics relative to the other index types.
                 m = get_param(kwargs, "hnsw_m", 32)  # number of connections
-                self.index = faiss.IndexHNSWFlat(self.hidden_dim, m)
+                self.index = faiss.IndexHNSWFlat(self.hidden_dim, m, faiss.METRIC_INNER_PRODUCT)
             else:
                 raise ValueError(f"Unknown index type: {self.index_type}")
 
@@ -355,11 +359,12 @@ class FAISSEngine(RetrievalEngine):
             metadatas.append(metadata)
             ids.append(doc_id_str)
 
-        # Generate embeddings
+        # Generate embeddings (_batch_size=-1: the embedder micro-batches by
+        # its own batch_size instead of one giant batch that can OOM).
         embeddings = self.model.encode(
             documents,
             show_progress_bar=False,
-            _batch_size=len(documents),
+            _batch_size=-1,
             tm=tm
         )
 
@@ -393,6 +398,14 @@ class FAISSEngine(RetrievalEngine):
 
     # ===== Search Methods =====
 
+    def precompute_query_embeddings(self, queries) -> None:
+        """Batch-encode all query texts in one model pass (used when
+        batch_query_encoding is true; search() falls back to per-query
+        encoding otherwise, preserving per-query latency benchmarks)."""
+        vectors = self.model.encode([q.text for q in queries],
+                                    show_progress_bar=False, _batch_size=-1)
+        self._query_embedding_cache = {id(q): v for q, v in zip(queries, vectors)}
+
     def search(self, query: SearchQueries.Query, **kwargs) -> SearchResult:
         """
         Search for documents matching a single query.
@@ -409,8 +422,11 @@ class FAISSEngine(RetrievalEngine):
         tm.add_timing("load_index")
         query_text = query.text
 
-        # Generate query embedding
-        embedding = self.model.encode([query_text], show_progress_bar=False, tm=tm)[0]
+        # Generate query embedding (precomputed batch first, else per-query)
+        embedding = self._query_embedding_cache.pop(id(query), None) \
+            if self._query_embedding_cache else None
+        if embedding is None:
+            embedding = self.model.encode([query_text], show_progress_bar=False, tm=tm)[0]
         query_vector = np.array([embedding]).astype('float32')
         tm.add_timing("embedding")
 
@@ -432,9 +448,10 @@ class FAISSEngine(RetrievalEngine):
             # Extract text from metadata
             text = metadata.get('text', '')
 
-            # Convert L2 distance to similarity score (inverse distance)
-            # For L2 distance: smaller is better, so we use 1/(1+distance)
-            score = 1.0 / (1.0 + distance)
+            # The indexes built here are inner-product (IndexFlatIP / IP
+            # quantizer), so FAISS already returns a similarity: higher is
+            # better. Do NOT apply 1/(1+d) — that inverts the score ordering.
+            score = float(distance)
 
             # Create a passage dict
             passage = {

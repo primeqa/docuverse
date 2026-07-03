@@ -61,7 +61,8 @@ class ChromaDBEngine(RetrievalEngine):
         # Handle batch size configuration
         if self.config.ingestion_batch_size == 40:
             self.config.ingestion_batch_size = self.config.bulk_batch
-            
+
+        self._query_embedding_cache = {}
         self.init_client()
 
     # ===== Initialization Methods =====
@@ -113,7 +114,12 @@ class ChromaDBEngine(RetrievalEngine):
             self.collection = self.client.create_collection(
                 name=index_name,
                 embedding_function=None,
-                metadata={"hnsw:space": self.DEFAULT_SIMILARITY}
+                metadata={
+                    "hnsw:space": self.DEFAULT_SIMILARITY,
+                    # Higher search_ef improves recall at query time; makes a
+                    # lower search_params.oversample viable.
+                    "hnsw:search_ef": get_param(self.config, 'search_params.search_ef', 200),
+                }
             )
             logging.info(f"Created collection: {index_name}")
         except Exception as e:
@@ -196,7 +202,7 @@ class ChromaDBEngine(RetrievalEngine):
 
         self.load_or_create_index()
 
-        tm = timer(f"{SearchEngine.__name}::ingest")
+        tm = timer(f"{SearchEngine.get_name()}::ingest")
         tm.add_timing("data_analysis")
         
         corpus_size = len(corpus)
@@ -260,11 +266,12 @@ class ChromaDBEngine(RetrievalEngine):
             metadatas.append(metadata)
             ids.append(doc_id_str)
         
-        # Generate embeddings
+        # Generate embeddings (_batch_size=-1: the embedder micro-batches by
+        # its own batch_size instead of one giant batch that can OOM).
         embeddings = self.model.encode(
             documents,
             show_progress_bar=False,
-            _batch_size=len(documents),
+            _batch_size=-1,
             tm=tm
         )
 
@@ -292,7 +299,15 @@ class ChromaDBEngine(RetrievalEngine):
             tq_instance.update(len(data[0]))
 
     # ===== Search Methods =====
-    
+
+    def precompute_query_embeddings(self, queries) -> None:
+        """Batch-encode all query texts in one model pass (used when
+        batch_query_encoding is true; search() falls back to per-query
+        encoding otherwise, preserving per-query latency benchmarks)."""
+        vectors = self.model.encode([q.text for q in queries],
+                                    show_progress_bar=False, _batch_size=-1)
+        self._query_embedding_cache = {id(q): v for q, v in zip(queries, vectors)}
+
     def search(self, query: SearchQueries.Query, **kwargs) -> SearchResult:
         """
         Search for documents matching a single query.
@@ -316,14 +331,20 @@ class ChromaDBEngine(RetrievalEngine):
             filter_value = self.config.filters
             filter_condition = {filter_key: filter_value}
         tm.add_timing("filter_condition")
-        # Generate query embedding
-        embedding = self.model.encode([query_text], show_progress_bar=False, tm=tm)[0]
+        # Generate query embedding (precomputed batch first, else per-query)
+        embedding = self._query_embedding_cache.pop(id(query), None) \
+            if self._query_embedding_cache else None
+        if embedding is None:
+            embedding = self.model.encode([query_text], show_progress_bar=False, tm=tm)[0]
         tm.add_timing("embedding")
-        
-        # Perform the search
+
+        # ChromaDB's HNSW recall at exactly top_k can be poor, so we oversample
+        # and slice. The multiplier is tunable via search_params.oversample —
+        # lower it (with a higher hnsw:search_ef) to cut per-query cost.
+        oversample = get_param(self.config, 'search_params.oversample', 20)
         results = self.collection.query(
             query_embeddings=[embedding],
-            n_results=20*self.config.top_k,  # We need to extend the top_k for chromadb, or will give suboptimal results.
+            n_results=oversample*self.config.top_k,
             where=filter_condition
         )
         tm.add_timing("chromadb_search")

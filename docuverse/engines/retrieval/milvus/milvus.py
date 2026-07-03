@@ -111,7 +111,13 @@ class MilvusEngine(RetrievalEngine):
         self.output_fields = ["id", "text", 'title'] if self.config.store_text_in_index else ["title", "id"]
         # self.output_fields = [self.config.data_template.get(f"{t}_header", t) for t in ["id", "text", 'title']]
         extra = get_param(self.config.data_template, 'extra_fields', None)
-        self.ingestion_batch_size = get_param(self.config, 'bulk_batch', 40)
+        self.ingestion_batch_size = get_param(self.config, 'bulk_batch', 512)
+        # Encoding batch (GPU-facing) is decoupled from the DB insert batch.
+        self.encode_batch_size = max(
+            get_param(self.config, 'encode_batch_size', 512) or 0,
+            self.ingestion_batch_size)
+        # question-object-id -> precomputed query vector (batch_query_encoding).
+        self._query_embedding_cache = {}
 
         if extra is not None and len(extra) > 0:
             self.output_fields += extra
@@ -208,7 +214,11 @@ class MilvusEngine(RetrievalEngine):
         fmt = "\n=== {:30} ==="
         fields = self.create_fields()
 
-        still_create_index = self.create_update_index(fmt=fmt, update=update, fields=fields)
+        # Must be passed as do_update: the base signature is
+        # create_update_index(do_update=True, **kwargs), so the old
+        # `update=update` kwarg silently left do_update at True for every
+        # ingest, treating fresh ingests as updates.
+        still_create_index = self.create_update_index(do_update=update, fmt=fmt, fields=fields)
         if not still_create_index:
             return None
 
@@ -218,19 +228,21 @@ class MilvusEngine(RetrievalEngine):
     def ingest(self, corpus: SearchCorpus, update: bool = False, **kwargs):
         texts = self._check_index_creation_and_get_text(corpus, update)
 
+        if texts is None:
+            return False
         tm = timer("ingest_and_test::ingest")
         self._analyze_data(texts)
         tm.add_timing("data_analysis")
-        if texts is None:
-            return False
         tq = tqdm(desc="Creating data", total=len(texts), leave=True)
         tq1 = tqdm(desc="  * Encoding data", total=len(texts), leave=False)
         tq2 = tqdm(desc="  * Milvusing data", total=len(texts), leave=False)
-        ingestion_batch = self.ingestion_batch_size
-        tq.write(f"Ingesting with a batch size of {ingestion_batch}")
+        # Encode in large chunks (GPU-friendly); _insert_data re-batches the
+        # actual DB inserts by ingestion_batch_size internally.
+        encode_batch = self.encode_batch_size
+        tq.write(f"Ingesting: encode batch {encode_batch}, insert batch {self.ingestion_batch_size}")
         try:
-            for i in range(0, len(texts), ingestion_batch):
-                last = min(i+ingestion_batch, len(texts))
+            for i in range(0, len(texts), encode_batch):
+                last = min(i+encode_batch, len(texts))
                 tm.mark()
                 data = self._create_data(corpus[i:last], texts[i:last], tq_instance=tq1, tm=tm, **kwargs)
                 # tm.add_timing("encode")
@@ -248,12 +260,13 @@ class MilvusEngine(RetrievalEngine):
         pass
 
     def _create_data(self, corpus, texts, tq_instance=None, tm=None, **kwargs):
-        passage_vectors = [[]] * len(corpus)
+        # batch_size=-1 lets the embedder use its own (model-sized) micro-batch
+        # instead of throttling the GPU to the DB insert size.
         if tq_instance is not None:
-            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=False, tm=tm)
+            passage_vectors = self.encode_data(texts, -1, show_progress_bar=False, tm=tm)
             tq_instance.update(len(texts))
         else:
-            passage_vectors = self.encode_data(texts, self.ingestion_batch_size, show_progress_bar=True, tm=tm)
+            passage_vectors = self.encode_data(texts, -1, show_progress_bar=True, tm=tm)
         data = []
         for i, (item, vector) in enumerate(zip(corpus, passage_vectors)):
             if vector_is_empty(vector):
@@ -287,15 +300,27 @@ class MilvusEngine(RetrievalEngine):
         self.wait_for_ingestion(data)
         # self.client.create_index(collection_name=self.config.index_name, index_params=self.prepare_index_params())
 
-    def wait_for_ingestion(self, data):
+    def wait_for_ingestion(self, data, poll_interval: float = 2.0, max_wait: float = 300.0):
+        """Poll collection stats until the rows from this batch are visible.
+
+        The row count is collection-wide, so we wait for at least len(data)
+        rows (relevant on a freshly created index); we also stop early if the
+        count stops growing or max_wait elapses, since some rows may have been
+        legitimately skipped (empty vectors).
+        """
         tm = timer()
         import time
-        ingested_items = len(data)
-        while ingested_items < len(data):
+        waited = 0.0
+        prev_count = -1
+        while waited < max_wait:
             res = self.client.get_collection_stats(collection_name=self.config.index_name)
             ingested_items = res["row_count"]
+            if ingested_items >= len(data) or ingested_items == prev_count:
+                break
+            prev_count = ingested_items
             print(f"{tm.time_since_beginning()}: Currently ingested items: {ingested_items}")
-            time.sleep(10)
+            time.sleep(poll_interval)
+            waited += poll_interval
 
     def encode_data(self, texts, batch_size, tm=None, **kwargs):
         passage_vectors = self.model.encode(texts,
@@ -326,12 +351,31 @@ class MilvusEngine(RetrievalEngine):
     def analyze(self, text):
         pass
 
+    def precompute_query_embeddings(self, queries):
+        """Batch-encode all query texts in one model pass (invoked by
+        SearchEngine when batch_query_encoding is true). Engines that can
+        batch implement encode_queries_batch; per-query encoding inside
+        search() remains the fallback (and the benchmarking mode when
+        batch_query_encoding is false)."""
+        texts = [q.text for q in queries]
+        vectors = self.encode_queries_batch(texts)
+        if vectors is None:
+            return
+        self._query_embedding_cache = {id(q): v for q, v in zip(queries, vectors)}
+
+    def encode_queries_batch(self, texts):
+        """Return one query vector per text, or None if this engine cannot batch."""
+        return None
+
     def search(self, question: SearchQueries.Query, **kwargs) -> SearchResult:
         tm = timer("ingest_and_test::search::retrieve")
         self.check_client()
         search_params = self.get_search_params()
        # search_params['params']['group_by_field']='url'
-        query_vector = self.encode_query(question, tm=tm)
+        query_vector = self._query_embedding_cache.pop(id(question), None) \
+            if self._query_embedding_cache else None
+        if query_vector is None:
+            query_vector = self.encode_query(question, tm=tm)
         # tm.add_timing("encode")
         if vector_is_empty(query_vector):
             print(f"Query \"{question.text}\" has 0 length representation.")

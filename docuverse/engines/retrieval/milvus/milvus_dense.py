@@ -154,4 +154,9 @@ class MilvusDenseEngine(MilvusEngine):
         return  self.encode_data([question.text], batch_size=1,
                                         prompt_name="query", tm=tm)[0]
 
+    def encode_queries_batch(self, texts):
+        # Same path as encode_query (prompt + storage-dtype conversion), one
+        # batched model pass; batch_size=-1 uses the embedder's own batch size.
+        return self.encode_data(texts, batch_size=-1, prompt_name="query")
+
 
