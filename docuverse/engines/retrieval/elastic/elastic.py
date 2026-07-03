@@ -218,8 +218,10 @@ class ElasticEngine(RetrievalEngine):
             #                                 terms=vals)
         index_name = self.index_name.replace("_","-")
         if 'sub_searches' in query:
+            def _version_tuple(v):
+                return tuple(int(p) for p in v.split(".")[:3] if p.isdigit())
             query.update(size=self.config.top_k,
-                         _source={("excludes" if self.version>="8.15.0" else "exclude"): ["vector", "ml.predicted_value", "ml.tokens"]},
+                         _source={("excludes" if _version_tuple(self.version) >= (8, 15, 0) else "exclude"): ["vector", "ml.predicted_value", "ml.tokens"]},
                          rank=rank)
             res = self.client.search(
                 index=index_name,
@@ -356,7 +358,7 @@ class ElasticEngine(RetrievalEngine):
                 {
                     "_index": self.config.index_name,
                     "_id": row['id'],
-                    "_source": {k: row[k] for k in keys_to_index if row[k] != ""}
+                    "_source": {k: row[k] for k in keys_to_index if row.get(k, "") != ""}
                 }
                 for pi, row in enumerate(corpus[k:min(k + bulk_batch, num_passages)])
             ]
@@ -374,22 +376,8 @@ class ElasticEngine(RetrievalEngine):
                 print("Serialization error:", e)
             except Exception as e:
                 print("Unexpected error:", e)
-            t.update(bulk_batch)
+            t.update(len(actions))
         t.close()
-        if len(actions) > 0:
-            try:
-                bulk(client=self.client, actions=actions, pipeline=self.pipeline_name)
-            except RequestError as e:
-                if e.status_code == 400:
-                    print("Bad request:", e.info)
-                else:
-                    print("Request error:", e)
-            except NotFoundError as e:
-                print("Index not found:", e)
-            except SerializationError as e:
-                print("Serialization error:", e)
-            except Exception as e:
-                print("Unexpected error:", e)
 
     def add_fields(self, actions: List[dict], bulk_batch: int, corpus: SearchData, k: int, num_passages: int):
         """

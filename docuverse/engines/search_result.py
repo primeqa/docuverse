@@ -19,12 +19,15 @@ class SearchResult:
             self.__dict__.update(kwargs)
             for k, v in self.__dict__.items():
                 # Milvus will convert deep json trees into strings,
-                # so we're # undoing that here
-                if isinstance(v, str):
+                # so we're undoing that here. Only attempt for values that
+                # look like JSON containers — json.loads("123") / "true" /
+                # "null" would silently change the type of ordinary text,
+                # title or id fields.
+                if isinstance(v, str) and v[:1] in ('{', '['):
                     try:
                         r = json.loads(v)
                         setattr(self, k, r)
-                    except ValueError as e:
+                    except ValueError:
                         pass
         def __getitem__(self, key, default=None):
             if key in self.__dict__:

@@ -55,6 +55,7 @@ class SearchQueries(SearchData):
 
     def __iadd__(self, q: Query):
         self.queries.append(q)
+        return self
 
     def append(self, q: Query):
         self.queries.append(q)
@@ -126,7 +127,8 @@ class SearchQueries(SearchData):
                 for it, row in enumerate(at_most(question_data, max_num_questions)):
                     question = get_param(row, query_template.text_header)
                     if url is not None:
-                        question = (re.sub(url, lang, 'URL', question), remv_stopwords)
+                        # Replace URLs in the question text with the literal "URL".
+                        question = re.sub(url, 'URL', question)
                     rels = None
                     if relevant_map is not None:
                         val = get_param(row, query_template.id_header, None)

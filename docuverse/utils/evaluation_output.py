@@ -135,24 +135,30 @@ class EvaluationOutput:
                 self.ndcg[i] += doc_dcg[update] / self.idcg[ideal_k] if ideal_k > 0 else 0
                 self.match[i] += doc_match[update]
                 self.mrr[i] += doc_mrr[update]
-                self.map[i] = doc_map[update]*1.0/update
+                self.map[i] += doc_map[update]*1.0/update
 
             # print(self.match)
 
 
-        for i in self.ranks:
-            self.ndcg[i] /= self.num_judged_queries
-            self.match[i] /= self.num_judged_queries
-            self.mrr[i] /= self.num_judged_queries
-
-        for metric in [self.ndcg, self.match, self.mrr]:
-            metric = {i:v/self.num_judged_queries for i,v in metric.items()}
+        if self.num_judged_queries > 0:
+            for i in self.ranks:
+                self.ndcg[i] /= self.num_judged_queries
+                self.match[i] /= self.num_judged_queries
+                self.mrr[i] /= self.num_judged_queries
+                self.map[i] /= self.num_judged_queries
 
         if self.rouge_scores:
             self.rouge_match = {}
 
         # Flatten the nested structure
         flattened = list(itertools.chain.from_iterable(self.score_pairs))
+
+        if not flattened:
+            self.system_probs = []
+            self.gold_values = []
+            self.ece = None
+            self.brier = None
+            return
 
         # Unzip into two separate lists
         first_values, second_values = zip(*flattened)

@@ -57,7 +57,12 @@ class SearchCorpus(object):
                 csv.DictReader(in_file, fieldnames=fields, delimiter="\t") \
                     if fields is not None \
                     else csv.DictReader(in_file, delimiter="\t")
-            next(csv_reader)
+            if fields is not None:
+                # With explicit fieldnames the header line comes back as a data
+                # row and must be skipped. Without them, DictReader has already
+                # consumed the header — skipping here would drop the first
+                # actual document.
+                next(csv_reader)
             for row in tqdm(csv_reader):
                 assert len(row) in [2, 3, 4], f'Invalid .tsv record (has to contain 2 or 3 fields): {row}'
                 itm = {'text': (row["title"] + ' '  if 'title' in row else '') + row["text"],

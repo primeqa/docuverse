@@ -123,12 +123,15 @@ class EvaluationEngine:
                 print(f"Missing queryid {qid}")
                 continue
             query = input_queries[rqmap[qid]]
-            num_gold.append(num_positive[qid])
             if '-1' in gt[qid]:
                 continue
             num_eval_questions += 1
             tmp_scores = {r: 0 for r in ranks}
             tmp_pscores = {r: 0 for r in ranks}
+            # These three lists must stay index-aligned; append them together
+            # and index with [-1] below (rid counts *all* records, including
+            # skipped ones, so it must not be used as an index here).
+            num_gold.append(num_positive[qid])
             self.relevant.append([])
             self.score_pairs.append([])
             seen_docids = set()  # Track seen original docids to avoid duplicates
@@ -152,8 +155,8 @@ class EvaluationEngine:
                         is_rel = str(docid) in gt[qid]
                 else:
                     is_rel = str(docid) in gt[qid]
-                self.relevant[rid].append(is_rel)
-                self.score_pairs[rid].append([answer.score, 1.0 * is_rel])
+                self.relevant[-1].append(is_rel)
+                self.score_pairs[-1].append([answer.score, 1.0 * is_rel])
                 if not self.config.compute_rouge:
                     continue
                 if len(query['passages']) == 0:

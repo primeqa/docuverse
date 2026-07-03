@@ -106,7 +106,10 @@ class SparseSentenceTransformer:
                 # get topk high weights
 
                 max_size = maxdim1.shape[1]
-                topk, indices = torch.topk(maxdim1, k=self.doc_max_tokens) # (weight - (bs * max_terms), index - (bs * max_terms))
+                # Honor the caller's max_terms (query_max_tokens for queries,
+                # doc_max_tokens for documents); self.doc_max_tokens may be None.
+                k = min(max_terms, max_size)
+                topk, indices = torch.topk(maxdim1, k=k) # (weight - (bs * k), index - (bs * k))
                 if self.device == "cuda":
                     torch.cuda.synchronize()
                 tm.add_timing("get_topk_weights")
