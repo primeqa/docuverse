@@ -596,6 +596,36 @@ class RetrievalArguments(GenericArguments):
                           "query. Higher = better recall, slower. Ignored if no IVF."}
     )
 
+    # ----- fagin threshold engine -----
+
+    fagin_batch_rows: int = field(
+        default=64,
+        metadata={"help": "fagin: rows of sorted access taken from each active "
+                          "dimension's list per TA round (B). Larger = fewer "
+                          "threshold checks but more overshoot past the exact "
+                          "stopping depth."}
+    )
+
+    fagin_epsilon: float = field(
+        default=0.0,
+        metadata={"help": "fagin: additive halting slack — stop when the kth best "
+                          "score >= T - epsilon. 0.0 = exact Threshold Algorithm. "
+                          "Additive rather than multiplicative because inner-product "
+                          "thresholds can be negative."}
+    )
+
+    fagin_max_depth: int = field(
+        default=0,
+        metadata={"help": "fagin: cap on sorted-access depth (rows per dimension). "
+                          "0 = unlimited (exact). Nonzero makes results approximate."}
+    )
+
+    fagin_num_threads: int = field(
+        default=0,
+        metadata={"help": "fagin: OpenMP thread count for the TA scan kernel; "
+                          "0 = OMP default."}
+    )
+
     def __post_init__(self):
         super().__post_init__()
         # parse the query_header_template

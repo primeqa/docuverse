@@ -72,3 +72,12 @@ def test_search_rejects_bad_q():
     ix = FaginIndex.build(Y)
     with pytest.raises(ValueError, match="shape"):
         ix.search(np.zeros(3, dtype=np.float32), K=5)
+
+
+def test_retrieval_arguments_have_fagin_fields():
+    from docuverse.engines.search_engine_config_params import RetrievalArguments
+    cfg = RetrievalArguments()
+    assert cfg.fagin_batch_rows == 64
+    assert cfg.fagin_epsilon == 0.0
+    assert cfg.fagin_max_depth == 0
+    assert cfg.fagin_num_threads == 0
