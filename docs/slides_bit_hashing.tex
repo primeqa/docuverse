@@ -349,14 +349,14 @@ $\operatorname{sign}(x)$ wastes bits. Two fixes:
 $W \in \mathbb{R}^{d\times D}$ with \textbf{orthonormal rows} (so the fp32 rescore tier stays faithful).
 
 \vspace{4pt}
-\begin{center}\small
+\begin{center}\footnotesize
 \begin{tabular}{lccl}
 \toprule
 Method & Data? & Labels? & Idea \\
 \midrule
 Identity              & --  & --  & no rotation; bits stay correlated \\
 Random orthogonal     & no  & no  & JL / SimHash; unbiased but data-blind \\
-PCA / ZCA whitening   & yes & no  & align \& equalize variance; amplifies low-var noise \\
+PCA / ZCA whitening   & yes & no  & align \& equalize variance; boosts low-var noise \\
 \textbf{ITQ}          & yes & no  & rotate to minimize quantization error (next) \\
 Supervised hashing    & yes & yes & similarity-/rank-preserving loss \\
 RL + NDCG (REINFORCE) & yes & yes & optimize the metric directly (last) \\
@@ -602,15 +602,19 @@ granite-311m \scriptsize(768d) & 0.607 & 0.607 & 0.607 \\
 \end{columns}
 
 \vspace{3pt}
-\onslide<2->{\small
-\textcolor{hi}{\textbf{Quality holds for all modes.}} \textbf{1-bit Hamming + fp32 rescore is fastest \emph{and} smallest} --- lossless at 768d. ISA matters: see next slide.
+\onslide<2->{\scriptsize
+\textcolor{hi}{\textbf{Quality holds \emph{with fp32 rescore}}:} $b{=}2$ matches fp32 to 4 decimals;
+1-bit has a $\sim$0.001 nDCG@10 gap at both dims (e.g.\ 0.6123$\to$0.6121 at 768d) --- likely not statistically
+significant on 2{,}578 queries, but not zero. \textbf{Codes-only ranking (no rescore) costs 3--5 nDCG@10 pts} ---
+see slide 20 for the full \emph{rescore / no-rescore} breakdown. ISA matters: see next slide.
 }
 \end{frame}
 
 % ---------------------------------------------------------------
 \begin{frame}{Hardware portability: AVX-512 vs.\ AVX2}
 
-{\small Same code, two CPUs, identical 16-conc harness. Quality identical (lossless rescore).}
+{\small Same code, two CPUs, identical 16-conc harness. Quality $\approx$ identical (rescore closes the gap
+to $\leq$0.002 nDCG@10 --- see slide 18).}
 
 \vspace{2pt}
 \begin{center}\scriptsize
@@ -676,6 +680,197 @@ No-rescore costs $\sim$5 pts at 384d, $\sim$3--4 pts at 768d.}
 \textbf{Drop rescore only if scan speed is everything:} 1-bit no-rescore is 72--118$\times$ over Milvus at a 3--5 nDCG@10 hit.
 \textcolor{acc}{Quality is a rescore problem, not a code-width problem.}}
 
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{The engine landscape: throughput vs.\ quality (NQ dev)}
+
+\begin{center}
+  \includegraphics[width=\textwidth,height=0.6\textheight,keepaspectratio]{SpeedComparison.png}
+\end{center}
+
+{\scriptsize \textbf{Up and right is better.} \textbf{1-bit ham + rescore} sits on the Pareto
+frontier at both dims. But note the top-right corner: \textbf{FAISS HNSW} reaches the highest
+throughput at full-quality nDCG --- not by shrinking each comparison, but by \emph{skipping most
+of the corpus}. How does it do that? Next section.}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{HNSW: attacking the other factor}
+
+\vspace{-4pt}
+\[
+  \text{scan cost} \;\approx\;
+  \underbrace{\#\text{candidates visited}}_{\text{index problem}}
+  \;\times\;
+  \underbrace{\text{cost per candidate}}_{\text{quantization problem}}
+\]
+
+\vspace{-2pt}
+\small
+Everything so far shrank the \textbf{right factor}: 3072 bytes $\to$ 96 bytes, FMA $\to$
+XOR+popcount. But the scan still touches \textbf{all $N$} vectors.
+
+\vspace{2pt}
+\onslide<2->{
+\textbf{HNSW} (\emph{Hierarchical Navigable Small World}, Malkov \& Yashunin 2018) shrinks the
+\textbf{left factor}: visit only $O(\log N)$ candidates by walking a graph.\\[2pt]
+At 50M docs: a full scan touches $5\times10^7$ vectors; HNSW touches a few \textbf{thousand}.
+}
+
+\vspace{2pt}
+\onslide<3->{
+Two ingredients:
+\begin{itemize}\setlength\itemsep{1pt}
+  \item a \textbf{proximity graph}: each vector is a node linked to $\sim M$ near neighbors ---
+    greedy hops make \emph{local} progress toward the query;
+  \item a \textbf{hierarchy of coarser layers} (a skip list over the graph) --- long hops first,
+    so the greedy walk doesn't crawl across the space one short edge at a time.
+\end{itemize}
+}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{HNSW in one picture}
+
+\begin{center}
+\begin{tikzpicture}[xscale=1.05,yscale=0.62,
+    pt/.style={circle,fill=blue!60,inner sep=1.5pt},
+    hop/.style={-{Stealth},ultra thick,acc},
+    drop/.style={-{Stealth},thick,acc,dashed}]
+  % layer planes
+  \foreach \yy/\lab in {4.6/{2 (sparsest)}, 2.3/{1}, 0/{0 (all $N$ points)}} {
+    \draw[rounded corners=3pt,fill=blue!5,draw=gray!40] (-0.5,\yy) rectangle (9.6,\yy+1.1);
+    \node[anchor=west,gray,font=\scriptsize] at (9.65,\yy+0.55) {layer \lab};
+  }
+  % layer 2 (entry layer)
+  \draw[gray!60] (0.5,5.15) -- (4.5,5.15) -- (8.5,5.15);
+  \foreach \x in {0.5,4.5,8.5} \node[pt] at (\x,5.15) {};
+  % layer 1
+  \draw[gray!60] (0.5,2.85) -- (2,2.85) -- (4.5,2.85) -- (6,2.85) -- (7.5,2.85) -- (8.5,2.85);
+  \draw[gray!60] (2,2.85) to[bend left=20] (6,2.85);
+  \foreach \x in {0.5,2,4.5,6,7.5,8.5} \node[pt] at (\x,2.85) {};
+  % layer 0
+  \draw[gray!60] (0.5,0.55) -- (8.5,0.55);
+  \draw[gray!60] (2,0.55) to[bend left=18] (4.5,0.55);
+  \draw[gray!60] (5.25,0.55) to[bend left=18] (7.5,0.55);
+  \foreach \x in {0.5,1.25,2,2.75,3.5,4.5,5.25,6,6.75,7.5,8.5} \node[pt] at (\x,0.55) {};
+  % query
+  \node[circle,fill=hi,inner sep=1.8pt,label={[hi,font=\scriptsize]above:$q$}] at (6.4,0.95) {};
+  \draw[hi,dotted,thick] (6.4,0.95) -- (6.4,0.55);
+  % search path
+  \node[font=\scriptsize,anchor=south] at (0.5,5.45) {entry};
+  \draw[hop] (0.5,5.15) -- (4.5,5.15);
+  \draw[drop] (4.5,5.15) -- (4.5,2.85);
+  \draw[hop] (4.5,2.85) -- (6,2.85);
+  \draw[drop] (6,2.85) -- (6,0.55);
+  \draw[hop] (6,0.55) to[bend right=30] (6.75,0.55);
+  \node[draw=green!50!black,thick,circle,inner sep=3pt] at (6.75,0.55) {};
+\end{tikzpicture}
+\end{center}
+
+\vspace{-2pt}
+{\small
+\textcolor{acc}{\textbf{Solid red}} = greedy hops toward $q$;
+\textcolor{acc}{\textbf{dashed red}} = drop a layer at a local minimum;
+\textcolor{green!50!black}{\textbf{green circle}} = nearest neighbor found on layer 0.\\[2pt]
+Upper layers hold a geometrically-thinning sample ($\approx M^{-\ell}$ of the points) ---
+exactly a \textbf{skip list}: coarse layers give long hops, layer 0 gives precision.}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{The search algorithm}
+
+\textbf{Search}$(q, K)$:
+\begin{enumerate}\setlength\itemsep{2pt}
+  \item Start at the fixed \textbf{entry point} on the top layer.
+  \item \textbf{Upper layers} ($\ell = L,\ldots,1$): \emph{greedy descent} --- hop to whichever
+    neighbor is closest to $q$; when no neighbor improves (a local minimum), drop to layer $\ell-1$.
+  \item \textbf{Layer 0}: switch to \emph{best-first beam search} with a candidate list of size
+    \textcolor{key}{$\mathit{ef}$} $\geq K$: pop the closest unexpanded node, score its neighbors,
+    keep the best $\mathit{ef}$ seen so far. Stop when the closest unexpanded candidate is farther
+    than the worst of the current $\mathit{ef}$.
+  \item Return the top $K$.
+\end{enumerate}
+
+\vspace{4pt}
+\onslide<2->{
+\textbf{Why the hierarchy matters:} upper layers cover the space with long edges, so the walk
+reaches the right \emph{region} in $O(\log N)$ hops; layer 0's beam then refines locally.
+}
+
+\vspace{4pt}
+\onslide<3->{
+\textcolor{key}{$\mathit{ef}$ is the recall dial}: bigger beam $\Rightarrow$ more distance
+evaluations $\Rightarrow$ higher recall, lower QPS. It is the knob behind every HNSW point
+in the scatter plot.
+}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Construction: every insert is a search}
+
+\footnotesize
+To insert a point:
+\begin{enumerate}\setlength\itemsep{1pt}
+  \item Draw its top layer $\ell = \lfloor -\ln u \cdot m_L \rfloor$, $u\sim U(0,1)$,
+    $m_L = 1/\ln M$ $\;\Rightarrow\;$ layer $\ell$ retains $\approx M^{-\ell}$ of the points.
+  \item Search down to layer $\ell$ with beam width $\mathit{efConstruction}$, collecting candidates.
+  \item On each layer $\leq \ell$: connect to $M$ candidates via a \textcolor{key}{diversity
+    heuristic} --- keep one only if it is closer to the new point than to any kept neighbor.
+  \item Cap degrees ($M$ per upper layer, $2M$ on layer 0); re-prune nodes that overflow.
+\end{enumerate}
+
+\vspace{1pt}
+\onslide<2->{
+The diversity heuristic is the secret sauce: edges point in \emph{different directions}
+(relative-neighborhood-graph style), so greedy search escapes clusters rather than
+collecting $M$ redundant links into one.
+}
+
+\vspace{1pt}
+\onslide<3->{
+\begin{center}\scriptsize
+\renewcommand{\arraystretch}{0.95}
+\begin{tabular}{llll}
+\toprule
+Param & Typical & Controls & Cost \\
+\midrule
+$M$ & 16--64 & graph degree, recall ceiling & RAM: $\sim 2M \times 4$\,B links/node \\
+$\mathit{efConstruction}$ & 100--500 & build-time graph quality & build time ($O(N \log N)$ total) \\
+$\mathit{ef}$ & $K$--500 & query recall & query latency \\
+\bottomrule
+\end{tabular}
+\end{center}
+}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{HNSW vs.\ bit codes: rivals or teammates?}
+
+\textbf{What the scatter plot showed} (NQ dev, 16-conc): FAISS HNSW $\approx$ 7{,}000 q/s at
+FLAT-level nDCG@10 --- $\sim$45$\times$ over exact scan. Milvus HNSW lands lower with the same
+index type (service/RPC overhead).
+
+\vspace{2pt}
+\onslide<2->{
+\textbf{But the index isn't free:}
+\begin{itemize}\setlength\itemsep{1pt}
+  \item RAM: full fp32 vectors \emph{plus} link lists ($\sim$0.5\,KB/node at $M{=}64$) ---
+    no 32$\times$ compression story;
+  \item build time: each insert is a search --- hours at 50M scale, vs.\ minutes to pack bit codes;
+  \item approximate: recall $<100\%$, degrading quietly on out-of-distribution queries;
+  \item mutations: deletes/updates fragment the graph (tombstones, periodic rebuilds).
+\end{itemize}
+}
+
+\vspace{2pt}
+\onslide<3->{
+\textcolor{hi}{\textbf{The two attacks are orthogonal --- and compose.}}
+HNSW cuts \emph{candidates visited}; bit codes cut \emph{bytes per candidate}.
+HNSW over binary codes (Hamming edge weights) + fp32 rescore = small RAM \emph{and} sublinear
+scan --- the natural Phase 6 experiment.
+}
 \end{frame}
 
 % ---------------------------------------------------------------
@@ -749,7 +944,8 @@ DocUVerse \texttt{simdq} engine, 2026.\\[8pt]
 Charikar (2002) — SimHash bound\\
 Goemans \& Williamson (1995) — hyperplane rounding\\
 Tepper \& Willke (2026) — ASH framework\\
-Mula, Kurz \& Lemire (2018) — AVX2 popcount
+Mula, Kurz \& Lemire (2018) — AVX2 popcount\\
+Malkov \& Yashunin (2018) — HNSW graphs
 }
 \end{columns}
 
