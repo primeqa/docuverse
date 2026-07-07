@@ -1,0 +1,34 @@
+/* Increase the base font size across the documentation.
+ * The Read the Docs theme sizes most text in rem/em off the root, so
+ * bumping the root font-size scales body copy, headings, lists, and the
+ * sidebar together. Code blocks and inline literals are nudged up to match. */
+
+html {
+    font-size: 18px;
+}
+
+/* RTD hard-codes 16px on the content wrapper, which overrides the root. */
+.wy-nav-content {
+    font-size: 100%;
+    max-width: 900px;
+}
+
+.rst-content p,
+.rst-content li,
+.rst-content dl dd {
+    font-size: 1rem;
+    line-height: 1.6;
+}
+
+/* Code: keep it slightly smaller than prose but larger than the default. */
+.rst-content pre,
+.rst-content code,
+.rst-content tt,
+.rst-content .highlight {
+    font-size: 0.9rem;
+}
+
+/* Navigation sidebar. */
+.wy-menu-vertical a {
+    font-size: 0.95rem;
+}

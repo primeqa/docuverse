@@ -56,6 +56,11 @@ html_theme = "sphinx_rtd_theme"
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
 
+# Custom stylesheets layered on top of the theme (last wins).
+html_css_files = [
+    'font-size.css',
+]
+
 # -- sphinx-copybutton -------------------------------------------------------
 # Strip shell/Python prompts so they are not copied along with the command.
 copybutton_prompt_text = r">>> |\.\.\. |\$ |In \[\d*\]: | {2,5}\.\.\.: | {5,8}: "
