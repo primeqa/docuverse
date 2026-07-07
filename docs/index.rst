@@ -29,6 +29,12 @@ Welcome to DocUVerse's documentation!
 
    backends/index
 
+.. toctree::
+   :maxdepth: 2
+   :caption: simdq engine:
+
+   simdq/index
+
 Indices and tables
 ==================
 
