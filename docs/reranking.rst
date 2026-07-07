@@ -53,11 +53,49 @@ extra keyword arguments (e.g. ``reranker_batch_size=64``) are applied to the
 reranker config. This composition avoids a preset cross-product of every
 retriever × every reranker.
 
+A fuller end-to-end example — reranking is applied inside
+``engine.search()`` whenever a reranker is configured:
+
+.. code-block:: python
+
+    from docuverse import SearchEngine
+
+    engine = (
+        SearchEngine.from_preset(
+            "milvus-dense",
+            model_name="ibm-granite/granite-embedding-small-english-r2",
+            index_name="my_index",
+            input_passages="passages.jsonl",
+            input_queries="queries.jsonl",
+        )
+        .with_reranker(
+            "cross-encoder/ms-marco-MiniLM-L-12-v2",
+            reranker_engine="cross-encoder",
+            reranker_top_k=40,
+        )
+    )
+
+    engine.ingest(engine.read_data())
+    queries = engine.read_questions()
+    results = engine.search(queries)          # retrieval + reranking
+    print(engine.compute_score(queries, results))
+
 Configuration
 -------------
 
 Reranking is configured by ``RerankerArguments``
-(``docuverse/engines/search_engine_config_params.py``):
+(``docuverse/engines/search_engine_config_params.py``). In a YAML config the
+fields live under the ``reranker:`` section — set ``reranker: null`` (or
+omit ``reranker_model``) to disable reranking entirely:
+
+.. code-block:: yaml
+
+    reranker:
+      reranker_model: cross-encoder/ms-marco-MiniLM-L-12-v2
+      reranker_engine: cross-encoder
+      reranker_top_k: 40
+      reranker_batch_size: 32
+      reranker_combination_type: none   # none | weight | rrf
 
 .. list-table::
    :header-rows: 1
@@ -121,6 +159,19 @@ Add ``R`` to the pipeline actions, after retrieval:
 Reranking is applied inside ``engine.search()`` whenever a reranker is
 configured; results are cached (``.rerank.pkl.bz2``) so a re-run reuses them
 unless retrieval changed.
+
+Caching
+-------
+
+DocUVerse caches both stages next to the output file to avoid redundant
+computation across runs:
+
+* ``<output>.retrieve.pkl.bz2`` — first-stage retrieval results.
+* ``<output>.rerank.pkl.bz2``   — reranked results.
+
+When retrieval is re-run (e.g. after index changes), the reranking cache
+is automatically invalidated and rebuilt. Delete either cache file
+manually to force a fresh run, or set ``no_cache: true`` in the config.
 
 See also
 --------
