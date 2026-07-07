@@ -36,6 +36,7 @@
 #include "simdq_kernels_asym_b1.h"
 #include "simdq_kernels_asym_b2.h"
 #include "simdq_kernels_asym_b4.h"
+#include "fagin_ta.h"
 
 /*
  * Validate that d is one of the supported dimensionalities.
@@ -463,6 +464,99 @@ failsoa:
     return NULL;
 }
 
+// ---------- fagin threshold algorithm ----------
+
+static PyObject *py_fagin_search(PyObject *self, PyObject *args) {
+    PyObject *y_obj, *order_obj, *vals_obj, *q_obj;
+    Py_ssize_t K, batch, max_depth, num_threads;
+    float epsilon;
+    if (!PyArg_ParseTuple(args, "OOOOnnfnn",
+                          &y_obj, &order_obj, &vals_obj, &q_obj,
+                          &K, &batch, &epsilon, &max_depth, &num_threads))
+        return NULL;
+    if (K < 1)     { PyErr_SetString(PyExc_ValueError, "K must be >= 1");     return NULL; }
+    if (batch < 1) { PyErr_SetString(PyExc_ValueError, "batch must be >= 1"); return NULL; }
+
+    Py_buffer y_view, order_view, vals_view, q_view;
+    if (get_buffer(y_obj, &y_view, 'f', 0) != 0) return NULL;
+    if (get_buffer(order_obj, &order_view, 'i', 0) != 0) {
+        PyBuffer_Release(&y_view); return NULL;
+    }
+    if (get_buffer(vals_obj, &vals_view, 'f', 0) != 0) {
+        PyBuffer_Release(&y_view); PyBuffer_Release(&order_view); return NULL;
+    }
+    if (get_buffer(q_obj, &q_view, 'f', 0) != 0) {
+        PyBuffer_Release(&y_view); PyBuffer_Release(&order_view);
+        PyBuffer_Release(&vals_view); return NULL;
+    }
+
+    PyObject *scores_bytes = NULL, *idx_bytes = NULL;
+
+    if (y_view.ndim != 2) {
+        PyErr_SetString(PyExc_ValueError, "Y must be 2-D (N, D)");
+        goto failta;
+    }
+    {
+        Py_ssize_t N = y_view.shape[0], D = y_view.shape[1];
+        if (order_view.ndim != 2 || order_view.shape[0] != D
+                                 || order_view.shape[1] != N) {
+            PyErr_Format(PyExc_ValueError, "order must have shape (%zd, %zd)", D, N);
+            goto failta;
+        }
+        if (vals_view.ndim != 2 || vals_view.shape[0] != D
+                                || vals_view.shape[1] != N) {
+            PyErr_Format(PyExc_ValueError, "vals must have shape (%zd, %zd)", D, N);
+            goto failta;
+        }
+        if (q_view.ndim != 1 || q_view.shape[0] != D) {
+            PyErr_Format(PyExc_ValueError, "q must have shape (%zd,)", D);
+            goto failta;
+        }
+
+        char *scores_data, *idx_data;
+        scores_bytes = new_bytes_buffer(K * (Py_ssize_t)sizeof(float), &scores_data);
+        if (!scores_bytes) goto failta;
+        idx_bytes = new_bytes_buffer(K * (Py_ssize_t)sizeof(int64_t), &idx_data);
+        if (!idx_bytes) goto failta;
+
+        fagin_stats_t st;
+        int saved_threads = omp_get_max_threads();
+        if (num_threads > 0) omp_set_num_threads((int)num_threads);
+
+        Py_BEGIN_ALLOW_THREADS
+        fagin_ta_search((const float *)y_view.buf,
+                        (const int32_t *)order_view.buf,
+                        (const float *)vals_view.buf,
+                        (int64_t)N, (int64_t)D,
+                        (const float *)q_view.buf,
+                        (int)K, (int64_t)batch, epsilon, (int64_t)max_depth,
+                        (float *)scores_data, (int64_t *)idx_data, &st);
+        Py_END_ALLOW_THREADS
+
+        if (num_threads > 0) omp_set_num_threads(saved_threads);
+
+        PyBuffer_Release(&y_view); PyBuffer_Release(&order_view);
+        PyBuffer_Release(&vals_view); PyBuffer_Release(&q_view);
+
+        PyObject *stats = Py_BuildValue(
+            "{s:L,s:L,s:L,s:L,s:i}",
+            "depth", (long long)st.depth,
+            "sorted_accesses", (long long)st.sorted_accesses,
+            "random_accesses", (long long)st.random_accesses,
+            "rounds", (long long)st.rounds,
+            "exhausted", st.exhausted);
+        if (!stats) { Py_DECREF(scores_bytes); Py_DECREF(idx_bytes); return NULL; }
+        return Py_BuildValue("(NNN)", scores_bytes, idx_bytes, stats);
+    }
+
+failta:
+    Py_XDECREF(scores_bytes);
+    Py_XDECREF(idx_bytes);
+    PyBuffer_Release(&y_view); PyBuffer_Release(&order_view);
+    PyBuffer_Release(&vals_view); PyBuffer_Release(&q_view);
+    return NULL;
+}
+
 // ---------- module table ----------
 
 static PyMethodDef SimdqMethods[] = {
@@ -485,6 +579,12 @@ static PyMethodDef SimdqMethods[] = {
     {"scan_hamming_soa", py_scan_hamming_soa, METH_VARARGS,
      "scan_hamming_soa(codes, N, D, q, K, num_threads, i0, i1) -> (distances, indices) "
      "bytes; codes already SoA (dbT[w*N+i]), no transpose; scans range [i0, i1)."},
+    {"fagin_search", py_fagin_search, METH_VARARGS,
+     "fagin_search(Y, order, vals, q, K, batch, epsilon, max_depth, num_threads)"
+     " -> (scores, indices, stats); exact top-K inner product via Fagin's"
+     " Threshold Algorithm. Y fp32 (N,D); order int32 (D,N) descending argsort"
+     " per dim; vals fp32 (D,N) sorted values; epsilon = additive halting"
+     " slack (0 = exact); max_depth 0 = unlimited."},
     {NULL, NULL, 0, NULL},
 };
 

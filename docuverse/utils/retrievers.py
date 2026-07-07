@@ -88,6 +88,14 @@ def create_retrieval_engine(retriever_config: dict):
            print("simdq engine: native extension not built. Run `pip install -e .` "
                  "from the repo root to compile docuverse.engines.retrieval.simdq._native.")
            raise e
+   elif name in ['fagin', 'fagin-threshold', 'fagin_threshold']:
+       try:
+           from docuverse.engines.retrieval.fagin import FaginThresholdEngine
+           engine = FaginThresholdEngine(retriever_config)
+       except ImportError as e:
+           print("fagin engine: native extension not built. Run `pip install -e .` "
+                 "from the repo root to compile docuverse.engines.retrieval.simdq._native.")
+           raise e
    elif name.startswith("file:"):
        from docuverse.engines.retrieval.file.file_engine import FileEngine
        engine = FileEngine(retriever_config)
@@ -96,7 +104,7 @@ def create_retrieval_engine(retriever_config: dict):
        raise ValueError(
            f"Unknown or unsupported db_engine: {name!r}. Check spelling "
            "(e.g. 'simdq', not 'simqd') against the supported engines: "
-           "elastic-*, milvus-*, lancedb-*, chromadb, faiss, simdq, file:."
+           "elastic-*, milvus-*, lancedb-*, chromadb, faiss, simdq, fagin, file:."
        )
    return engine
 

@@ -54,6 +54,9 @@ KNOWN_NAMES = [
     "lancedb_sparse",
     "lancedb-hybrid",
     "lancedb_hybrid",
+    "fagin",
+    "fagin-threshold",
+    "fagin_threshold",
 ]
 
 
