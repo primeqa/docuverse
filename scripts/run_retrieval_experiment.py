@@ -51,6 +51,13 @@ Usage:
     # Only refresh the speed section (skip quality), or vice versa:
     python scripts/run_retrieval_experiment.py --config ... --skip-quality
     python scripts/run_retrieval_experiment.py --config ... --skip-speed --no-milvus
+
+    # Skip individual engines. --no-milvus / --no-faiss / --no-fagin / --no-simdq
+    # each drop that engine from the quality and Phase 5b tables (and, for
+    # simdq, the thread-scaling sweeps too). --no-simdq still BUILDS the asym
+    # index — it is the fp32 vector source the FLAT / Milvus / FAISS / Fagin
+    # baselines all scan — it just skips timing and scoring simdq itself:
+    python scripts/run_retrieval_experiment.py --config ... --no-simdq
 """
 from __future__ import annotations
 
@@ -59,11 +66,26 @@ import bz2
 import csv
 import json
 import math
+import os
 import shlex
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
+
+# --- BLAS threading must be pinned BEFORE numpy / faiss import ------------- #
+# FAISS bundles its own OpenBLAS built against OpenMP (libgomp). That build
+# sizes an internal per-thread "memory region" buffer table once, at library
+# init, from OMP_NUM_THREADS (default = core count). Phase 5b then drives it
+# from `workers` concurrent query threads; at D=768 that many simultaneous
+# callers overrun the fixed table -> "BLAS : ... too many memory regions" ->
+# segfault. A runtime threadpool_limits() / omp_set_num_threads(1) cannot
+# shrink an already-allocated table, so it must be capped via the environment
+# before the library loads. OPENBLAS_NUM_THREADS is left at the full core
+# count so numpy's *separate* pthreads OpenBLAS (used by the Phase 1 "default
+# BLAS" sweep) can still scale up at runtime via threadpool_limits.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", str(os.cpu_count() or 1))
 
 import numpy as np
 
@@ -95,6 +117,9 @@ DEFAULT_SETTINGS = {
     "run_speed": True,
     "run_faiss": True,          # FAISS FlatIP + HNSW rows in the head-to-head
     "run_fagin": True,          # Fagin TA row in quality + head-to-head
+    "run_simdq": True,          # simdq asym b=2 + 1-bit hamming variants/sweeps
+                                # (the asym index dir is still built either way —
+                                #  it's the fp32 vector source for the baselines)
     "fagin_batch_rows": 64,     # sorted-access rows per TA round
     "fagin_epsilon": 0.0,       # additive halting slack; 0.0 = exact
     "fagin_max_depth": 0,       # sorted-access depth cap; 0 = unlimited (exact)
@@ -164,6 +189,8 @@ def _cli_overrides(args: argparse.Namespace) -> dict:
         ov["settings.run_faiss"] = False
     if args.no_fagin:
         ov["settings.run_fagin"] = False
+    if args.no_simdq:
+        ov["settings.run_simdq"] = False
     if args.skip_quality:
         ov["settings.run_quality"] = False
     if args.skip_speed:
@@ -524,13 +551,14 @@ def run_quality(models: list[dict], query_npys: list[Path],
                                "agree@10": float(a10), "agree@K": float(aK)})
             print(f"  {label:<24s} vs FLAT: agree@10={a10:.4f}  agree@{K}={aK:.4f}")
 
-        variants = [("asym b=2, +rescore", idx_a, K_re),
-                    ("asym b=2, no rescore", idx_a, K),
-                    ("1-bit ham, +rescore", idx_h, K_re),
-                    ("1-bit ham, no rescore", idx_h, K)]
-        for label, idx, kp in variants:
-            record(label, _search_batch(idx, qs, K=K, K_prime=kp,
-                                        workers=workers))
+        if settings.get("run_simdq", True):
+            variants = [("asym b=2, +rescore", idx_a, K_re),
+                        ("asym b=2, no rescore", idx_a, K),
+                        ("1-bit ham, +rescore", idx_h, K_re),
+                        ("1-bit ham, no rescore", idx_h, K)]
+            for label, idx, kp in variants:
+                record(label, _search_batch(idx, qs, K=K, K_prime=kp,
+                                            workers=workers))
 
         # Milvus / FAISS / Fagin baselines on the same fp32 vectors + queries,
         # so every system in the Phase 5b head-to-head also gets a quality row.
@@ -679,6 +707,7 @@ def bench_head_to_head(sources, query_specs, st) -> list[dict]:
     the recall/latency trade-off knob for HNSW and codes-only simdq.
     """
     from docuverse.engines.retrieval.simdq.simdq_index import SimdqIndex
+    from threadpoolctl import threadpool_limits
 
     K = int(st["top_k"])
     K_re = max(K, min(K * int(st["alpha"]), 256))
@@ -692,51 +721,62 @@ def bench_head_to_head(sources, query_specs, st) -> list[dict]:
           f"(workers={workers}, HNSW M={hnsw_m}, efC={hnsw_efc}, ef={hnsw_ef})")
 
     out: list[dict] = []
-    for (label, vecs), q_spec in zip(sources, query_specs):
-        N, D = vecs.shape
-        qs_pool = _load_queries(q_spec, D, warmup + nq, rng)
-        qs = qs_pool[warmup:warmup + nq]
-        flat_ids = _flat_topk(vecs, qs, K)
-        flat_sets = [set(map(int, flat_ids[i])) for i in range(nq)]
-        systems: list[dict] = []
-        print(f"  ### {label}  (D={D}, N={N}, "
-              f"q={'real' if q_spec else 'synth'})")
+    # Pin OpenBLAS to 1 thread for the whole head-to-head: the concurrency is
+    # meant to come from the `workers` query threads, with each engine call
+    # single-threaded. Without this, every worker's numpy matmul (_flat_topk's
+    # `qs @ vecs.T`, simdq's `cand_floats @ q_proj`) fans out across OpenBLAS's
+    # own thread pool; workers × that nesting exhausts OpenBLAS's internal
+    # buffer table ("too many memory regions" → segfault) on the larger dims.
+    # user_api="blas" leaves FAISS's OpenMP build parallelism untouched.
+    with threadpool_limits(limits=1, user_api="blas"):
+        for (label, vecs), q_spec in zip(sources, query_specs):
+            N, D = vecs.shape
+            qs_pool = _load_queries(q_spec, D, warmup + nq, rng)
+            qs = qs_pool[warmup:warmup + nq]
+            flat_ids = _flat_topk(vecs, qs, K)
+            flat_sets = [set(map(int, flat_ids[i])) for i in range(nq)]
+            systems: list[dict] = []
+            print(f"  ### {label}  (D={D}, N={N}, "
+                  f"q={'real' if q_spec else 'synth'})")
 
-        def run_system(name: str, call) -> None:
-            """call(q) -> iterable of K corpus ids (row indices)."""
-            for i in range(warmup):
-                call(qs_pool[i])
-            ms = _conc_ms_per_q(call, qs, workers)
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                rets = list(ex.map(call, qs))
-            agree = float(np.mean(
-                [len(set(map(int, r)) & flat_sets[i]) / K
-                 for i, r in enumerate(rets)]))
-            systems.append({"name": name, "ms": ms, "agree": agree})
-            print(f"    {name:<38s} {ms:8.2f} ms/q   agree@{K}={agree:.4f}")
+            def run_system(name: str, call) -> None:
+                """call(q) -> iterable of K corpus ids (row indices)."""
+                for i in range(warmup):
+                    call(qs_pool[i])
+                ms = _conc_ms_per_q(call, qs, workers)
+                with ThreadPoolExecutor(max_workers=workers) as ex:
+                    rets = list(ex.map(call, qs))
+                agree = float(np.mean(
+                    [len(set(map(int, r)) & flat_sets[i]) / K
+                     for i, r in enumerate(rets)]))
+                systems.append({"name": name, "ms": ms, "agree": agree})
+                print(f"    {name:<38s} {ms:8.2f} ms/q   agree@{K}={agree:.4f}")
 
-        # --- Milvus / FAISS / Fagin baselines (shared with the quality phase) ---
-        for name, call in iter_baseline_engines(vecs, st, K):
-            try:
-                run_system(name, call)
-            except Exception as e:
-                print(f"    {name} skipped: {e}", file=sys.stderr)
+            # --- Milvus / FAISS / Fagin baselines (shared with quality phase) ---
+            for name, call in iter_baseline_engines(vecs, st, K):
+                try:
+                    run_system(name, call)
+                except Exception as e:
+                    print(f"    {name} skipped: {e}", file=sys.stderr)
 
-        # --- simdq: asym b=2 and 1-bit hamming, each ±rescore ---
-        for family, b, fam_label in [("asymmetric", int(st["simdq_b"]), None),
-                                     ("hamming", None, "1-bit ham")]:
-            fam_label = fam_label or f"asym b={b}"
-            idx = SimdqIndex.build(vecs, family=family, b=b, d=None,
-                                   projection="identity", store_floats=True)
-            for mode, kp in [("+rescore", K_re), ("no rescore", K)]:
-                run_system(f"simdq {fam_label} ({mode})",
-                           lambda q, kp=kp: idx.search(
-                               q, K=K, K_prime=kp, num_threads=1)[0])
-            del idx
+            # --- simdq: asym b=2 and 1-bit hamming, each ±rescore ---
+            if st.get("run_simdq", True):
+                for family, b, fam_label in [
+                        ("asymmetric", int(st["simdq_b"]), None),
+                        ("hamming", None, "1-bit ham")]:
+                    fam_label = fam_label or f"asym b={b}"
+                    idx = SimdqIndex.build(vecs, family=family, b=b, d=None,
+                                           projection="identity",
+                                           store_floats=True)
+                    for mode, kp in [("+rescore", K_re), ("no rescore", K)]:
+                        run_system(f"simdq {fam_label} ({mode})",
+                                   lambda q, kp=kp: idx.search(
+                                       q, K=K, K_prime=kp, num_threads=1)[0])
+                    del idx
 
-        out.append({"label": label, "D": int(D), "N": int(N),
-                    "queries": ("real" if q_spec else "synth"),
-                    "systems": systems})
+            out.append({"label": label, "D": int(D), "N": int(N),
+                        "queries": ("real" if q_spec else "synth"),
+                        "systems": systems})
     return out
 
 
@@ -1374,6 +1414,11 @@ def main():
     ap.add_argument("--no-milvus", action="store_true")
     ap.add_argument("--no-faiss", action="store_true")
     ap.add_argument("--no-fagin", action="store_true")
+    ap.add_argument("--no-simdq", action="store_true",
+                    help="skip the simdq asym b=2 + 1-bit hamming runs "
+                         "(quality variants, thread sweeps, and Phase 5b rows); "
+                         "the asym index is still built as the baselines' fp32 "
+                         "vector source")
     ap.add_argument("--skip-quality", action="store_true")
     ap.add_argument("--skip-speed", action="store_true")
     ap.add_argument("--force-encode", action="store_true",
@@ -1432,18 +1477,20 @@ def main():
     p1_default = p1_blas1 = p68 = None
     head = None
     if st["run_speed"]:
-        common = dict(threads=st["threads"], queries=int(st["speed_queries"]),
-                      warmup=int(st["warmup"]), K=int(st["top_k"]),
-                      alpha=int(st["alpha"]), seed=int(st["seed"]))
-        p1_default = run_sweep_phase("Phase 1 — asym b=2", "asymmetric", 2,
-                                     sources, query_specs, blas_threads=None,
-                                     **common)
-        p1_blas1 = run_sweep_phase("Phase 1 — asym b=2", "asymmetric", 2,
-                                   sources, query_specs, blas_threads=1,
-                                   **common)
-        p68 = run_sweep_phase("Phase 6/8 — Hamming SoA", "hamming", None,
-                              sources, query_specs, blas_threads=None,
-                              **common)
+        if st.get("run_simdq", True):
+            common = dict(threads=st["threads"],
+                          queries=int(st["speed_queries"]),
+                          warmup=int(st["warmup"]), K=int(st["top_k"]),
+                          alpha=int(st["alpha"]), seed=int(st["seed"]))
+            p1_default = run_sweep_phase("Phase 1 — asym b=2", "asymmetric", 2,
+                                         sources, query_specs, blas_threads=None,
+                                         **common)
+            p1_blas1 = run_sweep_phase("Phase 1 — asym b=2", "asymmetric", 2,
+                                       sources, query_specs, blas_threads=1,
+                                       **common)
+            p68 = run_sweep_phase("Phase 6/8 — Hamming SoA", "hamming", None,
+                                  sources, query_specs, blas_threads=None,
+                                  **common)
         if st["run_milvus"] or st["run_faiss"]:
             try:
                 head = bench_head_to_head(sources, query_specs, st)
