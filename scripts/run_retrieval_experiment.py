@@ -123,6 +123,7 @@ DEFAULT_SETTINGS = {
     "fagin_batch_rows": 64,     # sorted-access rows per TA round
     "fagin_epsilon": 0.0,       # additive halting slack; 0.0 = exact
     "fagin_max_depth": 0,       # sorted-access depth cap; 0 = unlimited (exact)
+    "fagin_schedule": "lockstep",  # 'lockstep' (round-robin) or 'steepest'
     "encode_batch_size": 64,
     "simdq_b": 2,               # bits/dim for the asymmetric family
     "index_root": "experiments/simdq/indexes",  # auto-built indexes live here
@@ -186,6 +187,8 @@ def _cli_overrides(args: argparse.Namespace) -> dict:
     if args.fagin_epsilon:
         ov["settings.fagin_epsilon"] = [float(x)
                                         for x in args.fagin_epsilon.split(",")]
+    if args.fagin_schedule:
+        ov["settings.fagin_schedule"] = args.fagin_schedule
     if args.no_milvus:
         ov["settings.run_milvus"] = False
     if args.no_faiss:
@@ -676,6 +679,7 @@ def iter_baseline_engines(vecs: np.ndarray, st: dict, K: int):
     if st.get("run_fagin", True):
         f_batch = int(st["fagin_batch_rows"])
         f_depth = int(st["fagin_max_depth"])
+        f_schedule = str(st.get("fagin_schedule", "lockstep"))
         eps_cfg = st["fagin_epsilon"]
         f_epsilons = ([float(e) for e in eps_cfg]
                       if isinstance(eps_cfg, (list, tuple))
@@ -686,12 +690,17 @@ def iter_baseline_engines(vecs: np.ndarray, st: dict, K: int):
         except Exception as e:
             print(f"    Fagin skipped: {e}", file=sys.stderr)
         else:
+            # TA = lockstep (round-robin) Threshold Algorithm; TASD = the
+            # steepest-descent schedule (advance the dim with the largest
+            # marginal threshold drop).
+            algo = "TASD" if f_schedule == "steepest" else "TA"
             for f_eps in f_epsilons:
-                name = ("Fagin TA (exact)" if f_eps == 0.0 and f_depth == 0
-                        else f"Fagin TA (eps={f_eps:g}, depth={f_depth})")
+                name = (f"Fagin {algo} (exact)"
+                        if f_eps == 0.0 and f_depth == 0
+                        else f"Fagin {algo} (eps={f_eps:g}, depth={f_depth})")
                 yield name, (lambda q, f_eps=f_eps: fg.search(
                     q, K=K, batch=f_batch, epsilon=f_eps,
-                    max_depth=f_depth, num_threads=1)[0])
+                    max_depth=f_depth, num_threads=1, schedule=f_schedule)[0])
 
 
 def _call_batch(call, qs: np.ndarray, K: int, workers: int) -> np.ndarray:
@@ -974,7 +983,7 @@ def _sweep_chart_svg(sweeps, threads, tags, K, K_re) -> str:
 
 
 _ENGINE_FAMILIES = ["Milvus", "FAISS", "simdq asym b=2", "simdq 1-bit ham",
-                    "Fagin TA"]
+                    "Fagin"]
 
 
 def _frontier_chart_svg(models, metric_rows, head, workers) -> str | None:
@@ -1311,8 +1320,10 @@ def write_report(out_path: Path, cfg: dict, isa: dict, corpus_sizes: list[int],
           f"in-process. Fagin TA runs Fagin's Threshold Algorithm over "
           f"per-dimension sorted lists (batch={int(st['fagin_batch_rows'])}, "
           f"epsilon={_fmt_epsilon(st['fagin_epsilon'])}, "
-          f"max_depth={int(st['fagin_max_depth'])}; epsilon=0 with unlimited "
-          f"depth is exact). Simdq `+rescore` uses K'={K_re}, `no rescore` "
+          f"max_depth={int(st['fagin_max_depth'])}, "
+          f"schedule={st.get('fagin_schedule', 'lockstep')}; epsilon=0 with "
+          f"unlimited depth is exact). Simdq `+rescore` uses K'={K_re}, "
+          f"`no rescore` "
           f"K'=K={K}.")
         A("")
         for row in head:
@@ -1437,6 +1448,13 @@ def main():
                          "index is built once and each epsilon gets its own "
                          "quality row and its own sequentially-timed Phase 5b "
                          "row. 0 = exact. Single value also accepted.")
+    ap.add_argument("--fagin-schedule", dest="fagin_schedule", default=None,
+                    choices=["lockstep", "steepest"],
+                    help="Fagin TA sorted-access schedule: 'lockstep' "
+                         "(round-robin over active dims, weight-blind) or "
+                         "'steepest' (advance the dim with the largest "
+                         "marginal threshold drop). Exact at epsilon=0 either "
+                         "way. Default: lockstep.")
     ap.add_argument("--no-simdq", action="store_true",
                     help="skip the simdq asym b=2 + 1-bit hamming runs "
                          "(quality variants, thread sweeps, and Phase 5b rows); "
