@@ -97,19 +97,29 @@ class FaginIndex:
 
     # ----- search -----
 
+    SCHEDULES = {"lockstep": 0, "steepest": 1}
+
     def search(self, q: np.ndarray, K: int, batch: int = 64,
                epsilon: float = 0.0, max_depth: int = 0,
-               num_threads: int = 0) -> Tuple[np.ndarray, np.ndarray, dict]:
+               num_threads: int = 0,
+               schedule: str = "lockstep") -> Tuple[np.ndarray, np.ndarray, dict]:
         """Run TA for one query. Returns (idxs int64[K], scores fp32[K],
-        stats dict); unfilled slots (K > N) have idx -1."""
+        stats dict); unfilled slots (K > N) have idx -1.
+
+        schedule: "lockstep" (round-robin sorted access, weight-blind) or
+        "steepest" (advance the dim with the largest marginal threshold drop;
+        exact at epsilon=0, fewer random accesses at epsilon>0)."""
         q = np.ascontiguousarray(q, dtype=np.float32)
         if q.shape != (self.dim,):
             raise ValueError(f"fagin search: q must have shape ({self.dim},); "
                              f"got {q.shape}")
+        if schedule not in self.SCHEDULES:
+            raise ValueError(f"fagin search: unknown schedule {schedule!r}; "
+                             f"expected one of {sorted(self.SCHEDULES)}")
         scores_b, idx_b, stats = _native.fagin_search(
             self.Y, self.order, self.vals, q,
             int(K), int(batch), float(epsilon), int(max_depth),
-            int(num_threads))
+            int(num_threads), self.SCHEDULES[schedule])
         scores = np.frombuffer(scores_b, dtype=np.float32)
         idxs = np.frombuffer(idx_b, dtype=np.int64)
         return idxs, scores, stats

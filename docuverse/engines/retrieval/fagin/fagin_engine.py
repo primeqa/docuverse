@@ -285,6 +285,7 @@ class FaginThresholdEngine(RetrievalEngine):
             max_depth=self.config.fagin_max_depth,
             num_threads=(self.config.fagin_num_threads
                          if scan_threads is None else scan_threads),
+            schedule=getattr(self.config, "fagin_schedule", "lockstep"),
         )
         self._accumulate_stats(stats)
         tm.add_timing("scan")

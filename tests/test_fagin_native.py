@@ -6,7 +6,11 @@ import pytest
 _native = pytest.importorskip("docuverse.engines.retrieval.simdq._simdq_native")
 
 
-def _search(Y, q, K, batch=8, epsilon=0.0, max_depth=0, num_threads=1):
+SCHEDULES = {"lockstep": 0, "steepest": 1}
+
+
+def _search(Y, q, K, batch=8, epsilon=0.0, max_depth=0, num_threads=1,
+            schedule="lockstep"):
     """Build sorted lists in NumPy (reference layout) and call the kernel."""
     Y = np.ascontiguousarray(Y, dtype=np.float32)
     q = np.ascontiguousarray(q, dtype=np.float32)
@@ -16,7 +20,7 @@ def _search(Y, q, K, batch=8, epsilon=0.0, max_depth=0, num_threads=1):
         np.take_along_axis(Y, perm, axis=0).T, dtype=np.float32)  # (D, N)
     scores_b, idx_b, stats = _native.fagin_search(
         Y, order, vals, q, int(K), int(batch), float(epsilon),
-        int(max_depth), int(num_threads))
+        int(max_depth), int(num_threads), SCHEDULES[schedule])
     scores = np.frombuffer(scores_b, dtype=np.float32).copy()
     idxs = np.frombuffer(idx_b, dtype=np.int64).copy()
     return idxs, scores, stats
@@ -42,49 +46,55 @@ def _check_exact_topk(Y, q, idxs, scores, K):
     assert np.all(np.diff(scores[:n_expect]) <= 1e-6)  # descending
 
 
-def test_exact_topk_matches_brute_force():
+@pytest.mark.parametrize("schedule", ["lockstep", "steepest"])
+def test_exact_topk_matches_brute_force(schedule):
     rng = np.random.default_rng(42)
     Y = rng.standard_normal((500, 32))
     q = rng.standard_normal(32)
-    idxs, scores, stats = _search(Y, q, K=10)
+    idxs, scores, stats = _search(Y, q, K=10, schedule=schedule)
     _check_exact_topk(Y, q, idxs, scores, 10)
     assert stats["depth"] >= 1
     assert stats["random_accesses"] <= 500
 
 
-def test_negative_and_zero_query_weights():
+@pytest.mark.parametrize("schedule", ["lockstep", "steepest"])
+def test_negative_and_zero_query_weights(schedule):
     rng = np.random.default_rng(0)
     Y = rng.standard_normal((400, 24))
     q = rng.standard_normal(24)
     q[::3] = -np.abs(q[::3])       # force negatives (bottom-up scans)
     q[1::5] = 0.0                  # force skipped dims
-    idxs, scores, _ = _search(Y, q, K=10)
+    idxs, scores, _ = _search(Y, q, K=10, schedule=schedule)
     _check_exact_topk(Y, q, idxs, scores, 10)
 
 
-def test_all_negative_query_and_negative_documents():
+@pytest.mark.parametrize("schedule", ["lockstep", "steepest"])
+def test_all_negative_query_and_negative_documents(schedule):
     rng = np.random.default_rng(1)
     Y = -np.abs(rng.standard_normal((300, 16)))
     q = -np.abs(rng.standard_normal(16))
-    idxs, scores, _ = _search(Y, q, K=7)
+    idxs, scores, _ = _search(Y, q, K=7, schedule=schedule)
     _check_exact_topk(Y, q, idxs, scores, 7)
 
 
-def test_d_not_multiple_of_8_and_odd_batch():
+@pytest.mark.parametrize("schedule", ["lockstep", "steepest"])
+def test_d_not_multiple_of_8_and_odd_batch(schedule):
     rng = np.random.default_rng(2)
     Y = rng.standard_normal((50, 7))
     q = rng.standard_normal(7)
-    idxs, scores, _ = _search(Y, q, K=5, batch=3)
+    idxs, scores, _ = _search(Y, q, K=5, batch=3, schedule=schedule)
     _check_exact_topk(Y, q, idxs, scores, 5)
 
 
-def test_k_equals_n_and_k_greater_than_n():
+@pytest.mark.parametrize("schedule", ["lockstep", "steepest"])
+def test_k_equals_n_and_k_greater_than_n(schedule):
     rng = np.random.default_rng(3)
     Y = rng.standard_normal((20, 8))
     q = rng.standard_normal(8)
-    idxs, scores, _ = _search(Y, q, K=20)
+    idxs, scores, _ = _search(Y, q, K=20, schedule=schedule)
     _check_exact_topk(Y, q, idxs, scores, 20)
-    idxs, scores, _ = _search(Y, q, K=32)     # K > N: 20 valid + 12 padding
+    # K > N: 20 valid + 12 padding
+    idxs, scores, _ = _search(Y, q, K=32, schedule=schedule)
     _check_exact_topk(Y, q, idxs, scores, 32)
 
 
@@ -96,12 +106,13 @@ def test_single_document():
     np.testing.assert_allclose(scores[0], -4.5, rtol=1e-6)
 
 
-def test_duplicate_rows_ties():
+@pytest.mark.parametrize("schedule", ["lockstep", "steepest"])
+def test_duplicate_rows_ties(schedule):
     rng = np.random.default_rng(4)
     row = rng.standard_normal(12)
     Y = np.vstack([row] * 10 + [rng.standard_normal((30, 12))])
     q = rng.standard_normal(12)
-    idxs, scores, _ = _search(Y, q, K=15)
+    idxs, scores, _ = _search(Y, q, K=15, schedule=schedule)
     _check_exact_topk(Y, q, idxs, scores, 15)
 
 
@@ -115,13 +126,15 @@ def test_all_zero_query():
     assert stats["sorted_accesses"] == 0 and stats["exhausted"] == 1
 
 
-def test_epsilon_stops_earlier_and_is_bounded():
+@pytest.mark.parametrize("schedule", ["lockstep", "steepest"])
+def test_epsilon_stops_earlier_and_is_bounded(schedule):
     rng = np.random.default_rng(6)
     Y = rng.standard_normal((2000, 48))
     q = rng.standard_normal(48)
-    _, exact_scores, exact_stats = _search(Y, q, K=10, epsilon=0.0)
-    idxs, scores, stats = _search(Y, q, K=10, epsilon=5.0)
-    assert stats["depth"] <= exact_stats["depth"]
+    _, exact_scores, exact_stats = _search(Y, q, K=10, epsilon=0.0,
+                                           schedule=schedule)
+    idxs, scores, stats = _search(Y, q, K=10, epsilon=5.0, schedule=schedule)
+    assert stats["sorted_accesses"] <= exact_stats["sorted_accesses"]
     s = Y.astype(np.float64) @ q.astype(np.float64)
     brute_kth = np.sort(s)[::-1][9]
     # Guarantee: returned kth is within epsilon of the true kth.
@@ -130,11 +143,13 @@ def test_epsilon_stops_earlier_and_is_bounded():
     np.testing.assert_allclose(scores[:10], s[idxs[:10]], rtol=1e-4, atol=1e-5)
 
 
-def test_max_depth_caps_depth():
+@pytest.mark.parametrize("schedule", ["lockstep", "steepest"])
+def test_max_depth_caps_depth(schedule):
     rng = np.random.default_rng(7)
     Y = rng.standard_normal((1000, 32))
     q = rng.standard_normal(32)
-    idxs, scores, stats = _search(Y, q, K=10, batch=8, max_depth=20)
+    idxs, scores, stats = _search(Y, q, K=10, batch=8, max_depth=20,
+                                  schedule=schedule)
     assert stats["depth"] <= 20
     valid = idxs[idxs >= 0]
     assert len(np.unique(valid)) == len(valid)
@@ -154,14 +169,60 @@ def test_stats_consistency():
     assert stats["depth"] <= 600
 
 
-def test_num_threads_invariance():
+@pytest.mark.parametrize("schedule", ["lockstep", "steepest"])
+def test_num_threads_invariance(schedule):
     rng = np.random.default_rng(9)
     Y = rng.standard_normal((800, 40))
     q = rng.standard_normal(40)
-    i1, s1, _ = _search(Y, q, K=10, num_threads=1)
-    i4, s4, _ = _search(Y, q, K=10, num_threads=4)
+    i1, s1, _ = _search(Y, q, K=10, num_threads=1, schedule=schedule)
+    i4, s4, _ = _search(Y, q, K=10, num_threads=4, schedule=schedule)
     np.testing.assert_allclose(s1, s4, rtol=1e-6)
     _check_exact_topk(Y, q, i4, s4, 10)
+
+
+def test_steepest_stats_consistency():
+    rng = np.random.default_rng(11)
+    Y = rng.standard_normal((600, 20))
+    q = rng.standard_normal(20)
+    q[3] = 0.0
+    _, _, stats = _search(Y, q, K=10, batch=16, schedule="steepest")
+    n_active = int(np.count_nonzero(q))
+    # depth is the MAX per-dim depth: total rows lie between depth (one dim
+    # reached it) and n_active * depth (all dims at the max).
+    assert stats["depth"] <= stats["sorted_accesses"] <= n_active * stats["depth"]
+    assert stats["random_accesses"] <= min(600, stats["sorted_accesses"])
+    assert stats["rounds"] >= 1
+
+
+def test_steepest_skewed_weights_fewer_random_accesses():
+    # One dominant dim: steepest should walk it deep and halt with fewer
+    # random accesses than weight-blind lockstep at the same epsilon.
+    rng = np.random.default_rng(12)
+    Y = rng.standard_normal((5000, 16)).astype(np.float32)
+    Y /= np.linalg.norm(Y, axis=1, keepdims=True)
+    q = 0.01 * rng.standard_normal(16).astype(np.float32)
+    q[5] = 1.0
+    _, _, st_lock = _search(Y, q, K=10, batch=32, epsilon=0.05,
+                            schedule="lockstep")
+    _, _, st_steep = _search(Y, q, K=10, batch=32, epsilon=0.05,
+                             schedule="steepest")
+    assert st_steep["random_accesses"] < st_lock["random_accesses"]
+
+
+def test_schedule_default_and_validation():
+    rng = np.random.default_rng(13)
+    Y = np.ascontiguousarray(rng.standard_normal((10, 4)), dtype=np.float32)
+    perm = np.argsort(-Y, axis=0, kind="stable")
+    order = np.ascontiguousarray(perm.T, dtype=np.int32)
+    vals = np.ascontiguousarray(np.take_along_axis(Y, perm, axis=0).T,
+                                dtype=np.float32)
+    q = np.ascontiguousarray(rng.standard_normal(4), dtype=np.float32)
+    # 9-arg call (no schedule) still works and means lockstep.
+    scores_b, idx_b, stats = _native.fagin_search(Y, order, vals, q,
+                                                  5, 8, 0.0, 0, 1)
+    assert len(np.frombuffer(idx_b, dtype=np.int64)) == 5
+    with pytest.raises(ValueError):
+        _native.fagin_search(Y, order, vals, q, 5, 8, 0.0, 0, 1, 2)
 
 
 def test_input_validation():

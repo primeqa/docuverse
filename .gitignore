@@ -204,3 +204,4 @@ docs/*.out
 docs/*.snm
 docs/*.toc
 docs/*.vrb
+/debug/
