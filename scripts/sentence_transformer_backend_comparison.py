@@ -267,8 +267,10 @@ def compute_stats(vector: np.ndarray | list) -> Tuple[float, float, float, float
     Returns:
         Tuple containing (mean, median, std, min, arg_min)
     """
-    if isinstance(vector, list):
-        vector = np.array(vector)
+    # Compute in float64: the per-sentence scores arrive as float32, and
+    # aggregating ~1e5 values that are all ≈1.0 in float32 collapses the
+    # mean to exactly 1.0, hiding real (tiny) differences.
+    vector = np.asarray(vector, dtype=np.float64)
 
     if len(vector) == 0:
         return 0.0, 0.0, 0.0, 0.0, 0
@@ -295,6 +297,19 @@ def _extract_quant_tag(path: str | None) -> str | None:
     return None
 
 
+def _short_model_name(model: str) -> str:
+    """Shorten a model name/path for use in the auto-generated output filename."""
+    # os.path.basename trims trailing slashes so e.g.
+    # "granite-embedding-278-ovino/" still yields the dir name.
+    model_short = os.path.basename(model.rstrip('/'))
+    for noise in ('embedding-', 'embedding_'):
+        model_short = model_short.replace(noise, '')
+    model_short = model_short.replace('multilingual', 'multi')
+    if not model_short or set(model_short) <= {'.'}:
+        model_short = 'model'
+    return model_short
+
+
 def _default_output_name(args) -> str:
     """Build a default output filename from the run's parameters.
 
@@ -303,15 +318,9 @@ def _default_output_name(args) -> str:
     Each backend carries its own precision tag so multi-backend comparisons are
     unambiguous: pytorch uses --precision, onnx/openvino parse the quant tag
     from their respective path (or fall back to fp32 when no path is given).
+    When --model2 is given, a "vs-<short-model2>_<backend2>" token is appended.
     """
-    # os.path.basename trims trailing slashes so e.g.
-    # "granite-embedding-278-ovino/" still yields the dir name.
-    model_short = os.path.basename(args.model.rstrip('/'))
-    for noise in ('embedding-', 'embedding_'):
-        model_short = model_short.replace(noise, '')
-    model_short = model_short.replace('multilingual', 'multi')
-    if not model_short or set(model_short) <= {'.'}:
-        model_short = 'model'
+    model_short = _short_model_name(args.model)
 
     backend_short = {'pytorch': 'pt', 'openvino': 'ov', 'llama_cpp': 'llamacpp'}
     tokens = []
@@ -327,6 +336,9 @@ def _default_output_name(args) -> str:
         short = backend_short.get(b, b)
         tokens.append(f"{short}_{prec}" if prec else short)
     backends_str = '-'.join(tokens)
+    if args.model2:
+        backend2_short = backend_short.get(args.backend2, args.backend2)
+        backends_str += f"-vs-{_short_model_name(args.model2)}_{backend2_short}"
 
     parts = [model_short, backends_str]
     if args.max_text_length:
@@ -547,8 +559,12 @@ List[float]:
     embeddings1_normalized = embeddings1 / np.maximum(norm1, 1e-9)
     embeddings2_normalized = embeddings2 / np.maximum(norm2, 1e-9)
 
-    # Compute cosine similarities between corresponding embeddings
-    cosine_similarities = np.sum(embeddings1_normalized * embeddings2_normalized, axis=1)
+    # Compute cosine similarities between corresponding embeddings.
+    # Clip to [-1, 1]: float rounding can push scores of identical embeddings
+    # infinitesimally above 1.0, which would drop them out of the top
+    # histogram bucket and report min/mean values slightly above 1.
+    cosine_similarities = np.clip(
+        np.sum(embeddings1_normalized * embeddings2_normalized, axis=1), -1.0, 1.0)
 
     if return_mean:
         function = np.mean
@@ -591,6 +607,12 @@ Examples:
   # Compare Ollama with custom URL and model name
   python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends ollama --ollama-url http://localhost:11434 --ollama-model nomic-embed-text --input data.txt
 
+  # Compare two different models head-to-head (both on PyTorch)
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch --model2 ibm-granite/granite-embedding-english-r2 --input data.txt
+
+  # Compare model1 on PyTorch against model2 served by Ollama
+  python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch --model2 granite-embedding:30m --backend2 ollama --input data.txt
+
   # Compare all backends
   python {script_name} --model ibm-granite/granite-embedding-small-english-r2 --backends pytorch onnx openvino ollama --onnx-path ./model.onnx --openvino-path ./model.xml --ollama-model all-minilm --input data.txt
 
@@ -627,6 +649,15 @@ Examples:
     )
     # ... rest of the argument definitions ...
     parser.add_argument("--model", required=True, help="SentenceTransformer model name or path")
+    parser.add_argument("--model2", type=str, default=None,
+                       help="Second SentenceTransformer model name or path to compare against --model. "
+                            "Adds an extra run (labeled 'model2') that is compared pairwise with every "
+                            "backend of --model. May be the same model as --model.")
+    parser.add_argument("--backend2", type=str, default='pytorch',
+                       choices=['pytorch', 'onnx', 'openvino', 'ollama', 'llama_cpp'],
+                       help="Backend used to run --model2 (default: pytorch). For onnx/openvino, "
+                            "--model2 itself is used as the model path; ollama/llama_cpp reuse "
+                            "--ollama-url/--llamacpp-url.")
     parser.add_argument('--backends', nargs='+',
                         choices=['pytorch', 'onnx', 'openvino', 'tensorrt', 'vllm', 'ollama', 'llama_cpp'],
                         default=['pytorch', 'onnx'],
@@ -721,7 +752,10 @@ Examples:
         openvino_model = args.model
         # parser.error("--openvino-path (or --openvino_path) is required when using OpenVINO backend")
 
-    # Load models for each backend
+    # Load models for each backend. Each run gets a label (the backend name,
+    # plus 'model2' for the optional second model) that keys all downstream
+    # timing/similarity/reporting structures.
+    run_labels = list(args.backends)
     models = {}
     for backend in args.backends:
         print(f"Loading {backend.upper()} model...")
@@ -764,6 +798,40 @@ Examples:
                 'gpu_memory_utilization': 0.8,
             }
             models[backend] = load_sentence_transformer_with_backend(args.model, backend, model_kwargs)
+
+    if args.model2:
+        label = 'model2'
+        run_labels.append(label)
+        print(f"Loading MODEL2 ({args.model2}) with {args.backend2.upper()} backend...")
+        if args.backend2 == 'pytorch':
+            models[label] = load_sentence_transformer_with_backend(
+                args.model2, backend='pytorch', device=args.device, precision=args.precision
+            )
+        elif args.backend2 == 'onnx':
+            models[label] = load_sentence_transformer_with_backend(
+                args.model2, backend='onnx', device=args.device, model_path=args.model2
+            )
+        elif args.backend2 == 'openvino':
+            models[label] = load_sentence_transformer_with_backend(
+                args.model2, backend='openvino', device=args.openvino_device, model_path=args.model2
+            )
+        elif args.backend2 == 'ollama':
+            models[label] = load_sentence_transformer_with_backend(
+                args.model2, backend='ollama', device=args.device, base_url=args.ollama_url
+            )
+        elif args.backend2 == 'llama_cpp':
+            models[label] = load_sentence_transformer_with_backend(
+                args.model2, backend='llama_cpp', device=args.device, base_url=args.llamacpp_url
+            )
+
+    # Human-readable run names for printed reports. Normally the backend label
+    # (uppercased) is informative enough, but when both runs are plain pytorch
+    # the labels 'PYTORCH'/'MODEL2' carry no information — use the model names.
+    display_names = {label: label.upper() for label in run_labels}
+    if args.model2 and args.backends == ['pytorch'] and args.backend2 == 'pytorch':
+        name2 = args.model2 if args.model2 != args.model else f"{args.model2}#2"
+        display_names['pytorch'] = args.model
+        display_names['model2'] = name2
 
     # Collect input file list from --input and/or --fof
     input_files = []
@@ -808,14 +876,14 @@ Examples:
         print("\nWarming up models...")
         warmup_examples = min(5, num_sentences)  # Use up to 5 examples for warmup
         warmup_sentences = sentences[:warmup_examples]
-        for backend in args.backends:
-            print(f"  Warming up {backend.upper()}...")
+        for backend in run_labels:
+            print(f"  Warming up {display_names[backend]}...")
             _ = get_embeddings(models[backend], warmup_sentences, convert_to_numpy=False)
         print("✓ Warmup completed")
 
     # Initialize tracking variables
-    backend_times = {backend: 0 for backend in args.backends}
-    backend_embeddings = {backend: [] for backend in args.backends}
+    backend_times = {backend: 0 for backend in run_labels}
+    backend_embeddings = {backend: [] for backend in run_labels}
 
     initial_memory = get_memory_usage()
     print(f"\nInitial memory usage: {initial_memory:.1f} MB")
@@ -826,11 +894,11 @@ Examples:
     arg_min_vals = {}
     skipped_batches = 0
     for i, batch in enumerate(tqdm(batches)):
-        batch_embeddings = [None for _ in args.backends]
+        batch_embeddings = [None for _ in run_labels]
         batch_failed = False
 
         # Generate embeddings for each backend
-        for i1, backend in enumerate(args.backends):
+        for i1, backend in enumerate(run_labels):
             start_time = time.time()
             embeddings = get_embeddings(models[backend], batch, convert_to_numpy=False, batch_no=i)
             backend_times[backend] += time.time() - start_time
@@ -848,7 +916,7 @@ Examples:
 
         # Store embeddings if requested
         if args.save_embeddings:
-            for i1, backend in enumerate(args.backends):
+            for i1, backend in enumerate(run_labels):
                 embeddings = batch_embeddings[i1]
                 if isinstance(embeddings, list):
                     embeddings_np = np.array(embeddings)
@@ -858,11 +926,17 @@ Examples:
                     embeddings_np = np.array(embeddings)
                 backend_embeddings[backend].append(embeddings_np)
 
-        for i1 in range(len(args.backends)):
-            for j in range(i1+1, len(args.backends)):
-                key = f"{args.backends[j]} {args.backends[i1]}"
+        for i1 in range(len(run_labels)):
+            for j in range(i1+1, len(run_labels)):
+                key = f"{run_labels[j]} {run_labels[i1]}"
                 if key not in scores:
                     scores[key] = [[],[],[]]
+
+                dim1, dim2 = np.shape(batch_embeddings[i1])[1], np.shape(batch_embeddings[j])[1]
+                if dim1 != dim2:
+                    sys.exit(f"\n[ERROR] Embedding dimension mismatch: '{run_labels[i1]}' produces "
+                             f"{dim1}-dim embeddings but '{run_labels[j]}' produces {dim2}-dim "
+                             f"embeddings — the models cannot be compared element-wise.")
 
                 res = compute_similarity(batch_embeddings[i1], batch_embeddings[j], return_mean=False)
                 for v in range(len(scores[key])):
@@ -888,7 +962,7 @@ Examples:
     # Concatenate embeddings from all batches if they were collected
     if args.save_embeddings:
         print("\nConcatenating embeddings from all batches...")
-        for backend in args.backends:
+        for backend in run_labels:
             if backend_embeddings[backend]:
                 backend_embeddings[backend] = np.vstack(backend_embeddings[backend])
                 print(f"  {backend}: shape {backend_embeddings[backend].shape}")
@@ -897,6 +971,8 @@ Examples:
     results_dict = {
         'config': {
             'model': args.model,
+            'model2': args.model2,
+            'backend2': args.backend2 if args.model2 else None,
             'backends': args.backends,
             'num_sentences': num_sentences,
             'batch_size': args.batch_size,
@@ -914,7 +990,7 @@ Examples:
     # Add embeddings to results if requested
     if args.save_embeddings:
         results_dict['embeddings'] = {}
-        for backend in args.backends:
+        for backend in run_labels:
             if isinstance(backend_embeddings[backend], np.ndarray):
                 # Convert numpy array to list for JSON serialization
                 results_dict['embeddings'][backend] = backend_embeddings[backend].tolist()
@@ -926,14 +1002,20 @@ Examples:
     print("=" * 70)
 
     num_docs = num_sentences
-    baseline_backend = args.backends[0]  # Use first backend as baseline
+    baseline_backend = run_labels[0]  # Use first backend as baseline
     baseline_time = backend_times[baseline_backend]
 
-    # Print header
-    print(f"\n{'Backend':<15} {'Time (s)':<12} {'Throughput':<18} {'Speedup':<10}")
-    print("-" * 70)
+    # Explain the run labels, unless the table already shows model names
+    if args.model2 and display_names.get('model2') == 'MODEL2':
+        print(f"\nRuns: {', '.join(args.backends)} use --model ({args.model}); "
+              f"'model2' uses --model2 ({args.model2}) on {args.backend2}")
 
-    for backend in args.backends:
+    # Print header (label column grows to fit model names used as run names)
+    label_width = max(15, max(len(name) for name in display_names.values()) + 2)
+    print(f"\n{'Backend':<{label_width}} {'Time (s)':<12} {'Throughput':<18} {'Speedup':<10}")
+    print("-" * max(70, label_width + 45))
+
+    for backend in run_labels:
         time_val = backend_times[backend]
         throughput = num_docs / time_val if time_val > 0 else float('inf')
         speedup = baseline_time / time_val if time_val > 0 and backend != baseline_backend else 1.0
@@ -947,12 +1029,12 @@ Examples:
         }
 
         if backend == baseline_backend:
-            print(f"{backend.upper():<15} {time_val:>8.2f}s    {throughput:>8.1f} docs/s    {'(baseline)':<10}")
+            print(f"{display_names[backend]:<{label_width}} {time_val:>8.2f}s    {throughput:>8.1f} docs/s    {'(baseline)':<10}")
         else:
-            print(f"{backend.upper():<15} {time_val:>8.2f}s    {throughput:>8.1f} docs/s    {speedup:>6.2f}x")
+            print(f"{display_names[backend]:<{label_width}} {time_val:>8.2f}s    {throughput:>8.1f} docs/s    {speedup:>6.2f}x")
 
     # Report embedding similarity comparisons
-    if len(args.backends) > 1:
+    if len(run_labels) > 1:
         print("\n" + "=" * 70)
         print("EMBEDDING SIMILARITY COMPARISON")
         print("=" * 70)
@@ -961,19 +1043,21 @@ Examples:
         baseline_embeddings = backend_embeddings[baseline_backend]
         arg_min = 0
 
-        for backend in args.backends[1:]:
+        for backend in run_labels[1:]:
             _, _, _, arg_min = _compute_and_print_similarity(baseline_backend, backend,
-                                                            scores, results_dict, verbose=True)
+                                                            scores, results_dict, verbose=True,
+                                                            display_names=display_names)
 
-        # Compare all pairs if more than 2 backends
-        if len(args.backends) > 2:
+        # Compare all pairs if more than 2 runs
+        if len(run_labels) > 2:
             print(f"\nAdditional pairwise comparisons:")
-            for i, backend1 in enumerate(args.backends[1:], 1):
-                for backend2 in args.backends[i + 1:]:
-                    cosine_sim, _, _ = _compute_and_print_similarity(backend1, backend2, scores, results_dict,
-                                                                     verbose=False)
-                    print(f"\n{backend1.upper()} vs {backend2.upper()}:")
-                    print(f"  Cosine Similarity: {cosine_sim:.6f}")
+            for i, backend1 in enumerate(run_labels[1:], 1):
+                for backend2 in run_labels[i + 1:]:
+                    cosine_sim, _, _, _ = _compute_and_print_similarity(backend1, backend2, scores, results_dict,
+                                                                        verbose=False,
+                                                                        display_names=display_names)
+                    print(f"\n{display_names[backend1]} vs {display_names[backend2]}:")
+                    print(f"  Cosine Similarity: {cosine_sim:.8f}")
         print("\n"+ "=" * 70)
         print(f"The min cosine is realized for \n {sentences[arg_min][:300]} ...")
 
@@ -986,10 +1070,12 @@ Examples:
                 cosine_scores = np.array(score_lists[0])
                 n = min(args.print_worst, len(cosine_scores))
                 worst_indices = np.argsort(cosine_scores)[:n]
-                print(f"\n{key.upper()}:")
+                # key is "<label2> <label1>" — map each label to its display name
+                label2, label1 = key.split(' ', 1)
+                print(f"\n{display_names.get(label1, label1.upper())} vs {display_names.get(label2, label2.upper())}:")
                 print("-" * 70)
                 for rank, idx in enumerate(worst_indices, 1):
-                    print(f"  #{rank} (cosine={cosine_scores[idx]:.6f}, idx={idx}):")
+                    print(f"  #{rank} (cosine={cosine_scores[idx]:.8f}, idx={idx}):")
                     print(f"    {sentences[idx][:200]}{'...' if len(sentences[idx]) > 200 else ''}")
                     print()
 
@@ -1012,7 +1098,8 @@ def _analyze_results(cosine_sim: float, model_name: str):
         print("    - Check model compatibility")
 
 
-def _compute_and_print_similarity(backend1: str, backend2: str, scores: dict, results_dict: dict, verbose: bool = True):
+def _compute_and_print_similarity(backend1: str, backend2: str, scores: dict, results_dict: dict,
+                                  verbose: bool = True, display_names: dict | None = None):
     """Compute and optionally print similarity statistics between two backends.
 
     Args:
@@ -1021,10 +1108,15 @@ def _compute_and_print_similarity(backend1: str, backend2: str, scores: dict, re
         scores: Dictionary containing similarity scores
         results_dict: Dictionary to store results
         verbose: Whether to print detailed statistics
+        display_names: Optional mapping of run label -> printed name
+            (defaults to the uppercased label)
 
     Returns:
         Tuple of (cosine_sim, mse_mean, manhattan)
     """
+    display_names = display_names or {}
+    name1 = display_names.get(backend1, backend1.upper())
+    name2 = display_names.get(backend2, backend2.upper())
     key = f"{backend2} {backend1}"
     cosine_sim, cosine_median, cosine_std, cosine_min, cosine_arg_min = compute_stats(scores[key][0])
     mse_mean, mse_std, _, _, _ = compute_stats(scores[key][1])
@@ -1067,11 +1159,13 @@ def _compute_and_print_similarity(backend1: str, backend2: str, scores: dict, re
     }
 
     if verbose:
-        print(f"\n{backend1.upper()} vs {backend2.upper()}:")
-        print(f"  Mean Cosine Similarity:    {cosine_sim:.6f} (1.0 = identical)")
-        print(f"  Median Cosine Similarity:  {cosine_median:.6f}")
-        print(f"  Std Dev Cosine Similarity: {cosine_std:.6f}")
-        print(f"  Min Cosine Similarity:     {cosine_min:.6f}")
+        print(f"\n{name1} vs {name2}:")
+        # 8 decimals: with 6, near-identical embeddings (e.g. 0.9999997)
+        # round up to 1.000000 and the min looks pinned at the bound.
+        print(f"  Mean Cosine Similarity:    {cosine_sim:.8f} (1.0 = identical)")
+        print(f"  Median Cosine Similarity:  {cosine_median:.8f}")
+        print(f"  Std Dev Cosine Similarity: {cosine_std:.8f}")
+        print(f"  Min Cosine Similarity:     {cosine_min:.8f}")
         print(f"  Arg Min Cosine Similarity: {int(cosine_arg_min)}")
         print(f"  Mean Squared Error:        {mse_mean:.6f} ± {mse_std:.2f} (0.0 = identical)")
         print(f"  Mean Manhattan Distance:   {manhattan:.6f} ± {manhattan_std:.2f} (0.0 = identical)")
@@ -1083,7 +1177,7 @@ def _compute_and_print_similarity(backend1: str, backend2: str, scores: dict, re
         print(f"    [0.95, 0.98): {range_095_098:6d} ({pct_095_098:5.1f}%)")
         print(f"    [0.00, 0.95): {range_0_095:6d} ({pct_0_095:5.1f}%)")
 
-        _analyze_results(cosine_sim, f"{backend1.upper()}/{backend2.upper()}")
+        _analyze_results(cosine_sim, f"{name1} vs {name2}")
 
     return cosine_sim, mse_mean, manhattan, cosine_arg_min
 
