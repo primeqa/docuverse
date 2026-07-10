@@ -468,14 +468,19 @@ failsoa:
 
 static PyObject *py_fagin_search(PyObject *self, PyObject *args) {
     PyObject *y_obj, *order_obj, *vals_obj, *q_obj;
-    Py_ssize_t K, batch, max_depth, num_threads;
+    Py_ssize_t K, batch, max_depth, num_threads, schedule = 0;
     float epsilon;
-    if (!PyArg_ParseTuple(args, "OOOOnnfnn",
+    if (!PyArg_ParseTuple(args, "OOOOnnfnn|n",
                           &y_obj, &order_obj, &vals_obj, &q_obj,
-                          &K, &batch, &epsilon, &max_depth, &num_threads))
+                          &K, &batch, &epsilon, &max_depth, &num_threads,
+                          &schedule))
         return NULL;
     if (K < 1)     { PyErr_SetString(PyExc_ValueError, "K must be >= 1");     return NULL; }
     if (batch < 1) { PyErr_SetString(PyExc_ValueError, "batch must be >= 1"); return NULL; }
+    if (schedule != FAGIN_SCHEDULE_LOCKSTEP && schedule != FAGIN_SCHEDULE_STEEPEST) {
+        PyErr_SetString(PyExc_ValueError, "schedule must be 0 (lockstep) or 1 (steepest)");
+        return NULL;
+    }
 
     Py_buffer y_view, order_view, vals_view, q_view;
     if (get_buffer(y_obj, &y_view, 'f', 0) != 0) return NULL;
@@ -530,6 +535,7 @@ static PyObject *py_fagin_search(PyObject *self, PyObject *args) {
                         (int64_t)N, (int64_t)D,
                         (const float *)q_view.buf,
                         (int)K, (int64_t)batch, epsilon, (int64_t)max_depth,
+                        (int)schedule,
                         (float *)scores_data, (int64_t *)idx_data, &st);
         Py_END_ALLOW_THREADS
 
@@ -580,11 +586,14 @@ static PyMethodDef SimdqMethods[] = {
      "scan_hamming_soa(codes, N, D, q, K, num_threads, i0, i1) -> (distances, indices) "
      "bytes; codes already SoA (dbT[w*N+i]), no transpose; scans range [i0, i1)."},
     {"fagin_search", py_fagin_search, METH_VARARGS,
-     "fagin_search(Y, order, vals, q, K, batch, epsilon, max_depth, num_threads)"
+     "fagin_search(Y, order, vals, q, K, batch, epsilon, max_depth,"
+     " num_threads[, schedule])"
      " -> (scores, indices, stats); exact top-K inner product via Fagin's"
      " Threshold Algorithm. Y fp32 (N,D); order int32 (D,N) descending argsort"
      " per dim; vals fp32 (D,N) sorted values; epsilon = additive halting"
-     " slack (0 = exact); max_depth 0 = unlimited."},
+     " slack (0 = exact); max_depth 0 = unlimited (steepest: per-dim cap);"
+     " schedule 0 = lockstep round-robin (default), 1 = steepest-descent"
+     " (advance the dim with the largest marginal threshold drop)."},
     {NULL, NULL, 0, NULL},
 };
 

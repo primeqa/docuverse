@@ -627,7 +627,9 @@ class RetrievalArguments(GenericArguments):
         metadata={"help": "fagin: rows of sorted access taken from each active "
                           "dimension's list per TA round (B). Larger = fewer "
                           "threshold checks but more overshoot past the exact "
-                          "stopping depth."}
+                          "stopping depth. With schedule='steepest' only ONE "
+                          "dim advances per round, so use a much larger batch "
+                          "(1024-4096) to keep the scoring phase parallel."}
     )
 
     fagin_epsilon: float = field(
@@ -648,6 +650,15 @@ class RetrievalArguments(GenericArguments):
         default=0,
         metadata={"help": "fagin: OpenMP thread count for the TA scan kernel; "
                           "0 = OMP default."}
+    )
+
+    fagin_schedule: str = field(
+        default="lockstep",
+        metadata={"help": "fagin: sorted-access schedule. 'lockstep' = "
+                          "round-robin over active dims (weight-blind); "
+                          "'steepest' = advance the dim with the largest "
+                          "marginal threshold drop (fewer random accesses at "
+                          "epsilon > 0; exact at epsilon = 0)."}
     )
 
     def __post_init__(self):
