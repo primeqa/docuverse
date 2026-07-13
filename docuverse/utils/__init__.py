@@ -707,6 +707,12 @@ def _parallel_queue_worker(inqueue, result_queue, thread_number, expected_items,
     import sys
     import traceback
 
+    # Parallelism is already provided at the process level.  Disable the
+    # tokenizer's internal Rayon pool only in this child to avoid nested
+    # parallelism (and fork-after-Rayon deadlocks) without serializing future
+    # tokenizer calls in the parent process.
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
     try:
         with tqdm(desc=f"{msg}/thread {thread_number}", leave=False,
                   position=thread_number + 1, total=expected_items) as tk:
@@ -819,18 +825,6 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
                     tk.update(1)
         return results
 
-    # Smoke-test: run the first item in the main process before forking.
-    # This surfaces Python exceptions with a full traceback immediately,
-    # rather than losing them to a worker crash.
-    if data:
-        try:
-            apply_funcs(data[0])
-        except Exception:
-            import traceback
-            print(f"\n[parallel_process] Smoke test failed on first item — "
-                  f"aborting parallel run.\n{traceback.format_exc()}", flush=True)
-            raise
-
     import multiprocessing as mp
 
     # Use 'fork' context for fast startup (avoids re-importing modules).
@@ -843,8 +837,6 @@ def parallel_process(process_func, data, num_threads, post_func=None, post_label
         return parallel_process(process_func, data, num_threads,
                                 post_func=post_func, post_label=post_label,
                                 msg=msg, use_threads=True)
-
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     # Set module-level globals so forked workers inherit them (copy-on-write)
     global _parallel_process_func, _parallel_post_func, _parallel_post_label, _parallel_data

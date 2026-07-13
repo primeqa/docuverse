@@ -470,15 +470,18 @@ static PyObject *py_fagin_search(PyObject *self, PyObject *args) {
     PyObject *y_obj, *order_obj, *vals_obj, *q_obj;
     Py_ssize_t K, batch, max_depth, num_threads, schedule = 0;
     float epsilon;
-    if (!PyArg_ParseTuple(args, "OOOOnnfnn|n",
+    double r2 = 1.0;   // ball radius^2 for norm-aware schedules (default unit)
+    if (!PyArg_ParseTuple(args, "OOOOnnfnn|nd",
                           &y_obj, &order_obj, &vals_obj, &q_obj,
                           &K, &batch, &epsilon, &max_depth, &num_threads,
-                          &schedule))
+                          &schedule, &r2))
         return NULL;
     if (K < 1)     { PyErr_SetString(PyExc_ValueError, "K must be >= 1");     return NULL; }
     if (batch < 1) { PyErr_SetString(PyExc_ValueError, "batch must be >= 1"); return NULL; }
-    if (schedule != FAGIN_SCHEDULE_LOCKSTEP && schedule != FAGIN_SCHEDULE_STEEPEST) {
-        PyErr_SetString(PyExc_ValueError, "schedule must be 0 (lockstep) or 1 (steepest)");
+    if (schedule < FAGIN_SCHEDULE_LOCKSTEP || schedule > FAGIN_SCHEDULE_STEEPEST_NORM) {
+        PyErr_SetString(PyExc_ValueError,
+                        "schedule must be 0 (lockstep), 1 (steepest), "
+                        "2 (lockstep_norm/GTA) or 3 (steepest_norm/GTASD)");
         return NULL;
     }
 
@@ -535,7 +538,7 @@ static PyObject *py_fagin_search(PyObject *self, PyObject *args) {
                         (int64_t)N, (int64_t)D,
                         (const float *)q_view.buf,
                         (int)K, (int64_t)batch, epsilon, (int64_t)max_depth,
-                        (int)schedule,
+                        (int)schedule, r2,
                         (float *)scores_data, (int64_t *)idx_data, &st);
         Py_END_ALLOW_THREADS
 
@@ -587,13 +590,17 @@ static PyMethodDef SimdqMethods[] = {
      "bytes; codes already SoA (dbT[w*N+i]), no transpose; scans range [i0, i1)."},
     {"fagin_search", py_fagin_search, METH_VARARGS,
      "fagin_search(Y, order, vals, q, K, batch, epsilon, max_depth,"
-     " num_threads[, schedule])"
+     " num_threads[, schedule[, r2]])"
      " -> (scores, indices, stats); exact top-K inner product via Fagin's"
      " Threshold Algorithm. Y fp32 (N,D); order int32 (D,N) descending argsort"
      " per dim; vals fp32 (D,N) sorted values; epsilon = additive halting"
      " slack (0 = exact); max_depth 0 = unlimited (steepest: per-dim cap);"
      " schedule 0 = lockstep round-robin (default), 1 = steepest-descent"
-     " (advance the dim with the largest marginal threshold drop)."},
+     " (advance the dim with the largest marginal threshold drop), 2/3 = the"
+     " norm-aware (GTA/GTASD) variants of 0/1 using the water-filling halting"
+     " bound with ||x|| <= sqrt(r2); r2 = max squared row norm (default 1.0,"
+     " i.e. unit-norm corpus). Exact for any r2 >= the true max; tightest at"
+     " the true value."},
     {NULL, NULL, 0, NULL},
 };
 

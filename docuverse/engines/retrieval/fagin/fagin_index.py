@@ -37,6 +37,8 @@ class FaginIndex:
     n_vectors: int
     dim: int
     encoder_id: Optional[str] = None
+    max_norm_sq: float = 1.0   # max squared row norm; ball radius^2 for the
+                               # norm-aware (GTA/GTASD) halting bound
 
     # ----- build -----
 
@@ -55,8 +57,11 @@ class FaginIndex:
         vals = np.take_along_axis(Y, perm, axis=0)                 # (N, D)
         order = np.ascontiguousarray(perm.T, dtype=np.int32)       # (D, N)
         vals = np.ascontiguousarray(vals.T, dtype=np.float32)      # (D, N)
+        # Max squared row norm: the ball radius^2 used by the norm-aware
+        # (GTA/GTASD) halting bound. Exact for any corpus (== 1 for unit-norm).
+        max_norm_sq = float(np.einsum("ij,ij->i", Y, Y).max()) if N else 1.0
         return cls(Y=Y, order=order, vals=vals, n_vectors=int(N), dim=int(D),
-                   encoder_id=encoder_id)
+                   encoder_id=encoder_id, max_norm_sq=max_norm_sq)
 
     # ----- persist -----
 
@@ -70,7 +75,8 @@ class FaginIndex:
             json.dump({"format_version": FORMAT_VERSION,
                        "n_vectors": self.n_vectors,
                        "dim": self.dim,
-                       "encoder_id": self.encoder_id}, f)
+                       "encoder_id": self.encoder_id,
+                       "max_norm_sq": self.max_norm_sq}, f)
         np.save(tmp / "Y.npy", self.Y)
         np.ascontiguousarray(self.order).tofile(tmp / "order.bin")
         np.ascontiguousarray(self.vals).tofile(tmp / "vals.bin")
@@ -93,11 +99,13 @@ class FaginIndex:
         vals = np.memmap(path / "vals.bin", dtype=np.float32, mode="r",
                          shape=(D, N))
         return cls(Y=Y, order=order, vals=vals, n_vectors=N, dim=D,
-                   encoder_id=meta.get("encoder_id"))
+                   encoder_id=meta.get("encoder_id"),
+                   max_norm_sq=float(meta.get("max_norm_sq", 1.0)))
 
     # ----- search -----
 
-    SCHEDULES = {"lockstep": 0, "steepest": 1}
+    SCHEDULES = {"lockstep": 0, "steepest": 1,
+                 "lockstep_norm": 2, "steepest_norm": 3}
 
     def search(self, q: np.ndarray, K: int, batch: int = 64,
                epsilon: float = 0.0, max_depth: int = 0,
@@ -108,7 +116,13 @@ class FaginIndex:
 
         schedule: "lockstep" (round-robin sorted access, weight-blind) or
         "steepest" (advance the dim with the largest marginal threshold drop;
-        exact at epsilon=0, fewer random accesses at epsilon>0)."""
+        exact at epsilon=0, fewer random accesses at epsilon>0). The
+        "lockstep_norm"/"steepest_norm" variants (printed as GTA/GTASD) use the
+        norm-aware water-filling halting bound: because the corpus vectors are
+        L2-normalized, the classic box threshold sum_j q_j t_j overestimates
+        badly, and the norm-constrained bound (also respecting ||x||_2 = 1) is
+        provably tighter while staying exact at epsilon=0 — fewer sorted and
+        random accesses. See research/2026-07-13-fagin-norm-aware-threshold."""
         q = np.ascontiguousarray(q, dtype=np.float32)
         if q.shape != (self.dim,):
             raise ValueError(f"fagin search: q must have shape ({self.dim},); "
@@ -119,7 +133,7 @@ class FaginIndex:
         scores_b, idx_b, stats = _native.fagin_search(
             self.Y, self.order, self.vals, q,
             int(K), int(batch), float(epsilon), int(max_depth),
-            int(num_threads), self.SCHEDULES[schedule])
+            int(num_threads), self.SCHEDULES[schedule], float(self.max_norm_sq))
         scores = np.frombuffer(scores_b, dtype=np.float32)
         idxs = np.frombuffer(idx_b, dtype=np.int64)
         return idxs, scores, stats

@@ -55,8 +55,14 @@ def expected_calibration_error(predictions: Union[List[float], np.ndarray],
     if len(predictions) == 0:
         raise ValueError("Empty predictions array")
     
-    if not np.all((predictions >= 0) & (predictions <= 1)):
-        raise ValueError("Predictions must be between 0 and 1")
+    # Renormalize into [0, 1] when the max exceeds 1 (e.g. raw/unnormalized
+    # reranker logits) by applying a numerically stable softmax.
+    pred_max = np.max(predictions)
+    if pred_max > 1:
+        warnings.warn(f"Predictions exceed 1 (max={pred_max:.4g}); "
+                      f"renormalizing with softmax")
+        exp = np.exp(predictions - pred_max)
+        predictions = exp / np.sum(exp)
     
     if not np.all((actuals == 0) | (actuals == 1)):
         raise ValueError("Actuals must be binary (0 or 1)")

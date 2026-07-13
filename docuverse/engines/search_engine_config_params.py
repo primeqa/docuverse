@@ -658,7 +658,12 @@ class RetrievalArguments(GenericArguments):
                           "round-robin over active dims (weight-blind); "
                           "'steepest' = advance the dim with the largest "
                           "marginal threshold drop (fewer random accesses at "
-                          "epsilon > 0; exact at epsilon = 0)."}
+                          "epsilon > 0; exact at epsilon = 0). "
+                          "'lockstep_norm'/'steepest_norm' (printed GTA/GTASD) "
+                          "add the norm-aware water-filling halting bound that "
+                          "exploits ||x||_2 = 1 for L2-normalized corpora: "
+                          "tighter threshold, fewer accesses, still exact at "
+                          "epsilon = 0."}
     )
 
     def __post_init__(self):

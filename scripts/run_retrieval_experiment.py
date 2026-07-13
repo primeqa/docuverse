@@ -67,6 +67,7 @@ import csv
 import json
 import math
 import os
+import re
 import shlex
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -188,7 +189,13 @@ def _cli_overrides(args: argparse.Namespace) -> dict:
         ov["settings.fagin_epsilon"] = [float(x)
                                         for x in args.fagin_epsilon.split(",")]
     if args.fagin_schedule:
-        ov["settings.fagin_schedule"] = args.fagin_schedule
+        scheds = [s.strip() for s in args.fagin_schedule.split(",") if s.strip()]
+        valid = {"lockstep", "steepest", "lockstep_norm", "steepest_norm"}
+        bad = [s for s in scheds if s not in valid]
+        if bad:
+            sys.exit(f"--fagin-schedule: unknown schedule(s) {bad}; "
+                     f"choose from {sorted(valid)}")
+        ov["settings.fagin_schedule"] = scheds[0] if len(scheds) == 1 else scheds
     if args.no_milvus:
         ov["settings.run_milvus"] = False
     if args.no_faiss:
@@ -679,7 +686,10 @@ def iter_baseline_engines(vecs: np.ndarray, st: dict, K: int):
     if st.get("run_fagin", True):
         f_batch = int(st["fagin_batch_rows"])
         f_depth = int(st["fagin_max_depth"])
-        f_schedule = str(st.get("fagin_schedule", "lockstep"))
+        sched_cfg = st.get("fagin_schedule", "lockstep")
+        f_schedules = (list(sched_cfg)
+                       if isinstance(sched_cfg, (list, tuple))
+                       else [sched_cfg])
         eps_cfg = st["fagin_epsilon"]
         f_epsilons = ([float(e) for e in eps_cfg]
                       if isinstance(eps_cfg, (list, tuple))
@@ -692,15 +702,23 @@ def iter_baseline_engines(vecs: np.ndarray, st: dict, K: int):
         else:
             # TA = lockstep (round-robin) Threshold Algorithm; TASD = the
             # steepest-descent schedule (advance the dim with the largest
-            # marginal threshold drop).
-            algo = "TASD" if f_schedule == "steepest" else "TA"
-            for f_eps in f_epsilons:
-                name = (f"Fagin {algo} (exact)"
-                        if f_eps == 0.0 and f_depth == 0
-                        else f"Fagin {algo} (eps={f_eps:g}, depth={f_depth})")
-                yield name, (lambda q, f_eps=f_eps: fg.search(
-                    q, K=K, batch=f_batch, epsilon=f_eps,
-                    max_depth=f_depth, num_threads=1, schedule=f_schedule)[0])
+            # marginal threshold drop). GTA/GTASD = the norm-aware ("gradient")
+            # variants using the water-filling halting bound that exploits
+            # ||x||_2 = 1. Each configured schedule × epsilon gets its own row,
+            # so a single run can compare TA vs GTA (or the full four) directly.
+            algo_of = {"lockstep": "TA", "steepest": "TASD",
+                       "lockstep_norm": "GTA", "steepest_norm": "GTASD"}
+            for f_schedule in f_schedules:
+                algo = algo_of.get(f_schedule, "TA")
+                for f_eps in f_epsilons:
+                    name = (f"Fagin {algo} (exact)"
+                            if f_eps == 0.0 and f_depth == 0
+                            else f"Fagin {algo} (eps={f_eps:g}, depth={f_depth})")
+                    yield name, (lambda q, f_eps=f_eps, f_schedule=f_schedule:
+                                 fg.search(
+                                     q, K=K, batch=f_batch, epsilon=f_eps,
+                                     max_depth=f_depth, num_threads=1,
+                                     schedule=f_schedule)[0])
 
 
 def _call_batch(call, qs: np.ndarray, K: int, workers: int) -> np.ndarray:
@@ -1152,6 +1170,155 @@ def _frontier_chart_svg(models, metric_rows, head, workers) -> str | None:
     return "\n".join(e) + "\n"
 
 
+def _fagin_sweep_chart_svg(head: list[dict]) -> str | None:
+    """Epsilon sweep for the Fagin schedules on one chart: ms/query (log y) vs
+    agree@K (linear x). One connected line per schedule (TA/TASD/GTA/GTASD)
+    threading through its epsilon points in increasing-epsilon order, each point
+    labeled with its epsilon; hue = schedule. One panel per source (dim/N).
+
+    This is the speed/accuracy trade-off the epsilon knob buys: as epsilon
+    grows a schedule moves down (faster) and usually left (lower agreement).
+    Norm-aware schedules (GTA/GTASD) sit further down-right for the same
+    epsilon. Returns None when no source has >= 2 Fagin points to connect.
+    """
+    # Gather per (source panel) -> per schedule -> list of (eps, agree, ms).
+    panels = []
+    for row in head:
+        by_algo: dict[str, list] = {}
+        for s in row["systems"]:
+            parsed = _parse_fagin_name(s["name"])
+            if parsed is None or s["ms"] <= 0:
+                continue
+            algo, eps = parsed
+            by_algo.setdefault(algo, []).append((eps, s["agree"], s["ms"]))
+        # keep schedules with at least one point; sort each by epsilon
+        series = {a: sorted(pts) for a, pts in by_algo.items() if pts}
+        if series:
+            panels.append((f"{row['label']} (D={row['D']})", series))
+    if not panels:
+        return None
+    n_pts = sum(len(pts) for _, series in panels for pts in series.values())
+    if n_pts < 2:
+        return None
+
+    all_ms = [ms for _, series in panels for pts in series.values()
+              for _, _, ms in pts]
+    all_ag = [ag for _, series in panels for pts in series.values()
+              for _, ag, _ in pts]
+    ymin, ymax, yticks = _log_ticks(min(all_ms), max(all_ms))
+    x_lo, x_hi = min(all_ag), max(all_ag)
+    xpad = max((x_hi - x_lo) * 0.08, 0.005)
+    x0, x1 = max(0.0, x_lo - xpad), min(1.0, x_hi + xpad)
+    if x1 - x0 < 1e-9:
+        x0, x1 = x0 - 0.02, x1 + 0.02
+
+    algos_present = [a for a in ("TA", "TASD", "GTA", "GTASD")
+                     if any(a in series for _, series in panels)]
+
+    n = len(panels)
+    L, PW, G, RP = 64, 400, 40, 48   # RP leaves room for right-edge eps labels
+    W = L + n * PW + (n - 1) * G + RP
+    p_top, p_bot = 118, 360
+    H = 412
+    ly0, ly1 = math.log10(ymin), math.log10(ymax)
+    if ly1 - ly0 < 1e-9:
+        ly0, ly1 = ly0 - 0.5, ly1 + 0.5
+
+    def Y(v: float) -> float:
+        return p_bot - (math.log10(v) - ly0) / (ly1 - ly0) * (p_bot - p_top)
+
+    e: list[str] = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
+        f'width="{W}" height="{H}" role="img" aria-label="Fagin epsilon sweep: '
+        f'latency (ms/query, log scale) vs agreement with exact top-K, one '
+        f'line per schedule">',
+        _chart_css(len(_CHART_COLORS)),
+        f'<rect width="{W}" height="{H}" rx="8" fill="var(--surface)"/>',
+        f'<text x="{L}" y="26" font-size="15" font-weight="600" '
+        f'fill="var(--ink)">Fagin epsilon sweep — latency vs. agreement</text>',
+        f'<text x="{L}" y="46" font-size="12" fill="var(--ink-2)">'
+        f'ms/query (log scale) vs agree@K with the exact top-K; each line is '
+        f'one schedule swept over epsilon (labeled) — down and right is '
+        f'better</text>',
+    ]
+
+    def txt_w(s: str, px: float = 6.1) -> float:
+        return px * len(s)
+
+    # legend: hue = schedule
+    lx = float(L)
+    for a in algos_present:
+        ci = _FAGIN_ALGO_COLOR[a]
+        e.append(f'<line x1="{lx:.0f}" y1="66" x2="{lx + 20:.0f}" y2="66" '
+                 f'stroke="var(--c{ci})" stroke-width="2.5" '
+                 f'stroke-linecap="round"/>')
+        e.append(f'<circle cx="{lx + 10:.0f}" cy="66" r="3.5" '
+                 f'fill="var(--c{ci})" stroke="var(--surface)" '
+                 f'stroke-width="1.5"/>')
+        e.append(f'<text x="{lx + 26:.0f}" y="70" font-size="12" '
+                 f'fill="var(--ink-2)">{a}</text>')
+        lx += 26 + txt_w(a) + 22
+
+    # shared y label + ticks (drawn per panel)
+    e.append(f'<text x="8" y="{p_top - 10}" font-size="11" '
+             f'fill="var(--ink-3)">ms/query</text>')
+
+    for pi, (title, series) in enumerate(panels):
+        px = L + pi * (PW + G)
+
+        def X(v: float, px: float = px) -> float:
+            return px + (v - x0) / (x1 - x0) * PW
+
+        e.append(f'<text x="{px + PW / 2:.0f}" y="{p_top - 10}" '
+                 f'font-size="12.5" font-weight="600" text-anchor="middle" '
+                 f'fill="var(--ink)">{title}</text>')
+        for v in yticks:
+            e.append(f'<line x1="{px}" y1="{Y(v):.1f}" x2="{px + PW}" '
+                     f'y2="{Y(v):.1f}" stroke="var(--grid)" stroke-width="1"/>')
+            if pi == 0:
+                e.append(f'<text x="{L - 8}" y="{Y(v) + 4:.1f}" font-size="11" '
+                         f'text-anchor="end" fill="var(--ink-3)">{v:g}</text>')
+        # x ticks: 5 evenly across [x0, x1]
+        for k in range(5):
+            xv = x0 + (x1 - x0) * k / 4
+            e.append(f'<line x1="{X(xv):.1f}" y1="{p_top}" x2="{X(xv):.1f}" '
+                     f'y2="{p_bot}" stroke="var(--grid)" stroke-width="1"/>')
+            e.append(f'<text x="{X(xv):.1f}" y="{p_bot + 18}" font-size="11" '
+                     f'text-anchor="middle" fill="var(--ink-3)">'
+                     f'{xv:.3f}</text>')
+        e.append(f'<line x1="{px}" y1="{p_bot}" x2="{px + PW}" y2="{p_bot}" '
+                 f'stroke="var(--axis)" stroke-width="1"/>')
+        e.append(f'<text x="{px + PW / 2:.0f}" y="{p_bot + 38}" '
+                 f'font-size="11" text-anchor="middle" '
+                 f'fill="var(--ink-3)">agree@K vs exact</text>')
+
+        # one polyline per schedule through its epsilon points, markers + eps
+        # labels on top.
+        marks: list[str] = []
+        for a in algos_present:
+            pts = series.get(a)
+            if not pts:
+                continue
+            ci = _FAGIN_ALGO_COLOR[a]
+            xy = [(X(ag), Y(ms)) for _, ag, ms in pts]
+            if len(xy) >= 2:
+                poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in xy)
+                e.append(f'<polyline points="{poly}" fill="none" '
+                         f'stroke="var(--c{ci})" stroke-width="2" '
+                         f'stroke-linejoin="round" stroke-linecap="round"/>')
+            for (eps, ag, ms), (cx, cy) in zip(pts, xy):
+                marks.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="4" '
+                             f'fill="var(--c{ci})" stroke="var(--surface)" '
+                             f'stroke-width="1.5"/>')
+                marks.append(f'<text x="{cx + 6:.1f}" y="{cy - 6:.1f}" '
+                             f'font-size="9.5" fill="var(--ink-3)">'
+                             f'ε={eps:g}</text>')
+        e += marks
+
+    e.append("</svg>")
+    return "\n".join(e) + "\n"
+
+
 def _engine_scaling_lines(head: list[dict]) -> list[str]:
     """Analysis section: how each engine's latency scales from the smallest to
     the largest dimensionality in the run, and why graph ANN (HNSW) dominates
@@ -1272,6 +1439,30 @@ def _fmt_epsilon(eps) -> str:
     if isinstance(eps, (list, tuple)):
         return "{" + ", ".join(f"{float(e):g}" for e in eps) + "}"
     return f"{float(eps):g}"
+
+
+def _fmt_schedule(sched) -> str:
+    """Render fagin_schedule (scalar or swept list) for the report prose."""
+    if isinstance(sched, (list, tuple)):
+        return "{" + ", ".join(str(s) for s in sched) + "}"
+    return str(sched)
+
+
+def _parse_fagin_name(name: str):
+    """('Fagin GTASD (eps=0.01, depth=0)') -> ('GTASD', 0.01); the exact rows
+    ('Fagin TA (exact)') map to epsilon 0.0. Returns None for non-Fagin rows."""
+    if not name.startswith("Fagin "):
+        return None
+    algo = name.split(" ", 2)[1]              # TA / TASD / GTA / GTASD
+    if "(exact)" in name:
+        return algo, 0.0
+    m = re.search(r"eps=([0-9.eE+-]+)", name)
+    return (algo, float(m.group(1))) if m else (algo, 0.0)
+
+
+# Fagin schedule -> hue slot in _CHART_COLORS (stable across the report so the
+# epsilon-sweep chart and any future Fagin chart agree on colour per schedule).
+_FAGIN_ALGO_COLOR = {"TA": 0, "TASD": 1, "GTA": 2, "GTASD": 3}
 
 
 def write_report(out_path: Path, cfg: dict, isa: dict, corpus_sizes: list[int],
@@ -1436,8 +1627,10 @@ def write_report(out_path: Path, cfg: dict, isa: dict, corpus_sizes: list[int],
           f"per-dimension sorted lists (batch={int(st['fagin_batch_rows'])}, "
           f"epsilon={_fmt_epsilon(st['fagin_epsilon'])}, "
           f"max_depth={int(st['fagin_max_depth'])}, "
-          f"schedule={st.get('fagin_schedule', 'lockstep')}; epsilon=0 with "
-          f"unlimited depth is exact). Simdq `+rescore` uses K'={K_re}, "
+          f"schedule={_fmt_schedule(st.get('fagin_schedule', 'lockstep'))}; "
+          f"epsilon=0 with unlimited depth is exact; TA/TASD use the classic "
+          f"box threshold, GTA/GTASD the norm-aware water-filling bound). "
+          f"Simdq `+rescore` uses K'={K_re}, "
           f"`no rescore` "
           f"K'=K={K}.")
         A("")
@@ -1459,6 +1652,32 @@ def write_report(out_path: Path, cfg: dict, isa: dict, corpus_sizes: list[int],
                 for row in head for s in row["systems"]):
             for line in _engine_scaling_lines(head):
                 A(line)
+
+    # Fagin epsilon-sweep chart: latency vs agreement, one line per schedule
+    # through its epsilon points. Only meaningful when the sweep produced
+    # multiple Fagin points (>=2 epsilons, or >=2 schedules).
+    fagin_svg = fagin_name = None
+    if head:
+        fagin_svg = _fagin_sweep_chart_svg(head)
+        if fagin_svg:
+            fagin_name = out_path.stem + ".fagin_eps.svg"
+    if fagin_svg:
+        A("## Fagin epsilon sweep — latency vs. agreement")
+        A("")
+        A(f"Every Fagin schedule in the run, swept over "
+          f"`epsilon={_fmt_epsilon(st['fagin_epsilon'])}`: concurrent "
+          f"ms/query (log scale) against agree@{K} with the exact fp32 "
+          f"top-{K}, one connected line per schedule "
+          f"(schedule={_fmt_schedule(st.get('fagin_schedule', 'lockstep'))}). "
+          f"Each point is one epsilon (labeled); epsilon=0 is the exact end of "
+          f"each line. Down and right is better — the norm-aware GTA/GTASD "
+          f"schedules use the tighter water-filling halting bound, so they "
+          f"reach the same agreement at lower latency (and land further down "
+          f"the line for the same epsilon).")
+        A("")
+        A(f"![Fagin epsilon sweep: ms/query (log scale) vs agree@{K}, one line "
+          f"per schedule]({fagin_name})")
+        A("")
 
     frontier_svg = frontier_name = None
     if metric_rows and head:
@@ -1528,6 +1747,8 @@ def write_report(out_path: Path, cfg: dict, isa: dict, corpus_sizes: list[int],
         (out_path.parent / svg_name).write_text(chart_svg)
     if frontier_svg:
         (out_path.parent / frontier_name).write_text(frontier_svg)
+    if fagin_svg:
+        (out_path.parent / fagin_name).write_text(fagin_svg)
 
 
 # ---------- main ------------------------------------------------------------ #
@@ -1567,18 +1788,26 @@ def main():
     ap.add_argument("--no-faiss", action="store_true")
     ap.add_argument("--no-fagin", action="store_true")
     ap.add_argument("--fagin-epsilon", dest="fagin_epsilon", default=None,
-                    help="comma-separated Fagin TA additive halting-slack "
+                    help="comma-separated Fagin additive halting-slack "
                          "values to sweep (e.g. '0,0.001,0.005,0.01'); the "
                          "index is built once and each epsilon gets its own "
                          "quality row and its own sequentially-timed Phase 5b "
-                         "row. 0 = exact. Single value also accepted.")
+                         "row. Applied as a GRID across every --fagin-schedule "
+                         "(schedule × epsilon), and plotted as one latency-vs-"
+                         "agreement line per schedule. 0 = exact. Single value "
+                         "also accepted.")
     ap.add_argument("--fagin-schedule", dest="fagin_schedule", default=None,
-                    choices=["lockstep", "steepest"],
-                    help="Fagin TA sorted-access schedule: 'lockstep' "
-                         "(round-robin over active dims, weight-blind) or "
-                         "'steepest' (advance the dim with the largest "
-                         "marginal threshold drop). Exact at epsilon=0 either "
-                         "way. Default: lockstep.")
+                    help="Fagin sorted-access schedule(s), comma-separated to "
+                         "compare several in one run (each gets its own quality "
+                         "+ Phase 5b row). Choices: 'lockstep' (round-robin "
+                         "over active dims, weight-blind), 'steepest' (advance "
+                         "the dim with the largest marginal threshold drop), "
+                         "and their norm-aware variants 'lockstep_norm'/"
+                         "'steepest_norm' (printed GTA/GTASD) which add the "
+                         "water-filling halting bound exploiting ||x||_2=1: "
+                         "tighter, fewer accesses. Exact at epsilon=0 for all. "
+                         "E.g. 'lockstep,lockstep_norm,steepest_norm'. "
+                         "Default: lockstep.")
     ap.add_argument("--no-simdq", action="store_true",
                     help="skip the simdq asym b=2 + 1-bit hamming runs "
                          "(quality variants, thread sweeps, and Phase 5b rows); "

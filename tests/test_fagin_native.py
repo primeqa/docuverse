@@ -6,7 +6,8 @@ import pytest
 _native = pytest.importorskip("docuverse.engines.retrieval.simdq._simdq_native")
 
 
-SCHEDULES = {"lockstep": 0, "steepest": 1}
+SCHEDULES = {"lockstep": 0, "steepest": 1,
+             "lockstep_norm": 2, "steepest_norm": 3}
 
 
 def _search(Y, q, K, batch=8, epsilon=0.0, max_depth=0, num_threads=1,
@@ -221,8 +222,13 @@ def test_schedule_default_and_validation():
     scores_b, idx_b, stats = _native.fagin_search(Y, order, vals, q,
                                                   5, 8, 0.0, 0, 1)
     assert len(np.frombuffer(idx_b, dtype=np.int64)) == 5
+    # schedules 0-3 are valid (0/1 = TA/TASD, 2/3 = norm-aware GTA/GTASD).
+    for sched in (0, 1, 2, 3):
+        _, idx_b, _ = _native.fagin_search(Y, order, vals, q, 5, 8, 0.0, 0, 1,
+                                           sched)
+        assert len(np.frombuffer(idx_b, dtype=np.int64)) == 5
     with pytest.raises(ValueError):
-        _native.fagin_search(Y, order, vals, q, 5, 8, 0.0, 0, 1, 2)
+        _native.fagin_search(Y, order, vals, q, 5, 8, 0.0, 0, 1, 4)
 
 
 def test_input_validation():

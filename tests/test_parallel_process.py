@@ -1,4 +1,7 @@
 """Tests for parallel_process and helpers in docuverse.utils."""
+import os
+import time
+
 import pytest
 from docuverse.utils import parallel_process, _report_failed_items
 
@@ -203,3 +206,37 @@ class TestReportFailedItems:
         _report_failed_items(results, data, num_docs=n, collected=0)
         captured = capsys.readouterr()
         assert "and 5 more" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Process-level tokenizer parallelism regressions
+# ---------------------------------------------------------------------------
+
+_PARENT_PID = os.getpid()
+
+
+def _worker_pid(value):
+    """Fail if work is accidentally executed in the parent before forking."""
+    assert os.getpid() != _PARENT_PID
+    # Keep work in flight long enough for both workers to claim queue items.
+    time.sleep(0.02)
+    return [(value, os.getpid(), os.environ.get("TOKENIZERS_PARALLELISM"))]
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires fork multiprocessing")
+def test_process_work_stays_in_workers_and_preserves_parent_tokenizer_parallelism(monkeypatch):
+    monkeypatch.setenv("TOKENIZERS_PARALLELISM", "true")
+
+    results = parallel_process(
+        process_func=_worker_pid,
+        data=list(range(8)),
+        num_threads=2,
+        msg="Testing parallel processing",
+    )
+
+    flattened = [item for batch in results for item in batch]
+    assert [item[0] for item in flattened] == list(range(8))
+    assert all(item[1] != _PARENT_PID for item in flattened)
+    assert all(item[2] == "false" for item in flattened)
+    assert len({item[1] for item in flattened}) > 1
+    assert os.environ["TOKENIZERS_PARALLELISM"] == "true"
