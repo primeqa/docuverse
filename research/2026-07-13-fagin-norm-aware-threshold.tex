@@ -1,0 +1,403 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage[expansion=false]{microtype}
+\usepackage{titlesec}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!50!black,
+    urlcolor=blue!50!black,
+    citecolor=blue!50!black,
+}
+
+\newcommand{\qv}{\mathbf{q}}
+\newcommand{\xv}{\mathbf{x}}
+\newcommand{\tv}{\mathbf{t}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\lVert #1 \rVert}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+\title{\textbf{Norm-Aware Threshold Bounds for Fagin's Threshold Algorithm\\
+on Unit-Norm Embeddings}}
+\author{DocUVerse --- \texttt{simdq}/\texttt{fagin} engine}
+\date{2026-07-13}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Fagin's Threshold Algorithm (TA) retrieves the exact top-$K$ inner-product
+matches by scanning per-dimension sorted lists and halting when the $K$th best
+score reaches a frontier threshold $T=\sum_j q_j t_j$. This bound is derived
+under a per-dimension (box) constraint only. When the corpus vectors are
+$\ell_2$-normalized --- as ours are, since we train and fine-tune
+granite-embedding models --- the box bound is badly loose: it corresponds to a
+hypothetical document sitting at the frontier in \emph{every} dimension
+simultaneously, whose norm is $\gg 1$ and which therefore cannot exist. We
+propose replacing the halting bound with the solution to the norm-constrained
+maximization $\max\{\,\qv\cdot\xv : q_j(x_j-t_j)\le0\ \forall j,\
+\norm{\xv}_2\le 1\,\}$. The frontier face flips direction for $q_j<0$ (the
+double-scan walks the list from the opposite end), so the per-dimension box is
+written as the signed constraint $q_j(x_j-t_j)\le0$. Reading
+the query weights $\qv$ as the gradient $\nabla(\qv\cdot\xv)$, this amounts to
+projecting the gradient onto the unit ball rather than sliding its level set out
+to the box corner. We give (i) a one-line Cauchy--Schwarz clamp
+$T'=\min(\sum_j q_j t_j,\ \norm{\qv}_2)$, and (ii) a tight closed-form
+water-filling bound $T^\star$ that provably dominates both. We further show, via
+the envelope theorem, that the exact first-order threshold reduction of
+advancing list $j$ is $q_j\mu_j$ (its KKT box multiplier), giving a strictly
+better sorted-access schedule than the current $q_j\,\Delta t_j$ indicator. All
+changes tighten halting only; exactness at $\epsilon=0$ is preserved.
+\end{abstract}
+
+\section{Background: the current bound}
+
+The engine (\texttt{fagin\_ta.h}) maintains, for each active dimension
+$j$ (those with $q_j\neq0$), a cursor into a list of the corpus values
+$Y_{\cdot,j}$ sorted by contribution. After some rounds of sorted access the
+\emph{frontier} value in dimension $j$ is $t_j$: every not-yet-seen document
+$\xv$ satisfies $x_j\le t_j$ when $q_j>0$, and $x_j\ge t_j$ when $q_j<0$ (the
+double-scan walks the list from the opposite end). Both cases are the single
+signed statement $q_j(x_j-t_j)\le0$, equivalently $q_j x_j\le q_j t_j$ --- the
+per-dimension contribution is bounded by its frontier value regardless of sign.
+The classic TA halting
+threshold is
+\begin{equation}
+  T \;=\; \sum_{j} q_j\, t_j,
+  \label{eq:classic}
+\end{equation}
+and TA stops as soon as the $K$th best confirmed score satisfies
+$s_{(K)} \ge T-\epsilon$. Correctness follows because for any unseen $\xv$,
+\begin{equation}
+  \qv\cdot\xv \;=\; \sum_j q_j x_j \;\le\; \sum_j q_j t_j \;=\; T ,
+  \label{eq:boxbound}
+\end{equation}
+where each term is bounded independently. Equality in \eqref{eq:boxbound}
+requires $x_j=t_j$ for all $j$ simultaneously --- i.e.\ the document sits at the
+frontier corner $\tv=(t_1,\dots,t_D)$.
+
+\section{The unused constraint}
+
+Every corpus vector is $\ell_2$-normalized, $\norm{\xv}_2=1$. The frontier corner
+$\tv$ has
+\begin{equation}
+  \norm{\tv}_2^2 \;=\; \sum_j t_j^2 ,
+\end{equation}
+which early in the scan (large $t_j$) is on the order of $D$ --- far outside the
+unit sphere. The classic bound \eqref{eq:classic} is thus the score of a point
+that no document can attain, and it overestimates $T$ substantially, delaying
+halting and forcing extra sorted and random accesses.
+
+The tightest valid bound respects \emph{both} the frontier box and the norm:
+\begin{equation}
+  T^\star \;=\; \max_{\xv\in\R^D}\; \qv\cdot\xv
+  \quad\text{s.t.}\quad q_j(x_j-t_j)\le0\ \forall j,\qquad \norm{\xv}_2\le 1 .
+  \label{eq:constrained}
+\end{equation}
+
+\paragraph{Gradient reading.} With $f(\xv)=\qv\cdot\xv$ we have
+$\nabla f=\qv$, constant. Classic TA slides the level set of $f$ outward until it
+touches the box corner $\xv=\tv$, ignoring the ball. Problem
+\eqref{eq:constrained} instead slides it until tangent to the unit ball, clipped
+by whichever frontier faces $x_j\le t_j$ it crosses first. The maximizer is the
+gradient direction projected onto the feasible region.
+
+\section{Two bounds}
+
+\subsection{Cheap: the Cauchy--Schwarz clamp}
+
+Dropping the box constraint entirely,
+$\max_{\norm{\xv}_2\le1}\qv\cdot\xv=\norm{\qv}_2$ (Cauchy--Schwarz), attained at
+$\xv=\qv/\norm{\qv}_2$. Since \eqref{eq:constrained} adds constraints, its value
+cannot exceed either relaxation:
+\begin{equation}
+  T' \;=\; \min\!\Big(\textstyle\sum_j q_j t_j,\ \norm{\qv}_2\Big)
+  \;\ge\; T^\star .
+  \label{eq:clamp}
+\end{equation}
+$\norm{\qv}_2$ is a per-query constant, computed once. For unit-norm queries it
+caps the early-scan threshold at $1.0$ instead of $\sum_j q_j t_j\gg1$. The
+clamp is always valid and essentially free.
+
+\subsection{Tight: water-filling}
+
+The clamp uses \emph{either} the box or the ball; the tight bound uses both. We
+solve \eqref{eq:constrained} exactly with Lagrange multipliers. Throughout,
+abbreviate the maximum feasible per-dimension contribution
+\begin{equation}
+  c_j \;:=\; q_j t_j, \qquad a_j^2 \;:=\; q_j^2 .
+\end{equation}
+Note $c_j\ge0$ for every active dimension: for $q_j>0$ the frontier is
+$t_j = \max_{\text{unseen}} x_j$, which is positive early in the scan; for
+$q_j<0$ the double-scan makes $t_j$ the \emph{most negative} attainable value, so
+$q_j t_j>0$ again. The contribution bound $q_j x_j\le c_j$ is thus a bound by a
+nonnegative quantity in both directions.
+
+\paragraph{Lagrangian.} Attach $\lambda\ge0$ to the norm constraint written as
+$\tfrac12(\norm{\xv}_2^2-1)\le0$ and $\mu_j\ge0$ to each signed box face
+$q_j(x_j-t_j)\le0$. For the maximization,
+\begin{equation}
+  \mathcal{L}(\xv,\lambda,\bm{\mu})
+  \;=\; \sum_j q_j x_j
+  \;-\; \lambda\,\tfrac12\!\Big(\sum_j x_j^2 - 1\Big)
+  \;-\; \sum_j \mu_j\, q_j (x_j - t_j).
+  \label{eq:lagrangian}
+\end{equation}
+
+\paragraph{KKT conditions.} At the optimum $(\xv^\star,\lambda,\bm\mu)$:
+\begin{align}
+  \text{(stationarity)}\quad
+    & \partial_{x_j}\mathcal{L}
+      = q_j - \lambda x_j - \mu_j q_j = 0
+      \;\Longrightarrow\; \lambda x_j = q_j(1-\mu_j),
+      \label{eq:stat}\\[2pt]
+  \text{(primal feas.)}\quad
+    & q_j(x_j-t_j)\le0,\qquad \norm{\xv}_2^2\le1,\\[2pt]
+  \text{(dual feas.)}\quad
+    & \lambda\ge0,\qquad \mu_j\ge0,\\[2pt]
+  \text{(compl.\ slack.)}\quad
+    & \lambda\big(\norm{\xv}_2^2-1\big)=0,\qquad \mu_j\,q_j(x_j-t_j)=0.
+      \label{eq:cs}
+\end{align}
+
+\paragraph{The norm constraint binds.} If $\lambda=0$, \eqref{eq:stat} forces
+$q_j(1-\mu_j)=0$; on any dimension with $c_j>0$ the objective still strictly
+increases by moving $x_j$ toward its cap, so the unconstrained direction $\qv$
+would escape the ball --- contradiction unless the ball is active. Hence
+$\lambda>0$ and, by \eqref{eq:cs}, $\norm{\xv^\star}_2=1$.
+
+\paragraph{Two states per dimension.} Complementary slackness $\mu_j q_j(x_j-t_j)
+=0$ splits the active dimensions into a capped set $S$ and its complement:
+
+\emph{Interior} ($j\notin S$, box slack so $\mu_j=0$). Then \eqref{eq:stat}
+gives
+\begin{equation}
+  x_j^\star \;=\; \frac{q_j}{2\lambda},
+  \label{eq:interior}
+\end{equation}
+where the effective multiplier is $2\lambda$ once the $\tfrac12$ in
+\eqref{eq:lagrangian} is absorbed. This is feasible for the box iff
+$q_j x_j^\star \le c_j$, i.e.
+\begin{equation}
+  \frac{a_j^2}{2\lambda}\;\le\; c_j .
+  \label{eq:intfeas}
+\end{equation}
+
+\emph{Capped} ($j\in S$, box active so $x_j^\star=t_j$). Then \eqref{eq:stat}
+gives the multiplier
+\begin{equation}
+  \mu_j \;=\; 1 - \frac{2\lambda t_j}{q_j}
+        \;=\; 1 - \frac{2\lambda c_j}{a_j^2},
+  \label{eq:mu}
+\end{equation}
+and $\mu_j\ge0$ requires $a_j^2 \le 2\lambda c_j$ --- exactly the negation of
+\eqref{eq:intfeas}. The two states partition cleanly at the boundary
+$a_j^2 = 2\lambda c_j$.
+
+\paragraph{Sign-safe switch.} Dividing the capping test $a_j^2>2\lambda c_j$ by
+$a_j^2=q_j^2>0$ gives $c_j/a_j^2 < 1/(2\lambda)$, i.e.
+\begin{equation}
+  \rho_j \;:=\; \frac{c_j}{a_j^2} \;=\; \frac{q_j t_j}{q_j^2} \;=\; \frac{t_j}{q_j}
+  \;>\;0,\qquad
+  j\in S \iff \rho_j < \frac{1}{2\lambda}.
+\end{equation}
+$\rho_j$ is positive in both scan directions (both $c_j\ge0$ and $a_j^2>0$), so
+the ordering is sign-safe; the naive $q_j/t_j$ would flip for $q_j<0$.
+
+\paragraph{Solving for $\lambda$.} Substitute the two states into the active norm
+constraint $\sum_j (x_j^\star)^2 = 1$:
+\begin{equation}
+  \underbrace{\sum_{j\in S} t_j^2}_{\text{capped}}
+  \;+\; \underbrace{\sum_{j\notin S}\frac{q_j^2}{4\lambda^2}}_{\text{interior}}
+  \;=\; 1
+  \;\Longrightarrow\;
+  \frac{1}{4\lambda^2}\sum_{j\notin S} a_j^2 \;=\; 1-\sum_{j\in S} t_j^2,
+\end{equation}
+hence the interior scale factor is the leftover norm budget spread over the
+interior mass:
+\begin{equation}
+  \frac{1}{2\lambda}
+  \;=\; \sqrt{\frac{\,1-\sum_{j\in S} t_j^2\,}{\sum_{j\notin S} a_j^2}} .
+  \label{eq:lambda}
+\end{equation}
+
+\paragraph{Back-substitution.} The optimal value splits over the two sets:
+\begin{align}
+  T^\star
+   &= \sum_{j\in S} q_j x_j^\star + \sum_{j\notin S} q_j x_j^\star
+    = \sum_{j\in S} q_j t_j + \sum_{j\notin S} \frac{q_j^2}{2\lambda}
+      \notag\\
+   &= \sum_{j\in S} q_j t_j
+    + \frac{1}{2\lambda}\sum_{j\notin S} a_j^2
+    = \sum_{j\in S} q_j t_j
+    + \sqrt{\frac{1-\sum_{j\in S}t_j^2}{\sum_{j\notin S}a_j^2}}\;\sum_{j\notin S} a_j^2,
+\end{align}
+using \eqref{eq:interior} then \eqref{eq:lambda}. Collapsing the last product
+yields the closed form
+\begin{equation}
+  \boxed{\;
+  T^\star \;=\; \sum_{j\in S} q_j t_j
+  \;+\; \sqrt{\Big(\sum_{j\notin S} q_j^2\Big)\Big(1-\sum_{j\in S} t_j^2\Big)}
+  \;}
+  \label{eq:waterfill}
+\end{equation}
+The first term is the capped dims pinned at their frontier; the second is
+Cauchy--Schwarz applied to the interior dims sharing the leftover norm budget
+$\sqrt{1-\sum_{j\in S}t_j^2}$ along $\qv$.
+
+\paragraph{Dual form (what the kernel evaluates).} Rather than search for the
+prefix $S$ directly, the implementation dualizes only the norm constraint and
+keeps the box explicit, giving the one-dimensional convex dual
+\begin{equation}
+  g(\lambda) \;=\; \lambda
+    \;+\; \sum_j \max_{\,q_j x_j \le c_j}\big(q_j x_j - \lambda x_j^2\big),
+  \qquad
+  T^\star = \min_{\lambda\ge0} g(\lambda).
+  \label{eq:dual}
+\end{equation}
+Each inner maximization is a concave parabola in $x_j$ peaking at
+$x_j=q_j/(2\lambda)$ with unconstrained value $a_j^2/(4\lambda)$; if that peak
+respects the cap ($a_j^2\le2\lambda c_j$) it is attained, otherwise the maximum
+sits at the boundary $x_j=t_j$ with value $c_j-\lambda t_j^2$:
+\begin{equation}
+  \max_{q_j x_j\le c_j}(q_j x_j-\lambda x_j^2)
+   =\begin{cases}
+      \dfrac{a_j^2}{4\lambda}, & a_j^2\le 2\lambda c_j\ (\text{interior}),\\[8pt]
+      c_j-\lambda t_j^2,       & \text{otherwise}\ (\text{capped}).
+    \end{cases}
+  \label{eq:dualdim}
+\end{equation}
+Because $g$ is convex in $\lambda$, a ternary search on $[\,0,\ \norm{\qv}_2\,]$
+converges to $T^\star$; the recovered $\lambda$ feeds $\mu_j$ via \eqref{eq:mu}
+for the schedule of Section~4. Crucially, weak duality gives $g(\lambda)\ge
+T^\star$ for \emph{every} $\lambda\ge0$, so numerical error in the search can only
+\emph{loosen} the bound --- never drop it below $T^\star$ and break the halting
+guarantee.
+
+\paragraph{Finding $S$.} Sort dimensions by the sign-safe ratio
+$\rho_j=t_j/q_j$ \emph{ascending}; the capped set $S$ is the prefix of smallest
+$\rho_j$. Sweep the prefix boundary and accept the first split consistent with
+$\rho_j<1/(2\lambda)$ for $j\in S$ and $\ge1/(2\lambda)$ otherwise, where
+$1/(2\lambda)=\sqrt{(1-\sum_{j\in S}t_j^2)/\sum_{j\notin S}q_j^2}$ is recomputed
+along the sweep. Cost $O(D\log D)$, or $O(D)$ with a selection-based search.
+Because the max contribution $q_j t_j$ only \emph{decreases} as the scan proceeds
+(so $\rho_j=q_j t_j/q_j^2$ decreases, regardless of $\mathrm{sign}(q_j)$), dims
+migrate into $S$ monotonically --- $S$ \emph{grows} over the scan --- enabling
+incremental updates instead of a per-round re-sort.
+
+\paragraph{Ordering.} \eqref{eq:waterfill} is provably
+$\le\min(\sum_j q_j t_j,\ \norm{\qv}_2)$ --- it is never worse than classic
+\emph{or} the clamp --- and it interpolates smoothly: early scan (ball binds,
+$S=\varnothing$) gives $T^\star\approx\norm{\qv}_2$; late scan
+($\norm{\tv}<1$, box binds, $S=$ all) recovers $T^\star=\sum_j q_j t_j$ and hence
+the exact classic bound.
+
+\paragraph{Worked example.} $\qv=(0.6,0.8)$ (so $\norm{\qv}_2=1$),
+frontier $\tv=(0.5,0.95)$. Classic \eqref{eq:classic}:
+$T=0.6(0.5)+0.8(0.95)=1.06$. Clamp \eqref{eq:clamp}: $\min(1.06,1.0)=1.0$.
+Water-filling \eqref{eq:waterfill}: dim~1 caps (smaller ratio,
+$\rho_1=0.5/0.6=0.833<\rho_2=0.95/0.8=1.19$),
+$T^\star=0.6(0.5)+\sqrt{0.8^2\,(1-0.5^2)}=0.3+\sqrt{0.64\cdot0.75}=0.993$.
+Tighter than both, still a valid upper bound.
+
+\paragraph{Negative weights and skipped dims.} The signed constraint
+$q_j(x_j-t_j)\le0$ makes the derivation sign-agnostic: for $q_j<0$ the
+double-scan frontier is $x_j\ge t_j$, but the contribution bound $q_j x_j\le q_j
+t_j$, the interior point $x_j=q_j/(2\lambda)$, and the closed form
+\eqref{eq:waterfill} (which uses only $q_j^2$ and $q_j t_j$) all carry over
+verbatim. Only the ratio must be the sign-safe $\rho_j=t_j/q_j$, never $q_j/t_j$.
+Dimensions with $q_j=0$ are excluded from the active set; bounding only
+$\norm{\xv_{\text{active}}}_2\le1$ is conservative and stays valid.
+
+\section{Sharper sorted-access schedule}
+
+The \texttt{steepest} schedule currently keys its dimension heap on the marginal
+contribution drop $\delta_j=q_j\,\Delta t_j = c_j(d)-c_j(d{+}\text{batch})\ge0$,
+where $c_j=q_j t_j$ (Quick-Combine indicator; sign-safe as written). Under the
+classic bound $T=\sum_j c_j$, $\partial T/\partial c_j=1$, so the drop in $T$ is
+exactly $\delta_j$. Under the tight bound, the envelope theorem instead gives
+\begin{equation}
+  \frac{\partial T^\star}{\partial c_j} \;=\; \mu_j \;=\;
+  \begin{cases}
+    1-2\lambda\,t_j/q_j, & j\in S \ (\text{capped}),\\[2pt]
+    0, & j\notin S \ (\text{interior}),
+  \end{cases}
+  \qquad
+  \frac{\partial T^\star}{\partial t_j}=q_j\mu_j,
+  \label{eq:envelope}
+\end{equation}
+with $\mu_j\in[0,1]$. \textbf{Advancing an interior (non-binding) list does not
+lower the threshold at all} ($\mu_j=0$). The exact per-round reduction in
+$T^\star$ is $\mu_j\,\delta_j$, nonzero only on binding dims --- a strictly better
+indicator than $\delta_j$ alone, which spends sorted accesses on dims that are
+not moving $T^\star$. The fix is one factor: multiply the existing heap key by
+$\mu_j$. This is sign-safe (both $\delta_j\ge0$ and $\mu_j\ge0$ regardless of
+$\mathrm{sign}(q_j)$) and directs each sorted access to the list that actually
+pulls the threshold down fastest.
+
+\section{Implementation (as built)}
+
+The kernel hooks are in \texttt{docuverse/engines/retrieval/simdq/\_native/%
+include/fagin\_ta.h}; the new bound is exposed as two additional
+\emph{schedules} rather than a flag, so it flows through the existing
+\texttt{schedule} selector end to end.
+
+\paragraph{General ball radius.} The corpus need not be exactly unit-norm, and
+assuming so is unsafe: on a non-normalized corpus a $\norm{\qv}_2$ cap is invalid
+and silently breaks exactness. We therefore constrain $\norm{\xv}_2\le R$, where
+$R^2$ is the \emph{maximum squared row norm}, measured once at build time
+(\texttt{FaginIndex.max\_norm\_sq}, persisted in \texttt{meta.json}) and passed
+to the kernel. The bound \eqref{eq:waterfill}/\eqref{eq:clamp} generalizes by
+$1\!\to\!R^2$ under the norm budget and $\norm{\qv}_2\!\to\!R\norm{\qv}_2$ in the
+clamp; it is exact for any $R$ at least the true maximum, and tightest ($R=1$)
+for a normalized corpus.
+
+\paragraph{Dual solve.} Rather than the prefix water-filling of
+Section~4.2, the kernel minimizes the Lagrangian dual
+$g(\lambda)=\lambda R^2+\sum_j\max_{q_j x_j\le q_j t_j}(q_j x_j-\lambda x_j^2)$
+over $\lambda\ge0$ by ternary search ($g$ is convex in $\lambda$), then clamps by
+$\min(\sum_j q_j t_j,\ R\norm{\qv}_2)$. This yields the same optimum
+\eqref{eq:waterfill} but is branch-light and, crucially, \emph{robust}: by weak
+duality $g(\lambda)\ge T^\star$ for \emph{every} $\lambda\ge0$, so numerical
+error in the $\lambda$ search can only loosen the bound, never drop it below
+$T^\star$ and violate correctness. The KKT box multiplier for the schedule key
+\eqref{eq:envelope} is read off the converged $\lambda$ as
+$\mu_j=\max(0,\,1-2\lambda t_j/q_j)$.
+
+\begin{enumerate}[nosep]
+  \item \texttt{fagin\_threshold\_norm(c, a2, t2, ndims, sum\_c, qnorm, r2,
+        lam)} --- the dual routine returning $T^\star$ and the optimal $\lambda$.
+  \item Two new schedule enums,
+        \texttt{FAGIN\_SCHEDULE\_LOCKSTEP\_NORM = 2} and
+        \texttt{\_STEEPEST\_NORM = 3}, pair the norm-aware halting bound with the
+        existing round-robin and steepest access patterns. \texttt{STEEPEST\_NORM}
+        additionally scales the heap key $\delta_j$ by $\mu_j$
+        \eqref{eq:envelope}.
+  \item Python surface: \texttt{FaginIndex.SCHEDULES} gains
+        \texttt{lockstep\_norm}/\texttt{steepest\_norm}; the experiment harness
+        prints these as \textbf{GTA}/\textbf{GTASD} (vs.\ TA/TASD for the classic
+        box bound).
+\end{enumerate}
+
+\paragraph{Correctness \& measured effect.} The change only tightens an upper
+bound used for halting, so the returned top-$K$ is identical --- verified byte
+for byte against the classic schedules and against brute force
+(\texttt{tests/test\_fagin\_*.py}, all schedules parametrized). Exactness holds
+at recall@10 $=1.0$ across unit-norm, non-normalized ($R^2\approx65$), and
+varying-norm ($R^2\approx530$) corpora. On sorted-access counts (exact,
+$\epsilon=0$, $N=3000$, $D=32$): GTASD cuts sorted accesses by $\sim51\%$ on a
+unit-norm corpus, $\sim24\%$ non-normalized, and $\sim19\%$ varying-norm --- the
+gain grows as the corpus concentrates toward the sphere, where the box bound
+overestimates most. GTA (lockstep) matches TA at high $D$ (lockstep halts deep
+enough that $\norm{\tv}<R$ and the bound collapses onto the box) but saves up to
+$\sim39\%$ in the low-$D$, shallow-halt regime.
+
+\end{document}
