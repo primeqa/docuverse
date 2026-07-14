@@ -548,12 +548,17 @@ static PyObject *py_fagin_search(PyObject *self, PyObject *args) {
         PyBuffer_Release(&vals_view); PyBuffer_Release(&q_view);
 
         PyObject *stats = Py_BuildValue(
-            "{s:L,s:L,s:L,s:L,s:i}",
+            "{s:L,s:L,s:L,s:L,s:i,s:L,s:L,s:L,s:L,s:L}",
             "depth", (long long)st.depth,
             "sorted_accesses", (long long)st.sorted_accesses,
             "random_accesses", (long long)st.random_accesses,
             "rounds", (long long)st.rounds,
-            "exhausted", st.exhausted);
+            "exhausted", st.exhausted,
+            "ns_sorted", (long long)st.ns_sorted,
+            "ns_random", (long long)st.ns_random,
+            "ns_heap", (long long)st.ns_heap,
+            "ns_threshold", (long long)st.ns_threshold,
+            "ns_total", (long long)st.ns_total);
         if (!stats) { Py_DECREF(scores_bytes); Py_DECREF(idx_bytes); return NULL; }
         return Py_BuildValue("(NNN)", scores_bytes, idx_bytes, stats);
     }

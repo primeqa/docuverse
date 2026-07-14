@@ -251,3 +251,22 @@ def test_input_validation():
         _native.fagin_search(Y, order[:, :5].copy(), vals, q, 5, 8, 0.0, 0, 1)
     with pytest.raises(TypeError):
         _native.fagin_search(Y.astype(np.float64), order, vals, q, 5, 8, 0.0, 0, 1)
+
+
+@pytest.mark.parametrize("schedule", ["lockstep", "steepest",
+                                      "lockstep_norm", "steepest_norm"])
+def test_phase_timers_present_and_consistent(schedule):
+    """Every schedule reports non-negative per-phase timers whose sum does not
+    exceed the total (instrumentation added in the candidate-pruning work)."""
+    rng = np.random.default_rng(0)
+    Y = rng.standard_normal((2000, 32)).astype(np.float32)
+    Y /= np.linalg.norm(Y, axis=1, keepdims=True)
+    q = rng.standard_normal(32).astype(np.float32)
+    _, _, stats = _search(Y, q, K=10, batch=64, schedule=schedule)
+    for key in ("ns_sorted", "ns_random", "ns_heap", "ns_threshold", "ns_total"):
+        assert key in stats, f"missing {key}"
+        assert stats[key] >= 0
+    # Phases are a subset of the whole call; allow slack for unattributed glue.
+    phase_sum = (stats["ns_sorted"] + stats["ns_random"]
+                 + stats["ns_heap"] + stats["ns_threshold"])
+    assert phase_sum <= stats["ns_total"] + 1

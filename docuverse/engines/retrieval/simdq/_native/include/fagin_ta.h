@@ -34,6 +34,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "simdq_topk.h"
 
@@ -61,7 +62,22 @@ typedef struct {
     int64_t random_accesses;  // candidates scored (full dot products)
     int64_t rounds;           // TA rounds executed
     int     exhausted;        // 1 if every row of every active list was scanned
+    // Per-phase wall-clock nanoseconds (CLOCK_MONOTONIC). Instrumentation only;
+    // does not affect results. See
+    // docs/superpowers/plans/2026-07-14-fagin-candidate-pruning.md
+    int64_t ns_sorted;        // Phase A: sorted access (gather unseen candidates)
+    int64_t ns_random;        // Phase B: full dot products
+    int64_t ns_heap;          // Phase C: heap maintenance
+    int64_t ns_threshold;     // halting-threshold computation (incl. water-filling)
+    int64_t ns_total;         // whole fagin_ta_search call
 } fagin_stats_t;
+
+// Monotonic nanosecond clock for phase timing.
+static inline int64_t fagin_now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
+}
 
 // Order-preserving float32 -> int64 key, negated for simdq_topk (which
 // keeps the K *smallest* keys; we want the K *largest* scores). The
@@ -230,6 +246,7 @@ static inline int fagin_ta_search(
         float *out_scores, int64_t *out_idxs, fagin_stats_t *stats) {
 
     memset(stats, 0, sizeof *stats);
+    int64_t _t_start = fagin_now_ns();
     for (int i = 0; i < K; i++) { out_scores[i] = 0.0f; out_idxs[i] = -1; }
 
     int is_steepest = (schedule == FAGIN_SCHEDULE_STEEPEST
@@ -249,6 +266,7 @@ static inline int fagin_ta_search(
         // Every document scores 0; any min(K, N) docs are a correct top-K.
         for (int i = 0; i < heap_cap; i++) out_idxs[i] = i;
         stats->exhausted = 1;
+        stats->ns_total = fagin_now_ns() - _t_start;
         free(dims);
         return heap_cap;
     }
@@ -290,6 +308,7 @@ static inline int fagin_ta_search(
             if (max_depth > 0 && take > max_depth - depth) take = max_depth - depth;
 
             // Phase A (serial, cheap): sorted access — gather unseen candidates.
+            int64_t _ta = fagin_now_ns();
             int64_t n_cand = 0;
             for (int64_t a = 0; a < ndims; a++) {
                 int64_t j = dims[a];
@@ -305,25 +324,31 @@ static inline int fagin_ta_search(
                 }
             }
             stats->sorted_accesses += ndims * take;
+            stats->ns_sorted += fagin_now_ns() - _ta;
 
             // Phase B (parallel): random access — one full dot per new candidate.
+            int64_t _tb = fagin_now_ns();
             #pragma omp parallel for schedule(static)
             for (int64_t c = 0; c < n_cand; c++)
                 cand_scores[c] = fagin_dot(q, Y + (size_t)cand[c] * (size_t)D, D);
             stats->random_accesses += n_cand;
+            stats->ns_random += fagin_now_ns() - _tb;
 
             // Phase C (serial): heap maintenance (K is small).
+            int64_t _tc = fagin_now_ns();
             for (int64_t c = 0; c < n_cand; c++) {
                 int64_t key = fagin_score_key(cand_scores[c]);
                 if (key < simdq_topk_threshold(&heap))
                     simdq_topk_offer(&heap, key, cand[c]);
             }
+            stats->ns_heap += fagin_now_ns() - _tc;
 
             depth += take;
             stats->rounds += 1;
 
             // Threshold at the current cursors: classic box sum_j q_j t_j, or
             // (norm-aware) the water-filling bound that also respects ||x||<=1.
+            int64_t _tt = fagin_now_ns();
             double T = 0.0;
             for (int64_t a = 0; a < ndims; a++) {
                 int64_t j = dims[a];
@@ -335,6 +360,7 @@ static inline int fagin_ta_search(
             }
             if (norm_aware)
                 T = fagin_threshold_norm(cw, a2, tw, ndims, T, qnorm, r2, NULL);
+            stats->ns_threshold += fagin_now_ns() - _tt;
 
             if (heap.size >= heap_cap) {
                 double kth = (double)fagin_key_score(simdq_topk_threshold(&heap));
@@ -381,6 +407,7 @@ static inline int fagin_ta_search(
             if (take > lim - dpth[a]) take = lim - dpth[a];
 
             // Phase A: sorted access on the steepest dim only.
+            int64_t _ta = fagin_now_ns();
             const int32_t *lst = order + (size_t)j * (size_t)N;
             int64_t n_cand = 0;
             for (int64_t r = 0; r < take; r++) {
@@ -393,21 +420,26 @@ static inline int fagin_ta_search(
                 }
             }
             stats->sorted_accesses += take;
+            stats->ns_sorted += fagin_now_ns() - _ta;
 
             // Phase B: random access. Batches here are <= batch rows, so the
             // fork/join overhead usually outweighs the parallelism — only go
             // parallel for large user-chosen batch sizes.
+            int64_t _tb = fagin_now_ns();
             #pragma omp parallel for schedule(static) if(n_cand >= 256)
             for (int64_t c = 0; c < n_cand; c++)
                 cand_scores[c] = fagin_dot(q, Y + (size_t)cand[c] * (size_t)D, D);
             stats->random_accesses += n_cand;
+            stats->ns_random += fagin_now_ns() - _tb;
 
             // Phase C: heap maintenance.
+            int64_t _tc = fagin_now_ns();
             for (int64_t c = 0; c < n_cand; c++) {
                 int64_t key = fagin_score_key(cand_scores[c]);
                 if (key < simdq_topk_threshold(&heap))
                     simdq_topk_offer(&heap, key, cand[c]);
             }
+            stats->ns_heap += fagin_now_ns() - _tc;
 
             dpth[a] += take;
             stats->rounds += 1;
@@ -415,6 +447,7 @@ static inline int fagin_ta_search(
             // O(1) box-sum update: swap this dim's frontier contribution. T_box
             // is the classic sum; T is what the halting test uses (== T_box for
             // steepest, or the water-filling bound recomputed for GTASD).
+            int64_t _tt = fagin_now_ns();
             double newc = fagin_contrib_at(vals, N, j, q[j], dpth[a]);
             T += newc - contrib[a];
             contrib[a] = newc;
@@ -426,6 +459,7 @@ static inline int fagin_ta_search(
                 T_halt = fagin_threshold_norm(contrib, a2, tw, ndims, T, qnorm,
                                               r2, &lam);
             }
+            stats->ns_threshold += fagin_now_ns() - _tt;
 
             if (heap.size >= heap_cap) {
                 double kth = (double)fagin_key_score(simdq_topk_threshold(&heap));
@@ -463,5 +497,6 @@ static inline int fagin_ta_search(
     free(cand); free(cand_scores);
     free(seen); free(dims);
     free(a2); free(cw); free(tw);
+    stats->ns_total = fagin_now_ns() - _t_start;
     return n;
 }
