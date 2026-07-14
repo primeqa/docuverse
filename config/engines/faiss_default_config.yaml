@@ -1,0 +1,38 @@
+# Default index/search parameters for the FAISS engine.
+#
+# Resolution order (same pattern as milvus_default_config.yaml):
+#   - index_params / search_params given as a dict in the experiment config
+#     are used as-is.
+#   - Given as a string, they name an entry in this file
+#     (e.g. `index_params: default_dense`).
+#   - When absent, the entry matching the configured index_type is used
+#     (top-level `index_type` in the experiment config, default "Flat").
+#
+# Valid FAISS index types (as used by this engine): Flat, IVFFlat, HNSW.
+# Build knobs: nlist (IVFFlat), hnsw_m / ef_construction (HNSW).
+# Search knobs: nprobe (IVFFlat), efSearch (HNSW).
+
+search_params:
+  Flat: {}
+  IVFFlat:
+    nprobe: 10
+  HNSW:
+    efSearch: 128
+  default: {}
+
+index_params:
+  Flat:
+    index_type: Flat
+  IVFFlat:
+    index_type: IVFFlat
+    nlist: 100
+  HNSW:
+    index_type: HNSW
+    hnsw_m: 32
+    ef_construction: 128
+  default:
+    index_type: Flat
+  default_dense:
+    index_type: HNSW
+    hnsw_m: 32
+    ef_construction: 128

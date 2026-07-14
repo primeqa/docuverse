@@ -13,7 +13,7 @@ from docuverse.engines.search_corpus import SearchCorpus
 from docuverse.engines.search_queries import SearchQueries
 from docuverse.engines.search_result import SearchResult
 from docuverse.engines.search_engine import SearchEngine
-from docuverse.utils import get_param, _trim_json
+from docuverse.utils import get_param, _trim_json, read_config_file
 from docuverse.utils.timer import timer
 from docuverse.utils.embeddings.dense_embedding_function import DenseEmbeddingFunction
 
@@ -60,6 +60,14 @@ class FAISSEngine(RetrievalEngine):
         self.index_type = get_param(config_params, "index_type", self.DEFAULT_INDEX_TYPE)
         self.persist_directory = get_param(self.config, "project_dir", "/tmp")
 
+        # Named index_params/search_params presets, resolved the same way as
+        # the Milvus engine's milvus_default_config.yaml.
+        from docuverse.utils.config_resolver import resolve_optional
+        _defaults_path = resolve_optional("engines/faiss_default_config.yaml")
+        self.faiss_defaults = read_config_file(_defaults_path) if _defaults_path else {}
+        self.index_params = self._resolve_index_params()  # may override index_type
+        self.search_params = self._resolve_search_params()
+
         # Initialize components
         self.init_model(**kwargs)
 
@@ -84,6 +92,55 @@ class FAISSEngine(RetrievalEngine):
         self.hidden_dim = self.model.embedding_dim
 
     # ===== Index Management Methods =====
+
+    def _resolve_index_params(self) -> dict:
+        """Resolve config index_params: dict as-is, string as a preset name in
+        faiss_default_config.yaml, absent -> defaults for the configured
+        index_type. A resolved ``index_type`` key overrides self.index_type."""
+        index_params = get_param(self.config, "index_params", None)
+        if isinstance(index_params, str):
+            preset = get_param(self.faiss_defaults, "index_params." + index_params, None)
+            if preset is None:
+                raise ValueError(
+                    f"Unknown FAISS index_params preset '{index_params}' — "
+                    f"not found in faiss_default_config.yaml")
+            index_params = preset
+        if index_params is None:
+            index_params = get_param(self.faiss_defaults, "index_params." + self.index_type, {})
+        if not isinstance(index_params, dict):
+            index_params = {}
+        if "index_type" in index_params:
+            self.index_type = index_params["index_type"]
+        return index_params
+
+    def _resolve_search_params(self) -> dict:
+        """Resolve config search_params: dict as-is, string as a preset name,
+        absent -> defaults for the configured index_type. Accepts the
+        Milvus-style ``params:`` nesting so configs can be shared."""
+        search_params = get_param(self.config, "search_params", None)
+        if isinstance(search_params, str):
+            preset = get_param(self.faiss_defaults, "search_params." + search_params, None)
+            if preset is None:
+                raise ValueError(
+                    f"Unknown FAISS search_params preset '{search_params}' — "
+                    f"not found in faiss_default_config.yaml")
+            search_params = preset
+        if search_params is None:
+            search_params = get_param(self.faiss_defaults, "search_params." + self.index_type, {})
+        if not isinstance(search_params, dict):
+            search_params = {}
+        if isinstance(search_params.get("params"), dict):
+            search_params = {**search_params, **search_params["params"]}
+        return search_params
+
+    def _apply_search_params(self) -> None:
+        """Push search-time knobs onto the loaded index (cheap, per-search)."""
+        nprobe = self.search_params.get("nprobe")
+        if nprobe is not None and hasattr(self.index, "nprobe"):
+            self.index.nprobe = int(nprobe)
+        ef_search = self.search_params.get("efSearch", self.search_params.get("ef"))
+        if ef_search is not None and hasattr(self.index, "hnsw"):
+            self.index.hnsw.efSearch = int(ef_search)
 
     def _get_index_path(self, index_name: str) -> str:
         """Get the file path for storing the FAISS index."""
@@ -129,17 +186,20 @@ class FAISSEngine(RetrievalEngine):
                 self.index = faiss.IndexFlatIP(self.hidden_dim)
             elif self.index_type == "IVFFlat":
                 # Inverted file index with flat quantizer
-                nlist = get_param(kwargs, "nlist", 100)  # number of clusters
+                nlist = get_param([kwargs, self.index_params], "nlist", 100)  # number of clusters
                 # quantizer = faiss.IndexFlatL2(self.hidden_dim)
                 quantizer = faiss.IndexFlatIP(self.hidden_dim)
-                self.index = faiss.IndexIVFFlat(quantizer, self.hidden_dim, nlist)
+                self.index = faiss.IndexIVFFlat(quantizer, self.hidden_dim, int(nlist))
             elif self.index_type == "HNSW":
                 # Hierarchical Navigable Small World graph. Use inner product
                 # to match the Flat/IVFFlat indexes (embeddings are normalized,
                 # so IP == cosine); the default METRIC_L2 would silently flip
                 # score semantics relative to the other index types.
-                m = get_param(kwargs, "hnsw_m", 32)  # number of connections
-                self.index = faiss.IndexHNSWFlat(self.hidden_dim, m, faiss.METRIC_INNER_PRODUCT)
+                m = get_param([kwargs, self.index_params], "hnsw_m", 32)  # number of connections
+                self.index = faiss.IndexHNSWFlat(self.hidden_dim, int(m), faiss.METRIC_INNER_PRODUCT)
+                ef_construction = get_param([kwargs, self.index_params], "ef_construction", None)
+                if ef_construction is not None:
+                    self.index.hnsw.efConstruction = int(ef_construction)
             else:
                 raise ValueError(f"Unknown index type: {self.index_type}")
 
@@ -431,6 +491,7 @@ class FAISSEngine(RetrievalEngine):
         tm.add_timing("embedding")
 
         # Perform the search
+        self._apply_search_params()
         k = self.config.top_k
         distances, indices = self.index.search(query_vector, k)
         tm.add_timing("faiss_search")

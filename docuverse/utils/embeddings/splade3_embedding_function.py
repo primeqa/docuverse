@@ -15,10 +15,30 @@ except ImportError as e:
 class SpladeEmbeddingFunction(EmbeddingFunction):
     def __init__(self, model_or_directory_name, batch_size=128, **kwargs):
         super().__init__(model_or_directory_name=model_or_directory_name, batch_size=batch_size, **kwargs)
-        self.tokenizer = None
-        self.model = None
+        self.model_name = model_or_directory_name
         self.batch_size = batch_size
-        import torch
+        self.num_devices = 0
+        self._standalone_tokenizer = None
+        # Defer the (GPU) model load to first use, same as
+        # DenseEmbeddingFunction: a live CUDA context at read_data time forces
+        # the tokenizing step into GIL-bound threads instead of forked
+        # multi-core workers.
+        self._init_kwargs = dict(kwargs)
+
+    @property
+    def model(self):
+        if self._model is None:
+            self._ensure_model()
+        return self._model
+
+    @model.setter
+    def model(self, value):
+        self._model = value
+
+    def _ensure_model(self):
+        """Load the model on first use (lazy GPU init)."""
+        if self._model is not None:
+            return
         device = 'cuda' if torch.cuda.is_available() else 'cpu'  # "mps" if torch.backends.mps.is_available() else 'cpu'
         if device == 'cpu':
             print(f"You are using {device}. This is much slower than using "
@@ -27,8 +47,16 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
             self.num_devices = 0
         else:
             self.num_devices = torch.cuda.device_count()
-        self.create_model(model_or_directory_name=model_or_directory_name, device=device, batch_size=batch_size, **kwargs)
+        self.create_model(model_or_directory_name=self.model_name, device=device,
+                          batch_size=self.batch_size, **self._init_kwargs)
         print('=== done initializing model')
+
+    @property
+    def tokenizer(self):
+        # Standalone tokenizer — never requires the GPU model load.
+        if self._standalone_tokenizer is None:
+            self._standalone_tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        return self._standalone_tokenizer
 
     def create_model(self, model_or_directory_name: str = None, device: str = "cpu", batch_size=128, **kwargs):
         self.model = model.sparse.SpladeEmbeddingFunction(model_name=model_or_directory_name,
@@ -37,7 +65,6 @@ class SpladeEmbeddingFunction(EmbeddingFunction):
                                                           k_tokens_query=get_param(kwargs, 'query_max_tokens', None),
                                                           k_tokens_document = get_param(kwargs, 'doc_max_tokens', None)
         )
-        self.tokenizer = AutoTokenizer.from_pretrained(model_or_directory_name)
 
     def __call__(self, texts: Union[List[str], str], **kwargs) -> \
             Union[Dict[str, float | int], List[Dict[str, float | int]]]:

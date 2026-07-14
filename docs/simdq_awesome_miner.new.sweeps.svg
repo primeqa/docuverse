@@ -48,88 +48,88 @@ svg{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;}
 <text x="728.0" y="416" font-size="11" text-anchor="middle" fill="var(--ink-3)">16</text>
 <text x="896.0" y="416" font-size="11" text-anchor="middle" fill="var(--ink-3)">all</text>
 <text x="476" y="436" font-size="11" text-anchor="middle" fill="var(--ink-3)">num_threads</text>
-<polyline points="56.0,183.5 224.0,212.6 392.0,238.5 560.0,261.7 728.0,279.2 896.0,186.2" fill="none" stroke="var(--c0)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-<polyline points="56.0,186.9 224.0,214.9 392.0,243.2 560.0,273.2 728.0,297.8 896.0,187.8" fill="none" stroke="var(--c0)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
-<polyline points="56.0,152.2 224.0,180.7 392.0,208.4 560.0,228.1 728.0,248.6 896.0,151.3" fill="none" stroke="var(--c0)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-<polyline points="56.0,152.7 224.0,182.8 392.0,211.9 560.0,242.1 728.0,262.6 896.0,153.1" fill="none" stroke="var(--c0)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
-<polyline points="56.0,183.0 224.0,209.9 392.0,236.4 560.0,261.5 728.0,282.6 896.0,183.8" fill="none" stroke="var(--c1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-<polyline points="56.0,184.0 224.0,214.0 392.0,241.9 560.0,272.0 728.0,298.1 896.0,187.7" fill="none" stroke="var(--c1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
-<polyline points="56.0,150.8 224.0,178.6 392.0,206.2 560.0,231.3 728.0,245.3 896.0,150.2" fill="none" stroke="var(--c1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-<polyline points="56.0,152.5 224.0,180.8 392.0,209.0 560.0,244.2 728.0,258.4 896.0,152.3" fill="none" stroke="var(--c1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
-<polyline points="56.0,286.3 224.0,296.8 392.0,306.5 560.0,313.0 728.0,323.3 896.0,295.0" fill="none" stroke="var(--c2)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-<polyline points="56.0,307.3 224.0,320.5 392.0,342.3 560.0,353.1 728.0,381.7 896.0,319.4" fill="none" stroke="var(--c2)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
-<polyline points="56.0,257.4 224.0,277.1 392.0,287.9 560.0,298.2 728.0,291.4 896.0,278.0" fill="none" stroke="var(--c2)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-<polyline points="56.0,274.9 224.0,306.2 392.0,325.7 560.0,350.7 728.0,371.0 896.0,315.0" fill="none" stroke="var(--c2)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
-<circle cx="56.0" cy="183.5" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="224.0" cy="212.6" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="392.0" cy="238.5" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="560.0" cy="261.7" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="728.0" cy="279.2" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="896.0" cy="186.2" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="56.0" cy="186.9" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="224.0" cy="214.9" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="392.0" cy="243.2" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="560.0" cy="273.2" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="728.0" cy="297.8" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="896.0" cy="187.8" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="52.0" y="148.2" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="220.0" y="176.7" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="388.0" y="204.4" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="556.0" y="224.1" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="724.0" y="244.6" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="892.0" y="147.3" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="52.0" y="148.7" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="220.0" y="178.8" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="388.0" y="207.9" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="556.0" y="238.1" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="724.0" y="258.6" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="892.0" y="149.1" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="56.0" cy="183.0" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="224.0" cy="209.9" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="392.0" cy="236.4" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<polyline points="56.0,185.5 224.0,214.5 392.0,244.4 560.0,266.2 728.0,281.5 896.0,179.7" fill="none" stroke="var(--c0)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="56.0,181.7 224.0,217.7 392.0,249.7 560.0,272.0 728.0,298.5 896.0,187.6" fill="none" stroke="var(--c0)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
+<polyline points="56.0,147.6 224.0,177.5 392.0,203.5 560.0,226.3 728.0,235.3 896.0,148.3" fill="none" stroke="var(--c0)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="56.0,149.6 224.0,180.5 392.0,210.1 560.0,235.8 728.0,256.2 896.0,150.9" fill="none" stroke="var(--c0)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
+<polyline points="56.0,185.1 224.0,216.4 392.0,244.8 560.0,261.5 728.0,278.0 896.0,183.3" fill="none" stroke="var(--c1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="56.0,186.7 224.0,219.3 392.0,253.5 560.0,272.8 728.0,299.7 896.0,187.0" fill="none" stroke="var(--c1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
+<polyline points="56.0,148.0 224.0,175.6 392.0,203.2 560.0,228.4 728.0,236.6 896.0,148.8" fill="none" stroke="var(--c1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="56.0,148.5 224.0,179.2 392.0,210.3 560.0,232.1 728.0,255.5 896.0,151.7" fill="none" stroke="var(--c1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
+<polyline points="56.0,289.9 224.0,301.6 392.0,312.5 560.0,319.7 728.0,308.5 896.0,283.9" fill="none" stroke="var(--c2)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="56.0,317.6 224.0,345.5 392.0,363.4 560.0,375.8 728.0,389.1 896.0,308.2" fill="none" stroke="var(--c2)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
+<polyline points="56.0,254.3 224.0,272.8 392.0,283.3 560.0,292.8 728.0,292.9 896.0,251.8" fill="none" stroke="var(--c2)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="56.0,270.4 224.0,301.8 392.0,319.8 560.0,329.8 728.0,365.9 896.0,274.2" fill="none" stroke="var(--c2)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
+<circle cx="56.0" cy="185.5" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="224.0" cy="214.5" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="392.0" cy="244.4" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="560.0" cy="266.2" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="728.0" cy="281.5" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="896.0" cy="179.7" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="56.0" cy="181.7" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="224.0" cy="217.7" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="392.0" cy="249.7" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="560.0" cy="272.0" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="728.0" cy="298.5" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="896.0" cy="187.6" r="4.5" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="52.0" y="143.6" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="220.0" y="173.5" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="388.0" y="199.5" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="556.0" y="222.3" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="724.0" y="231.3" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="892.0" y="144.3" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="52.0" y="145.6" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="220.0" y="176.5" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="388.0" y="206.1" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="556.0" y="231.8" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="724.0" y="252.2" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="892.0" y="146.9" width="8" height="8" fill="var(--c0)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="56.0" cy="185.1" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="224.0" cy="216.4" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="392.0" cy="244.8" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
 <circle cx="560.0" cy="261.5" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="728.0" cy="282.6" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="896.0" cy="183.8" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="56.0" cy="184.0" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="224.0" cy="214.0" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="392.0" cy="241.9" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="560.0" cy="272.0" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="728.0" cy="298.1" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="896.0" cy="187.7" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="52.0" y="146.8" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="220.0" y="174.6" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="388.0" y="202.2" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="556.0" y="227.3" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="724.0" y="241.3" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="892.0" y="146.2" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="52.0" y="148.5" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="220.0" y="176.8" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="388.0" y="205.0" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="556.0" y="240.2" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="724.0" y="254.4" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="892.0" y="148.3" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="56.0" cy="286.3" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="224.0" cy="296.8" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="392.0" cy="306.5" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="560.0" cy="313.0" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="728.0" cy="323.3" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="896.0" cy="295.0" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="56.0" cy="307.3" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="224.0" cy="320.5" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="392.0" cy="342.3" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="560.0" cy="353.1" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="728.0" cy="381.7" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<circle cx="896.0" cy="319.4" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="52.0" y="253.4" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="220.0" y="273.1" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="388.0" y="283.9" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="556.0" y="294.2" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="724.0" y="287.4" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="892.0" y="274.0" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="52.0" y="270.9" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="220.0" y="302.2" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="388.0" y="321.7" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="556.0" y="346.7" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="724.0" y="367.0" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
-<rect x="892.0" y="311.0" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="728.0" cy="278.0" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="896.0" cy="183.3" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="56.0" cy="186.7" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="224.0" cy="219.3" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="392.0" cy="253.5" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="560.0" cy="272.8" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="728.0" cy="299.7" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="896.0" cy="187.0" r="4.5" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="52.0" y="144.0" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="220.0" y="171.6" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="388.0" y="199.2" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="556.0" y="224.4" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="724.0" y="232.6" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="892.0" y="144.8" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="52.0" y="144.5" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="220.0" y="175.2" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="388.0" y="206.3" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="556.0" y="228.1" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="724.0" y="251.5" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="892.0" y="147.7" width="8" height="8" fill="var(--c1)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="56.0" cy="289.9" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="224.0" cy="301.6" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="392.0" cy="312.5" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="560.0" cy="319.7" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="728.0" cy="308.5" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="896.0" cy="283.9" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="56.0" cy="317.6" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="224.0" cy="345.5" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="392.0" cy="363.4" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="560.0" cy="375.8" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="728.0" cy="389.1" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="896.0" cy="308.2" r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="52.0" y="250.3" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="220.0" y="268.8" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="388.0" y="279.3" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="556.0" y="288.8" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="724.0" y="288.9" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="892.0" y="247.8" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="52.0" y="266.4" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="220.0" y="297.8" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="388.0" y="315.8" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="556.0" y="325.8" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="724.0" y="361.9" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
+<rect x="892.0" y="270.2" width="8" height="8" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>
 </svg>
