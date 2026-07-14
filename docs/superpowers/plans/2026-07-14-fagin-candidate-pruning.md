@@ -405,9 +405,20 @@ git commit -m "Add top-M steepest hybrid schedule for Fagin (M dims per round)"
 
 ---
 
-## Phase 3 — Score-gated candidate pruning (the potential big win)
+## Phase 3 — Score-gated candidate pruning — CANCELLED (proven void)
 
-**Rationale:** `random_accesses == N` means Fagin fully scores every doc. The
+> **STATUS: CANCELLED.** After Phase 1 measurement, exact frontier pruning
+> (Task 3.1) and block-max WAND (Task 3.2) were both proven void on dense
+> L2-normalized embeddings: every surfaced doc has upper bound `UB ≥ T` (the
+> halt threshold), so nothing is prunable before global halt (Fagin
+> instance-optimality); and dense vectors lack the sparsity WAND needs.
+> Incremental accumulation conserves total mul-adds (`random_accesses == N`
+> regardless) and regresses due to scatter vs contiguous SIMD. Full proof +
+> measurement: `research/2026-07-14-fagin-exact-pruning-negative-result.md`.
+> The remaining exact lever is cheaper per-doc scoring (simdq quantized codes,
+> already done) or approximate ε>0 pruning. **Do not implement the tasks below.**
+
+**Original rationale (retained for context):** `random_accesses == N` means Fagin fully scores every doc. The
 k-th-best heap threshold currently gates only halting. If we instead use it to
 *skip* full dot products for candidates whose upper bound is already below the
 k-th best, and to *skip whole blocks* of sorted access that cannot lift any
