@@ -164,6 +164,33 @@ So the "cost ≠ latency" caveat resolves emphatically: **sorted-access count is
 poor proxy for latency on dense vectors** — it measures the cheap phase while
 random-access scoring (fixed at N) and, for GTASD, threshold recompute dominate.
 
+## Phase 2 — rescuing GTASD's latency (warm-start + batch)
+
+The GTASD threshold tax is `O(rounds × ndims × iters)`. Two exact-preserving
+knobs collapse it (any `lam ≥ 0` is a valid dual bound, so a looser solve costs
+at most a few extra rounds, never correctness):
+
+1. **Warm-start the water-filling ternary search** from the previous round's
+   `lam` (only one dim changed per round, so the optimum barely moves): narrow
+   `[lam/4, 4·lam]` bracket, 40 iters vs 60 cold. Threshold phase 123 → 55 ms
+   on 97m (2.2×), total 168 → 100 ms.
+2. **Larger `fagin_batch_rows`** — threshold cost is *exactly linear in round
+   count*, and sorted accesses stay flat (the halt is already precise), so
+   bigger batches cut rounds almost for free:
+
+| batch | GTASD total ms (97m) | thresh ms | rounds | | GTASD total ms (311m) | thresh ms | rounds |
+|---|---:|---:|---:|---|---:|---:|---:|
+| 2048 | 100 | 55 | 1715 | | 341 | 245 | 3852 |
+| 8192 | 56 | 14 | 438 | | 152 | 62 | 964 |
+| 16384 | 50 | 7 | 217 | | 128 | 31 | 476 |
+| 32768 | — | — | — | | 109 | 15 | 233 |
+
+With warm-start + batch≥16384, **GTASD (50 ms on 97m) beats TA (62 ms)** and
+matches TASD — while keeping its ~8× sorted-access advantage and staying exact
+(verified against brute force at every batch). So GTASD is usable after all; it
+was never an algorithmic problem, only an unnecessarily fine round granularity
+plus a cold-started inner solve.
+
 ## Caveats / next steps
 
 - **Batch granularity.** The halt is only tested at batch boundaries; a finer
