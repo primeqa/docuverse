@@ -24,7 +24,7 @@ except ImportError:
 
 from docuverse.engines.retrieval.retrieval_engine import RetrievalEngine
 from docuverse.engines.search_corpus import SearchCorpus
-from docuverse.utils import get_param, _trim_json
+from docuverse.utils import get_param, _trim_json, read_config_file
 from docuverse.utils.timer import timer
 
 
@@ -39,6 +39,11 @@ class LanceDBEngine(RetrievalEngine):
         super().__init__(config_params, **kwargs)
         self.db = None
         self.table = None
+        # Named index_params/search_params presets, resolved the same way as
+        # the Milvus engine's milvus_default_config.yaml.
+        from docuverse.utils.config_resolver import resolve_optional
+        _defaults_path = resolve_optional("engines/lancedb_default_config.yaml")
+        self.lancedb_defaults = read_config_file(_defaults_path) if _defaults_path else {}
         # load_model_config must come before any self.config access.
         self.load_model_config(config_params)
         self.extra_fields = get_param(self.config.data_template, "extra_fields", [])
@@ -50,9 +55,23 @@ class LanceDBEngine(RetrievalEngine):
         if self.config.ingestion_batch_size == 40:
             self.config.ingestion_batch_size = self.config.bulk_batch
 
-        self.init_client()
+        # init_client() is deferred to first use (same as the Milvus engine)
+        # so that forked preprocessing workers (parallel_process) are spawned
+        # before LanceDB's async runtime exists — forking with a live runtime
+        # triggers lancedb's "fork support is experimental" warning and risks
+        # deadlock in the children.
 
     # ===== Connection =====
+
+    @property
+    def db(self):
+        if self._db is None:
+            self.init_client()
+        return self._db
+
+    @db.setter
+    def db(self, value):
+        self._db = value
 
     def init_model(self, **kwargs):
         """No-op default; dense/sparse subclasses override."""
@@ -66,7 +85,8 @@ class LanceDBEngine(RetrievalEngine):
         self.db = lancedb.connect(db_path)
 
     def check_client(self):
-        pass
+        if self._db is None:
+            self.init_client()
 
     # ===== Hooks for subclasses =====
 

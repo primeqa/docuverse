@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import torch
 from typing import Union, List, Any
@@ -34,18 +36,40 @@ def _resolve_attn_implementation(requested):
 class DenseEmbeddingFunction(EmbeddingFunction):
     def __init__(self, model_or_directory_name, batch_size=128, **kwargs):
         super().__init__(model_or_directory_name=model_or_directory_name, batch_size=batch_size, **kwargs)
-        self.model = None
+        self.model_name = model_or_directory_name
+        self.pqa = False
+        self.emb_pool = None
+        self.num_devices = 0
+        self._standalone_tokenizer = None
+        self._peeked_dim = None
+        # Defer device detection, attention-backend resolution and the model
+        # load to first use. Touching CUDA here (even get_device_capability /
+        # get_device_name) creates a CUDA context, which forces the
+        # tokenizing/preprocessing step in SearchData.read_data into
+        # GIL-bound threads instead of fork-based multiprocessing.
+        self._init_kwargs = dict(kwargs)
+
+    @property
+    def model(self):
+        if self._model is None:
+            self._ensure_model()
+        return self._model
+
+    @model.setter
+    def model(self, value):
+        self._model = value
+
+    def _ensure_model(self):
+        """Load the model on first use (lazy GPU init)."""
+        if self._model is not None:
+            return
+        kwargs = self._init_kwargs
         kwargs['attn_implementation'] = _resolve_attn_implementation(
             get_param(kwargs, 'attn_implementation', 'auto')
         )
         device = self.detect_current_device(kwargs)
-
-        self.pqa = False
-        self.emb_pool = None
-
-        self.create_model(model_or_directory_name, device,
+        self.create_model(self.model_name, device,
                           attn_implementation=get_param(kwargs, 'attn_implementation', "sdpa"))
-
         print('=== done initializing model')
 
     def detect_current_device(self, kwargs: dict[str, Any]) -> str:
@@ -79,15 +103,14 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                 pass
             self.emb_pool = None
 
-        # Clean up model and free GPU memory
-        if hasattr(self, 'model') and self.model is not None:
+        # Clean up model and free GPU memory. Use `_model` directly — the
+        # `model` property would lazily *load* the model during GC.
+        if getattr(self, '_model', None) is not None:
             try:
                 # Move model to CPU to free GPU memory
-                if hasattr(self.model, 'to'):
-                    self.model = self.model.to('cpu')
-                # Delete model reference
-                del self.model
-                self.model = None
+                if hasattr(self._model, 'to'):
+                    self._model = self._model.to('cpu')
+                self._model = None
                 # Clear CUDA cache
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
@@ -156,7 +179,15 @@ class DenseEmbeddingFunction(EmbeddingFunction):
 
     @property
     def tokenizer(self):
-        return self.model.tokenizer
+        if self._model is not None:
+            return self._model.tokenizer
+        # Model not loaded yet — hand out a standalone tokenizer so callers
+        # (e.g. the TextTiler) can tokenize without forcing the GPU load.
+        if self._standalone_tokenizer is None:
+            from transformers import AutoTokenizer
+            self._standalone_tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name, trust_remote_code=True)
+        return self._standalone_tokenizer
 
     def _model_embedding_dim(self):
         # sentence-transformers renamed get_sentence_embedding_dimension ->
@@ -165,10 +196,66 @@ class DenseEmbeddingFunction(EmbeddingFunction):
             or self.model.get_sentence_embedding_dimension
         return getter()
 
+    def _peek_embedding_dim(self):
+        """Read the output embedding dimension from the model's config files
+        without loading the weights (and without initializing CUDA), so
+        engines can build their schemas before the lazy GPU load happens.
+
+        Returns None when the dimension cannot be determined from configs.
+        """
+        import json
+
+        name = self.model_name
+
+        def _load_json(fname):
+            if os.path.isdir(name):
+                path = os.path.join(name, fname)
+                if not os.path.exists(path):
+                    return None
+            else:
+                try:
+                    from huggingface_hub import hf_hub_download
+                    path = hf_hub_download(name, fname)
+                except Exception:
+                    return None
+            try:
+                with open(path) as f:
+                    return json.load(f)
+            except Exception:
+                return None
+
+        modules = _load_json("modules.json")
+        if modules:
+            # Walk from the output end: the last Dense projection (or,
+            # failing that, the Pooling layer) fixes the sentence-embedding
+            # dimension.
+            for module in reversed(modules):
+                mtype = module.get("type", "")
+                cfg = _load_json(os.path.join(module.get("path", ""), "config.json"))
+                if not cfg:
+                    continue
+                if mtype.endswith("Dense") and "out_features" in cfg:
+                    return cfg["out_features"]
+                if mtype.endswith("Pooling") and "word_embedding_dimension" in cfg:
+                    return cfg["word_embedding_dimension"]
+        cfg = _load_json("config.json")
+        if cfg:
+            return cfg.get("hidden_size")
+        return None
+
     @property
     def embedding_dim(self):
-        dim = self._model_embedding_dim()
-        return self.matryoshka_dim if self.matryoshka_dim > 0 else dim
+        if self.matryoshka_dim > 0:
+            return self.matryoshka_dim
+        if self._model is not None:
+            return self._model_embedding_dim()
+        if self._peeked_dim is None:
+            self._peeked_dim = self._peek_embedding_dim()
+        if self._peeked_dim is not None:
+            return self._peeked_dim
+        # Config files were inconclusive — fall back to loading the model.
+        self._ensure_model()
+        return self._model_embedding_dim()
 
     def start_pool(self):
         self.emb_pool = self.model.start_multi_process_pool()
@@ -185,6 +272,10 @@ class DenseEmbeddingFunction(EmbeddingFunction):
                tm=None,
                **kwargs) -> \
             Union[Union[List[float], List[int]], List[Union[List[float], List[int]]]]:
+        # Load lazily here (not just via the `model` property) so that
+        # `num_devices` is correct when `_encode_data` picks between the
+        # single-model and multi-process-pool paths.
+        self._ensure_model()
         embs = []
         if isinstance(texts, str):
             # A bare string would otherwise be treated as a list of characters

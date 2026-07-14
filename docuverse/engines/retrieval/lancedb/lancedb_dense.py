@@ -19,9 +19,17 @@ class LanceDBDenseEngine(LanceDBEngine):
     def __init__(self, config_params, **kwargs):
         self.model = None
         self.hidden_dim = None
-        self.embeddings_name = get_param(config_params, "embeddings_name",
-                                         self.DEFAULT_VECTOR_COLUMN)
         super().__init__(config_params, **kwargs)
+        # RetrievalEngine.__init__ re-sets embeddings_name from the config
+        # (None when unset), so our default must be applied *after* super() —
+        # setting it before gets silently clobbered back to None (same fix as
+        # LanceDBSparseEngine).
+        raw = (
+            config_params.get("embeddings_name")
+            if isinstance(config_params, dict)
+            else getattr(config_params, "embeddings_name", None)
+        )
+        self.embeddings_name = raw if raw is not None else self.DEFAULT_VECTOR_COLUMN
 
     def init_model(self, **kwargs):
         self.model = DenseEmbeddingFunction(
@@ -51,18 +59,29 @@ class LanceDBDenseEngine(LanceDBEngine):
         )[0]
         return np.array(emb, dtype=np.float32).tolist()
 
+    def _resolved_index_params(self):
+        """Resolve config index_params: dict as-is, string first as a preset
+        name in lancedb_default_config.yaml, else as a bare index_type.
+        Returns a dict, or None when no ANN index is configured."""
+        index_params = get_param(self.config, "index_params", None)
+        if isinstance(index_params, str):
+            preset = get_param(self.lancedb_defaults, "index_params." + index_params, None)
+            index_params = preset if preset is not None else {"index_type": index_params}
+        return index_params
+
     def build_indexes(self):
         self._open_table()
-        index_params = get_param(self.config, "index_params", None)
+        index_params = self._resolved_index_params()
         if index_params is None:
             return
-        index_type = index_params if isinstance(index_params, str) else \
-            get_param(index_params, "index_type", None)
+        index_type = get_param(index_params, "index_type", None)
         if index_type is None:
             return
         kwargs = {"metric": self.metric, "vector_column_name": self.embeddings_name}
         if isinstance(index_params, dict):
-            for k in ("num_partitions", "num_sub_vectors"):
+            # m / ef_construction only apply to the IVF_HNSW_* index types;
+            # LanceDB ignores them for the others.
+            for k in ("num_partitions", "num_sub_vectors", "m", "ef_construction"):
                 if k in index_params:
                     kwargs[k] = index_params[k]
         print(f"Creating {index_type} ANN index on {self.embeddings_name}...")
@@ -92,9 +111,31 @@ class LanceDBDenseEngine(LanceDBEngine):
         tm.add_timing("encode")
 
         output_cols = ["id", "text", "title", "_distance"] + self.extra_fields
+        q = self.table.search(qvec, vector_column_name=self.embeddings_name)
+        search_params = get_param(self.config, "search_params", None)
+        if isinstance(search_params, str):
+            # Named preset from lancedb_default_config.yaml
+            search_params = get_param(self.lancedb_defaults, "search_params." + search_params, None)
+        elif search_params is None:
+            # No explicit search_params — use the defaults for the configured
+            # index type, if this file defines any.
+            index_params = self._resolved_index_params()
+            index_type = get_param(index_params, "index_type", None) \
+                if isinstance(index_params, dict) else None
+            if index_type is not None:
+                search_params = get_param(self.lancedb_defaults, "search_params." + index_type, None)
+        if not isinstance(search_params, dict):
+            search_params = {}
+        # Accept the Milvus-style nesting ({"params": {"ef": ...}}) as well as
+        # flat keys, so configs can be shared across backends.
+        if isinstance(search_params.get("params"), dict):
+            search_params = {**search_params, **search_params["params"]}
+        for knob in ("nprobes", "ef", "refine_factor"):
+            val = search_params.get(knob)
+            if val is not None:
+                q = getattr(q, knob)(int(val))
         results = (
-            self.table.search(qvec, vector_column_name=self.embeddings_name)
-            .select(output_cols)
+            q.select(output_cols)
             .limit(int(self.config.top_k))
             .to_list()
         )
