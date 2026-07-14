@@ -162,14 +162,35 @@ static inline double fagin_dual_dim(double c_j, double a2_j, double t2_j,
 // box sum and the Cauchy-Schwarz value R*||q|| — all three are valid upper
 // bounds for ANY corpus with row norms <= R, so the min stays valid and the
 // result is exact. For unit-norm corpora R = 1 and the bound is tightest.
+//
+// lam_hint (>0) warm-starts the search: the steepest schedule changes only one
+// dim's contribution per round, so the optimal lam barely moves — we bracket a
+// narrow window around the previous lam instead of the full [0, ||q||/R] range.
+// Correctness is unconditional: g(lam) is convex and weak duality makes g(lam)
+// >= T* for EVERY lam >= 0, so even if the narrow bracket misses the true
+// minimizer the returned bound stays valid (just slightly looser) and exactness
+// at epsilon=0 is preserved. Passing lam_hint <= 0 uses the full bracket.
 static inline double fagin_threshold_norm(const double *c, const double *a2,
                                           const double *t2, int64_t ndims,
                                           double sum_c, double qnorm,
-                                          double r2, double *lam_out) {
+                                          double r2, double lam_hint,
+                                          double *lam_out) {
     if (ndims <= 0) { if (lam_out) *lam_out = 0.0; return 0.0; }
     double R = sqrt(r2 > 0.0 ? r2 : 1.0);
-    double lo = 1e-12, hi = (qnorm / R) + 1e-6;   // optimal lam ~ ||q||/(2R)
-    for (int it = 0; it < 90; it++) {
+    double full_hi = (qnorm / R) + 1e-6;          // optimal lam ~ ||q||/(2R)
+    double lo, hi;
+    int iters;
+    if (lam_hint > 0.0) {
+        // Warm start: search a multiplicative window [hint/4, hint*4], clamped
+        // to the valid range. Fewer iterations suffice over the tight bracket.
+        lo = lam_hint * 0.25; if (lo < 1e-12) lo = 1e-12;
+        hi = lam_hint * 4.0;  if (hi > full_hi) hi = full_hi;
+        if (hi <= lo) hi = full_hi;               // degenerate hint -> full range
+        iters = 40;
+    } else {
+        lo = 1e-12; hi = full_hi; iters = 60;
+    }
+    for (int it = 0; it < iters; it++) {
         double m1 = lo + (hi - lo) / 3.0;
         double m2 = hi - (hi - lo) / 3.0;
         double g1 = m1 * r2, g2 = m2 * r2;
@@ -359,7 +380,8 @@ static inline int fagin_ta_search(
                 if (norm_aware) { cw[a] = cj; tw[a] = tj * tj; }
             }
             if (norm_aware)
-                T = fagin_threshold_norm(cw, a2, tw, ndims, T, qnorm, r2, NULL);
+                T = fagin_threshold_norm(cw, a2, tw, ndims, T, qnorm, r2,
+                                         0.0, NULL);
             stats->ns_threshold += fagin_now_ns() - _tt;
 
             if (heap.size >= heap_cap) {
@@ -390,7 +412,8 @@ static inline int fagin_ta_search(
         if (norm_aware) {
             for (int64_t a = 0; a < ndims; a++)
                 tw[a] = (a2[a] > 0.0) ? contrib[a] * contrib[a] / a2[a] : 0.0;
-            T = fagin_threshold_norm(contrib, a2, tw, ndims, T, qnorm, r2, &lam);
+            T = fagin_threshold_norm(contrib, a2, tw, ndims, T, qnorm, r2,
+                                     0.0, &lam);   // cold start: no prior lam
         }
         for (int64_t a = 0; a < ndims; a++) {
             int64_t j = dims[a];
@@ -456,8 +479,10 @@ static inline int fagin_ta_search(
             if (norm_aware) {
                 for (int64_t b = 0; b < ndims; b++)
                     tw[b] = (a2[b] > 0.0) ? contrib[b] * contrib[b] / a2[b] : 0.0;
+                // Warm start from the previous round's lam: only one dim's
+                // contribution changed, so the optimizer barely moves.
                 T_halt = fagin_threshold_norm(contrib, a2, tw, ndims, T, qnorm,
-                                              r2, &lam);
+                                              r2, lam, &lam);
             }
             stats->ns_threshold += fagin_now_ns() - _tt;
 

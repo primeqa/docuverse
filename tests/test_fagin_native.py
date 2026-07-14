@@ -253,6 +253,19 @@ def test_input_validation():
         _native.fagin_search(Y.astype(np.float64), order, vals, q, 5, 8, 0.0, 0, 1)
 
 
+def test_gtasd_exact_after_warmstart():
+    """GTASD (steepest_norm) must return the exact top-K. Locks exactness before
+    and after warm-starting the water-filling ternary search: the warm-start
+    only changes how lambda is initialized, never the result (any lambda >= 0 is
+    a valid upper bound, so exactness at epsilon=0 is preserved)."""
+    rng = np.random.default_rng(7)
+    Y = rng.standard_normal((3000, 48)).astype(np.float32)
+    Y /= np.linalg.norm(Y, axis=1, keepdims=True)
+    q = rng.standard_normal(48).astype(np.float32)
+    idxs, scores, _ = _search(Y, q, K=20, batch=256, schedule="steepest_norm")
+    _check_exact_topk(Y, q, idxs, scores, 20)
+
+
 @pytest.mark.parametrize("schedule", ["lockstep", "steepest",
                                       "lockstep_norm", "steepest_norm"])
 def test_phase_timers_present_and_consistent(schedule):
