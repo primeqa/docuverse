@@ -1,0 +1,52 @@
+# Default index/search parameters for the LanceDB engine.
+#
+# Resolution order (same pattern as milvus_default_config.yaml):
+#   - index_params / search_params given as a dict in the experiment config
+#     are used as-is.
+#   - Given as a string, they name an entry in this file
+#     (e.g. `index_params: default_dense`).
+#   - When search_params is absent, the entry matching the configured
+#     index_type is used; if there is none, LanceDB's built-in defaults apply.
+#   - When index_params is absent, no ANN index is built (brute-force scan).
+#
+# Valid LanceDB vector index types: IVF_FLAT, IVF_SQ, IVF_PQ, IVF_RQ,
+# IVF_HNSW_FLAT, IVF_HNSW_SQ, IVF_HNSW_PQ.
+# Build knobs: num_partitions, num_sub_vectors (PQ), m / ef_construction (HNSW).
+# Search knobs: nprobes, ef (HNSW), refine_factor.
+
+search_params:
+  IVF_FLAT:
+    nprobes: 20
+  IVF_SQ:
+    nprobes: 20
+  IVF_PQ:
+    nprobes: 20
+    refine_factor: 10
+  IVF_RQ:
+    nprobes: 20
+    refine_factor: 10
+  IVF_HNSW_FLAT:
+    nprobes: 20
+    ef: 100
+  IVF_HNSW_SQ:
+    nprobes: 20
+    ef: 100
+  IVF_HNSW_PQ:
+    nprobes: 20
+    ef: 100
+    refine_factor: 10
+  default: {}
+
+index_params:
+  default_dense:
+    index_type: IVF_HNSW_SQ
+    num_partitions: 256
+    m: 20
+    ef_construction: 300
+  default_flat:
+    index_type: IVF_FLAT
+    num_partitions: 256
+  default_pq:
+    index_type: IVF_PQ
+    num_partitions: 256
+    num_sub_vectors: 16
