@@ -339,7 +339,19 @@ git add docuverse/engines/retrieval/simdq/_native/include/fagin_ta.h tests/test_
 git commit -m "Warm-start Fagin water-filling ternary search from previous lambda"
 ```
 
-### Task 2.3: Top-M steepest hybrid (advance M steepest dims per round)
+### Task 2.3: Top-M steepest hybrid (advance M steepest dims per round) — SKIPPED (not needed)
+
+> **STATUS: SKIPPED.** Tasks 2.1 (batch sweep) + 2.2 (warm-start) already made
+> GTASD the fastest exact schedule. The threshold cost is exactly linear in
+> round count, and raising `fagin_batch_rows` (an existing zero-code config
+> knob) collapses rounds 1715→217 with *flat* sorted accesses — so the top-M
+> hybrid attacks a variable already solved, and its only theoretical edge
+> (preserving column-selection sharpness) buys nothing when sorted accesses are
+> already flat across batch sizes. Building a new kernel param path here is
+> speculative complexity the data does not justify. Revisit only if a future
+> workload shows sorted accesses growing materially with batch.
+
+**Original task (retained for context):**
 
 **Files:**
 - Modify: `docuverse/engines/retrieval/simdq/_native/include/fagin_ta.h`
