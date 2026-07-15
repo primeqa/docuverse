@@ -2138,7 +2138,9 @@ def main():
     ap.add_argument("--results-db", dest="results_db", default=None,
                     help="persistent SQLite file to append per-method results "
                          "to (default: experiments/simdq/results.db). Set to "
-                         "an empty string to disable.")
+                         "an empty string to disable. With --latest, this "
+                         "selects the DB to read (empty string falls back to "
+                         "the default).")
     ap.add_argument("--latest", action="store_true",
                     help="print a summary table of the latest result per "
                          "method type from the results DB and exit (no "
