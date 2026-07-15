@@ -1669,27 +1669,30 @@ def _row_is_newer(a: dict, b: dict) -> bool:
 
 def build_latest_summary(rows: list[dict]) -> list[dict]:
     """Reduce raw `runs` rows to the sorted display rows for the --latest
-    table: the newest row per method string, bucketed into method types, with
-    only representative epsilons kept for Fagin types. Each display row carries
-    method_family + method_type alongside the metric columns.
+    table: the newest row per (encoder, method string), bucketed into
+    (encoder, method type), with only representative epsilons kept for Fagin
+    types. Keying on encoder keeps every model in the output — models sharing a
+    method name (e.g. "FAISS HNSW") no longer collapse to whichever ran last.
+    Each display row carries method_family + method_type alongside the metrics.
     """
-    # 1) newest row per exact method string
+    # 1) newest row per (encoder, exact method string)
     latest_by_method: dict = {}
     for r in rows:
-        m = r["method"]
-        cur = latest_by_method.get(m)
+        key = (r["encoder"], r["method"])
+        cur = latest_by_method.get(key)
         if cur is None or _row_is_newer(r, cur):
-            latest_by_method[m] = r
+            latest_by_method[key] = r
 
-    # 2) group those into method types
+    # 2) group those into (encoder, method type) buckets
     by_type: dict = {}
     for r in latest_by_method.values():
         mt = _method_type(r["method"], r["method_family"])
-        by_type.setdefault(mt, []).append(r)
+        by_type.setdefault((r["encoder"], mt), []).append(r)
 
-    # 3) per type: non-epsilon -> latest single row; epsilon -> representatives
+    # 3) per (encoder, type): non-epsilon -> latest single row;
+    #    epsilon -> representatives
     display: list = []
-    for mt, group in by_type.items():
+    for (_enc, mt), group in by_type.items():
         has_eps = any(g.get("epsilon") is not None for g in group)
         if not has_eps:
             best = group[0]
@@ -1714,8 +1717,9 @@ def build_latest_summary(rows: list[dict]) -> list[dict]:
         for e in sorted(best_by_eps):
             display.append(_display_row(best_by_eps[e], mt))
 
-    # 4) sort by family, then type, then epsilon (None first)
-    display.sort(key=lambda d: (d["method_family"], d["method_type"],
+    # 4) sort by encoder, then family, then type, then epsilon (None first)
+    display.sort(key=lambda d: (d["encoder"] or "", d["method_family"],
+                                d["method_type"],
                                 -1.0 if d["epsilon"] is None
                                 else float(d["epsilon"])))
     return display

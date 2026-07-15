@@ -112,6 +112,67 @@ class TestBuildLatestSummary(unittest.TestCase):
     def test_empty_input(self):
         self.assertEqual(build_latest_summary([]), [])
 
+    def test_all_encoders_kept(self):
+        # two models sharing method names must BOTH appear, not collapse to
+        # whichever ran most recently
+        rows = [
+            _row("FAISS HNSW (M=16, ef=128)", "FAISS", None,
+                 "2026-07-10T09:00:00", 0.70, 0.9, 1, encoder="m97"),
+            _row("FAISS HNSW (M=16, ef=128)", "FAISS", None,
+                 "2026-07-14T09:00:00", 0.75, 0.8, 2, encoder="m311"),
+        ]
+        out = build_latest_summary(rows)
+        faiss = [r for r in out if r["method_type"] == "FAISS HNSW"]
+        self.assertEqual(len(faiss), 2)
+        self.assertEqual({r["encoder"] for r in faiss}, {"m97", "m311"})
+
+    def test_latest_wins_per_encoder(self):
+        # latest-wins is scoped per encoder, not global
+        rows = [
+            _row("FAISS HNSW (M=16, ef=128)", "FAISS", None,
+                 "2026-07-10T09:00:00", 0.70, 0.9, 1, encoder="m97"),
+            _row("FAISS HNSW (M=16, ef=128)", "FAISS", None,
+                 "2026-07-14T09:00:00", 0.71, 0.9, 2, encoder="m97"),  # newer
+            _row("FAISS HNSW (M=16, ef=128)", "FAISS", None,
+                 "2026-07-12T09:00:00", 0.90, 0.8, 3, encoder="m311"),
+        ]
+        out = build_latest_summary(rows)
+        by_enc = {r["encoder"]: r for r in out
+                  if r["method_type"] == "FAISS HNSW"}
+        self.assertAlmostEqual(by_enc["m97"]["ndcg_at_10"], 0.71)
+        self.assertAlmostEqual(by_enc["m311"]["ndcg_at_10"], 0.90)
+
+    def test_epsilon_selection_per_encoder(self):
+        # each encoder gets its own representative-epsilon selection
+        rows = []
+        ridx = 1
+        for enc in ("m97", "m311"):
+            for eps in (0.0, 0.001, 0.005, 0.01, 0.05):
+                name = ("Fagin GTASD (exact)" if eps == 0.0
+                        else f"Fagin GTASD (eps={eps:g}, depth=0)")
+                rows.append(_row(name, "Fagin", eps, "2026-07-14T09:00:00",
+                                 0.9 - eps, 10.0, ridx, encoder=enc))
+                ridx += 1
+        out = build_latest_summary(rows)
+        for enc in ("m97", "m311"):
+            eps_shown = [r["epsilon"] for r in out
+                         if r["method_type"] == "Fagin GTASD"
+                         and r["encoder"] == enc]
+            self.assertEqual(eps_shown, [0.0, 0.001, 0.005, 0.05])
+
+    def test_sorted_groups_by_encoder(self):
+        rows = [
+            _row("FAISS HNSW (M=16, ef=128)", "FAISS", None,
+                 "2026-07-14T09:00:00", 0.72, 0.9, 1, encoder="m311"),
+            _row("FAISS HNSW (M=16, ef=128)", "FAISS", None,
+                 "2026-07-14T09:00:00", 0.70, 0.9, 2, encoder="m97"),
+        ]
+        out = build_latest_summary(rows)
+        # rows are grouped by encoder (sorted), so all of one encoder's rows
+        # are contiguous
+        encoders = [r["encoder"] for r in out]
+        self.assertEqual(encoders, sorted(encoders))
+
 
 class TestRenderAndCsv(unittest.TestCase):
     def _display(self):
