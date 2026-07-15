@@ -1661,7 +1661,7 @@ def _row_is_newer(a: dict, b: dict) -> bool:
     return ka > kb
 
 
-def build_latest_summary(rows) -> list:
+def build_latest_summary(rows: list[dict]) -> list[dict]:
     """Reduce raw `runs` rows to the sorted display rows for the --latest
     table: the newest row per method string, bucketed into method types, with
     only representative epsilons kept for Fagin types. Each display row carries
