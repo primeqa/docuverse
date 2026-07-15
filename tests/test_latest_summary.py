@@ -108,3 +108,6 @@ class TestBuildLatestSummary(unittest.TestCase):
         # FAISS sorts before Fagin (family alpha), each carries method_family
         self.assertEqual(out[0]["method_family"], "FAISS")
         self.assertEqual(out[-1]["method_family"], "Fagin")
+
+    def test_empty_input(self):
+        self.assertEqual(build_latest_summary([]), [])
