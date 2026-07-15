@@ -2163,8 +2163,8 @@ def main():
                          "experiment is run); representative epsilons are "
                          "shown for Fagin schedules")
     ap.add_argument("--latest-csv", dest="latest_csv", default=None,
-                    help="with --latest, also write the summary table as CSV "
-                         "to this path")
+                    help="write the latest-summary table as CSV to this path; "
+                         "implies --latest (no experiment is run)")
     ap.add_argument("--force-build", action="store_true",
                     help="rebuild index dirs and corpus vectors even if they "
                          "already exist")
@@ -2221,7 +2221,8 @@ def main():
                          "Default: docs/simdq_{hostname}_{dataset}.md")
     args = ap.parse_args()
 
-    if args.latest:
+    # --latest-csv implies the latest-summary action (no experiment is run)
+    if args.latest or args.latest_csv:
         db = _resolve(args.results_db or DEFAULT_SETTINGS["results_db"])
         run_latest_report(
             db, _resolve(args.latest_csv) if args.latest_csv else None)
