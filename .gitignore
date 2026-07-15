@@ -205,3 +205,6 @@ docs/*.snm
 docs/*.toc
 docs/*.vrb
 /debug/
+
+# Local, per-machine Claude Code memory (not shared)
+CLAUDE.local.md
