@@ -123,6 +123,8 @@ DEFAULT_SETTINGS = {
     "run_simdq": True,          # simdq asym b=2 + 1-bit hamming variants/sweeps
                                 # (the asym index dir is still built either way —
                                 #  it's the fp32 vector source for the baselines)
+    "run_thread_sweeps": False,  # Phase 1 / Phase 6-8 thread-scaling sweeps
+                                 # (+ .sweeps.svg); opt-in via --thread-sweeps
     "fagin_batch_rows": 64,     # sorted-access rows per TA round
     "fagin_epsilon": 0.0,       # additive halting slack; 0.0 = exact
     "fagin_max_depth": 0,       # sorted-access depth cap; 0 = unlimited (exact)
@@ -208,6 +210,8 @@ def _cli_overrides(args: argparse.Namespace) -> dict:
         ov["settings.run_fagin"] = False
     if args.no_simdq:
         ov["settings.run_simdq"] = False
+    if args.thread_sweeps:
+        ov["settings.run_thread_sweeps"] = True
     if args.skip_quality:
         ov["settings.run_quality"] = False
     if args.skip_speed:
@@ -2190,6 +2194,11 @@ def main():
                          "(quality variants, thread sweeps, and Phase 5b rows); "
                          "the asym index is still built as the baselines' fp32 "
                          "vector source")
+    ap.add_argument("--thread-sweeps", dest="thread_sweeps",
+                    action="store_true",
+                    help="run the simdq thread-scaling sweeps (Phase 1 asym "
+                         "b=2 default+BLAS=1, Phase 6/8 Hamming SoA) and emit "
+                         "the .sweeps.svg chart; off by default")
     ap.add_argument("--skip-quality", action="store_true")
     ap.add_argument("--skip-speed", action="store_true")
     ap.add_argument("--force-encode", action="store_true",
