@@ -1460,6 +1460,26 @@ def _parse_fagin_name(name: str):
     return (algo, float(m.group(1))) if m else (algo, 0.0)
 
 
+def _method_family(name: str) -> str:
+    """Bucket a method/variant name into an engine family for the DB row.
+
+    Handles both Phase 5b system names ('simdq asym b=2 (+rescore)',
+    'Milvus FLAT (exact)') and quality variant labels ('asym b=2, +rescore',
+    '1-bit ham, no rescore', 'FLAT (fp32 IP, exact)').
+    """
+    if name.startswith("Milvus"):
+        return "Milvus"
+    if name.startswith("FAISS"):
+        return "FAISS"
+    if name.startswith("Fagin"):
+        return "Fagin"
+    if name.startswith("FLAT"):
+        return "FLAT"
+    # simdq quality variants ('asym b=2, ...', '1-bit ham, ...') and Phase 5b
+    # simdq system names ('simdq asym ...', 'simdq 1-bit ...')
+    return "simdq"
+
+
 # Fagin schedule -> hue slot in _CHART_COLORS (stable across the report so the
 # epsilon-sweep chart and any future Fagin chart agree on colour per schedule).
 _FAGIN_ALGO_COLOR = {"TA": 0, "TASD": 1, "GTA": 2, "GTASD": 3}
