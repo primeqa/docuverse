@@ -1023,11 +1023,9 @@ def _frontier_chart_svg(models, metric_rows, head, workers) -> str | None:
         return 2 if name.startswith("simdq asym") else 3
 
     def quality_of(tag: str, name: str):
-        for pre, var in (("simdq asym", "asym b=2"),
-                         ("simdq 1-bit", "1-bit ham")):
-            if name.startswith(pre):
-                mode = "+rescore" if "+rescore" in name else "no rescore"
-                return by_ev.get((tag, f"{var}, {mode}"))
+        simdq_var = _simdq_name_to_variant(name)
+        if simdq_var is not None:
+            return by_ev.get((tag, simdq_var))
         # baselines: exact-name quality row; exact engines fall back to the
         # FLAT ceiling (same result by construction)
         row = by_ev.get((tag, name))
@@ -1480,18 +1478,23 @@ def _method_family(name: str) -> str:
     return "simdq"
 
 
+def _simdq_name_to_variant(name: str):
+    """'simdq asym b=2 (+rescore)' -> 'asym b=2, +rescore' (and the 1-bit
+    variants). Returns None for non-simdq names. Single source of truth for the
+    Phase 5b simdq name -> quality variant mapping, shared by the frontier chart
+    and the results-DB join."""
+    if not name.startswith("simdq "):
+        return None
+    mode = "+rescore" if "+rescore" in name else "no rescore"
+    var = "asym b=2" if name.startswith("simdq asym") else "1-bit ham"
+    return f"{var}, {mode}"
+
+
 def _speed_name_to_variant(name: str) -> str:
     """Map a Phase 5b system name to the quality `variant` key it shares with
-    metric_rows/agree_rows. simdq Phase 5b names ('simdq asym b=2 (+rescore)',
-    'simdq 1-bit ham (no rescore)') fold onto the quality variants
-    ('asym b=2, +rescore', '1-bit ham, no rescore'); every other engine uses
-    its name verbatim as the variant.
-    """
-    if name.startswith("simdq "):
-        mode = "+rescore" if "+rescore" in name else "no rescore"
-        var = "asym b=2" if name.startswith("simdq asym") else "1-bit ham"
-        return f"{var}, {mode}"
-    return name
+    metric_rows/agree_rows. simdq names fold onto the quality variants; every
+    other engine uses its name verbatim."""
+    return _simdq_name_to_variant(name) or name
 
 
 def _join_method_rows(models, metric_rows, agree_rows, head):
@@ -1535,7 +1538,7 @@ def _join_method_rows(models, metric_rows, agree_rows, head):
             "agree_at_k": ag["agree@K"] if ag else None,
             "n_queries": mm["n_queries"] if mm else None,
             "runtime_ms_per_q": ms,
-            "queries_per_sec": (1000.0 / ms) if ms else None,
+            "queries_per_sec": (1000.0 / ms) if ms and ms > 0 else None,
         })
     return rows
 
