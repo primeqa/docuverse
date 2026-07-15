@@ -1733,6 +1733,59 @@ def _display_row(r: dict, method_type: str) -> dict:
     }
 
 
+# (column key, header) — single source of column order for table + CSV
+_LATEST_COLUMNS = [
+    ("dataset", "dataset"), ("encoder", "encoder"),
+    ("method_type", "method_type"), ("epsilon", "epsilon"),
+    ("agree_at_10", "agree@10"), ("agree_at_k", "agree@K"),
+    ("ndcg_at_10", "nDCG@10"), ("runtime_ms_per_q", "ms/q"),
+    ("queries_per_sec", "q/s"), ("run_ts", "run_ts"),
+]
+
+
+def _fmt_cell(key: str, value) -> str:
+    """Format one display value for the table/CSV. None -> ''. Floats use
+    compact fixed precision per column; epsilon uses :g."""
+    if value is None:
+        return ""
+    if key == "epsilon":
+        return f"{float(value):g}"
+    if key in ("agree_at_10", "agree_at_k", "ndcg_at_10"):
+        return f"{float(value):.4f}"
+    if key in ("runtime_ms_per_q", "queries_per_sec"):
+        return f"{float(value):.2f}"
+    return str(value)
+
+
+def render_latest_table(display_rows) -> str:
+    """Aligned monospace table of the --latest display rows."""
+    if not display_rows:
+        return "no rows to show"
+    headers = [h for _, h in _LATEST_COLUMNS]
+    cells = [[_fmt_cell(k, r.get(k)) for k, _ in _LATEST_COLUMNS]
+             for r in display_rows]
+    widths = [len(h) for h in headers]
+    for row in cells:
+        for i, c in enumerate(row):
+            widths[i] = max(widths[i], len(c))
+    def fmt_line(vals):
+        return "  ".join(v.ljust(widths[i]) for i, v in enumerate(vals))
+    lines = [fmt_line(headers), fmt_line(["-" * w for w in widths])]
+    lines += [fmt_line(row) for row in cells]
+    return "\n".join(lines)
+
+
+def write_latest_csv(display_rows, path) -> None:
+    """Write the --latest display rows as CSV to path."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow([h for _, h in _LATEST_COLUMNS])
+        for r in display_rows:
+            w.writerow([_fmt_cell(k, r.get(k)) for k, _ in _LATEST_COLUMNS])
+
+
 # Fagin schedule -> hue slot in _CHART_COLORS (stable across the report so the
 # epsilon-sweep chart and any future Fagin chart agree on colour per schedule).
 _FAGIN_ALGO_COLOR = {"TA": 0, "TASD": 1, "GTA": 2, "GTASD": 3}

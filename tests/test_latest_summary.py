@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.run_retrieval_experiment import (_method_type, _select_representative_epsilons, build_latest_summary)
+from scripts.run_retrieval_experiment import (_method_type, _select_representative_epsilons, build_latest_summary, render_latest_table, write_latest_csv, _LATEST_COLUMNS)
 
 
 class TestMethodType(unittest.TestCase):
@@ -111,3 +111,43 @@ class TestBuildLatestSummary(unittest.TestCase):
 
     def test_empty_input(self):
         self.assertEqual(build_latest_summary([]), [])
+
+
+class TestRenderAndCsv(unittest.TestCase):
+    def _display(self):
+        return [
+            {"dataset": "nq", "encoder": "m1", "method_family": "FAISS",
+             "method_type": "FAISS HNSW", "epsilon": None,
+             "agree_at_10": 0.95, "agree_at_k": 0.90, "ndcg_at_10": 0.72,
+             "runtime_ms_per_q": 0.9, "queries_per_sec": 1111.1,
+             "run_ts": "2026-07-14T09:00:00"},
+            {"dataset": "nq", "encoder": "m1", "method_family": "Fagin",
+             "method_type": "Fagin GTASD", "epsilon": 0.01,
+             "agree_at_10": 0.88, "agree_at_k": 0.80, "ndcg_at_10": 0.75,
+             "runtime_ms_per_q": 50.0, "queries_per_sec": 20.0,
+             "run_ts": "2026-07-14T09:00:00"},
+        ]
+
+    def test_table_has_headers_and_values(self):
+        txt = render_latest_table(self._display())
+        self.assertIn("method_type", txt)
+        self.assertIn("FAISS HNSW", txt)
+        self.assertIn("Fagin GTASD", txt)
+        self.assertIn("nDCG@10", txt)
+        # epsilon blank for FAISS row, present for Fagin
+        self.assertIn("0.01", txt)
+
+    def test_empty_renders_message(self):
+        self.assertIn("no rows", render_latest_table([]).lower())
+
+    def test_csv_roundtrip(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "out.csv"
+            write_latest_csv(self._display(), p)
+            with p.open(newline="") as f:
+                got = list(csv.reader(f))
+        header = [h for _, h in _LATEST_COLUMNS]
+        self.assertEqual(got[0], header)
+        self.assertEqual(len(got), 3)  # header + 2 rows
+        # FAISS row epsilon cell is empty string
+        self.assertEqual(got[1][header.index("epsilon")], "")
