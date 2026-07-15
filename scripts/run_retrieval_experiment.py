@@ -69,9 +69,11 @@ import math
 import os
 import re
 import shlex
+import sqlite3
 import sys
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 # --- BLAS threading must be pinned BEFORE numpy / faiss import ------------- #
@@ -1541,6 +1543,74 @@ def _join_method_rows(models, metric_rows, agree_rows, head):
             "queries_per_sec": (1000.0 / ms) if ms and ms > 0 else None,
         })
     return rows
+
+
+_RUNS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS runs (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id            TEXT NOT NULL,
+    run_ts            TEXT NOT NULL,
+    hostname          TEXT,
+    dataset           TEXT,
+    top_k             INTEGER,
+    workers           INTEGER,
+    encoder           TEXT,
+    method            TEXT NOT NULL,
+    method_family     TEXT,
+    epsilon           REAL,
+    ndcg_at_10        REAL,
+    recall_at_10      REAL,
+    recall_at_k       REAL,
+    mrr_at_10         REAL,
+    agree_at_10       REAL,
+    agree_at_k        REAL,
+    n_queries         INTEGER,
+    runtime_ms_per_q  REAL,
+    queries_per_sec   REAL
+)
+"""
+
+_RUNS_COLUMNS = [
+    "run_id", "run_ts", "hostname", "dataset", "top_k", "workers",
+    "encoder", "method", "method_family", "epsilon",
+    "ndcg_at_10", "recall_at_10", "recall_at_k", "mrr_at_10",
+    "agree_at_10", "agree_at_k", "n_queries",
+    "runtime_ms_per_q", "queries_per_sec",
+]
+
+
+def write_results_db(db_path, cfg, isa, run_id, run_ts,
+                     metric_rows, agree_rows, head):
+    """Append one row per (model x method) to the persistent SQLite `runs`
+    table at db_path. Self-initializing (CREATE TABLE IF NOT EXISTS),
+    append-only. Returns the number of rows written.
+    """
+    st = cfg["settings"]
+    ds = cfg["dataset"]
+    base = {
+        "run_id": run_id,
+        "run_ts": run_ts,
+        "hostname": isa.get("hostname"),
+        "dataset": ds.get("name"),
+        "top_k": int(st["top_k"]),
+        "workers": int(st.get("workers", 0)) or None,
+    }
+    joined = _join_method_rows(cfg["models"], metric_rows, agree_rows, head)
+    rows = [tuple((base | r).get(c) for c in _RUNS_COLUMNS) for r in joined]
+
+    db_path = Path(db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db_path))
+    try:
+        con.execute(_RUNS_SCHEMA)
+        placeholders = ", ".join("?" for _ in _RUNS_COLUMNS)
+        con.executemany(
+            f"INSERT INTO runs ({', '.join(_RUNS_COLUMNS)}) "
+            f"VALUES ({placeholders})", rows)
+        con.commit()
+    finally:
+        con.close()
+    return len(rows)
 
 
 # Fagin schedule -> hue slot in _CHART_COLORS (stable across the report so the

@@ -2,7 +2,7 @@ import sqlite3
 import unittest
 from pathlib import Path
 
-from scripts.run_retrieval_experiment import _method_family, _join_method_rows
+from scripts.run_retrieval_experiment import (_method_family, _join_method_rows, write_results_db)
 
 
 class TestMethodFamily(unittest.TestCase):
@@ -82,3 +82,50 @@ class TestJoinMethodRows(unittest.TestCase):
         self.assertIsNone(asym["ndcg_at_10"])
         self.assertAlmostEqual(asym["runtime_ms_per_q"], 2.0)
         self.assertEqual(asym["method_family"], "simdq")
+
+
+class TestWriteResultsDb(unittest.TestCase):
+    def _args(self, tmp):
+        cfg = {"dataset": {"name": "nq"}, "settings": {"top_k": 100,
+               "workers": 16}, "models": [{"tag": "m1"}]}
+        isa = {"hostname": "euler"}
+        metric_rows = [{"encoder": "m1", "variant": "asym b=2, +rescore",
+                        "recall@10": 0.5, "recall@K": 0.6, "MRR@10": 0.4,
+                        "nDCG@10": 0.55, "n_queries": 100}]
+        agree_rows = [{"encoder": "m1", "variant": "asym b=2, +rescore",
+                       "agree@10": 0.98, "agree@K": 0.97}]
+        head = [{"label": "m1", "D": 384, "N": 1000, "queries": "real",
+                 "systems": [{"name": "simdq asym b=2 (+rescore)",
+                              "ms": 2.0, "agree": 0.97}]}]
+        return cfg, isa, metric_rows, agree_rows, head
+
+    def test_creates_and_appends(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "results.db"
+            cfg, isa, mr, ar, head = self._args(d)
+            n1 = write_results_db(db, cfg, isa, "run-a", "2026-07-15T10:00:00",
+                                  mr, ar, head)
+            n2 = write_results_db(db, cfg, isa, "run-b", "2026-07-15T11:00:00",
+                                  mr, ar, head)
+            self.assertEqual(n1, 1)
+            self.assertEqual(n2, 1)
+            con = sqlite3.connect(db)
+            try:
+                total = con.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+                row = con.execute(
+                    "SELECT run_id, run_ts, hostname, dataset, top_k, workers, "
+                    "encoder, method, method_family, ndcg_at_10, agree_at_10, "
+                    "agree_at_k, runtime_ms_per_q, queries_per_sec "
+                    "FROM runs WHERE run_id='run-a'").fetchone()
+            finally:
+                con.close()
+            self.assertEqual(total, 2)   # appended, not overwritten
+            self.assertEqual(row[0], "run-a")
+            self.assertEqual(row[2], "euler")
+            self.assertEqual(row[3], "nq")
+            self.assertEqual(row[4], 100)
+            self.assertEqual(row[7], "asym b=2, +rescore")
+            self.assertEqual(row[8], "simdq")
+            self.assertAlmostEqual(row[12], 2.0)
+            self.assertAlmostEqual(row[13], 500.0)
