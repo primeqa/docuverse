@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.run_retrieval_experiment import (_method_type, _select_representative_epsilons, build_latest_summary, render_latest_table, write_latest_csv, _LATEST_COLUMNS)
+from scripts.run_retrieval_experiment import (_method_type, _select_representative_epsilons, build_latest_summary, render_latest_table, write_latest_csv, _LATEST_COLUMNS, query_latest_rows, run_latest_report, write_results_db)
 
 
 class TestMethodType(unittest.TestCase):
@@ -151,3 +151,64 @@ class TestRenderAndCsv(unittest.TestCase):
         self.assertEqual(len(got), 3)  # header + 2 rows
         # FAISS row epsilon cell is empty string
         self.assertEqual(got[1][header.index("epsilon")], "")
+
+
+class TestRunLatestReport(unittest.TestCase):
+    def _write_two_runs(self, db):
+        cfg = {"dataset": {"name": "nq"},
+               "settings": {"top_k": 100, "workers": 16},
+               "models": [{"tag": "m1"}]}
+        isa = {"hostname": "euler"}
+        # older run: FAISS HNSW ndcg 0.70
+        mr_old = [{"encoder": "m1", "variant": "FAISS HNSW (M=16, ef=128)",
+                   "recall@10": 0.5, "recall@K": 0.6, "MRR@10": 0.4,
+                   "nDCG@10": 0.70, "n_queries": 100}]
+        write_results_db(db, cfg, isa, "old", "2026-07-10T09:00:00",
+                         mr_old, [], [])
+        # newer run: FAISS HNSW ndcg 0.72
+        mr_new = [{"encoder": "m1", "variant": "FAISS HNSW (M=16, ef=128)",
+                   "recall@10": 0.5, "recall@K": 0.6, "MRR@10": 0.4,
+                   "nDCG@10": 0.72, "n_queries": 100}]
+        write_results_db(db, cfg, isa, "new", "2026-07-14T09:00:00",
+                         mr_new, [], [])
+
+    def test_end_to_end_latest_and_csv(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "results.db"
+            csv_path = Path(d) / "latest.csv"
+            self._write_two_runs(db)
+            rows = query_latest_rows(db)
+            self.assertTrue(any(r["method"].startswith("FAISS HNSW")
+                                for r in rows))
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                run_latest_report(db, csv_path)
+            out = buf.getvalue()
+            self.assertIn("FAISS HNSW", out)
+            self.assertIn("0.7200", out)      # newer value shown
+            self.assertNotIn("0.7000", out)    # older value dropped
+            self.assertTrue(csv_path.exists())
+
+    def test_missing_db_message(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "nope.db"
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                run_latest_report(db, None)
+            self.assertIn("no results DB", buf.getvalue())
+
+    def test_empty_db_message(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "empty.db"
+            con = sqlite3.connect(str(db))
+            con.close()  # file exists, no `runs` table
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                run_latest_report(db, None)
+            self.assertIn("no rows", buf.getvalue().lower())

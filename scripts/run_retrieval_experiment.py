@@ -1786,6 +1786,43 @@ def write_latest_csv(display_rows, path) -> None:
             w.writerow([_fmt_cell(k, r.get(k)) for k, _ in _LATEST_COLUMNS])
 
 
+def query_latest_rows(db_path) -> list:
+    """Read every row from the `runs` table as a list of dicts. Returns [] if
+    the DB file or the table is absent."""
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return []
+    con = sqlite3.connect(str(db_path))
+    try:
+        con.row_factory = sqlite3.Row
+        try:
+            cur = con.execute("SELECT * FROM runs")
+        except sqlite3.OperationalError:
+            return []   # no `runs` table
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        con.close()
+
+
+def run_latest_report(db_path, csv_path) -> None:
+    """Print the latest-per-method-type summary to stdout; if csv_path is set,
+    also write it as CSV. Prints a friendly message when there is nothing to
+    show."""
+    db_path = Path(db_path)
+    rows = query_latest_rows(db_path)
+    if not db_path.exists():
+        print(f"no results DB at {db_path}")
+        return
+    if not rows:
+        print(f"results DB has no rows yet ({db_path})")
+        return
+    display = build_latest_summary(rows)
+    print(render_latest_table(display))
+    if csv_path is not None:
+        write_latest_csv(display, csv_path)
+        print(f"# latest-csv -> {Path(csv_path)}")
+
+
 # Fagin schedule -> hue slot in _CHART_COLORS (stable across the report so the
 # epsilon-sweep chart and any future Fagin chart agree on colour per schedule).
 _FAGIN_ALGO_COLOR = {"TA": 0, "TASD": 1, "GTA": 2, "GTASD": 3}
