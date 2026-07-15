@@ -1480,6 +1480,66 @@ def _method_family(name: str) -> str:
     return "simdq"
 
 
+def _speed_name_to_variant(name: str) -> str:
+    """Map a Phase 5b system name to the quality `variant` key it shares with
+    metric_rows/agree_rows. simdq Phase 5b names ('simdq asym b=2 (+rescore)',
+    'simdq 1-bit ham (no rescore)') fold onto the quality variants
+    ('asym b=2, +rescore', '1-bit ham, no rescore'); every other engine uses
+    its name verbatim as the variant.
+    """
+    if name.startswith("simdq "):
+        mode = "+rescore" if "+rescore" in name else "no rescore"
+        var = "asym b=2" if name.startswith("simdq asym") else "1-bit ham"
+        return f"{var}, {mode}"
+    return name
+
+
+def _join_method_rows(models, metric_rows, agree_rows, head):
+    """Join quality (metric_rows), agreement (agree_rows), and Phase 5b speed
+    (head) into one flat dict per (encoder, method), keyed by the quality
+    `variant` label. Missing phases leave their columns as None.
+
+    Returns a list of dicts with keys matching the `runs` table columns
+    (minus run_id/run_ts/hostname/dataset/top_k/workers, which the writer adds).
+    """
+    metric_by = {(r["encoder"], r["variant"]): r for r in metric_rows}
+    agree_by = {(r["encoder"], r["variant"]): r for r in agree_rows}
+
+    # speed: (encoder, variant) -> system dict, using the model tag as encoder.
+    speed_by = {}
+    for m, hrow in zip(models, head or []):
+        tag = m["tag"]
+        for s in hrow.get("systems", []):
+            speed_by[(tag, _speed_name_to_variant(s["name"]))] = s
+
+    # union of every (encoder, method) key seen in any phase
+    keys = set(metric_by) | set(agree_by) | set(speed_by)
+    rows = []
+    for enc, method in sorted(keys):
+        mm = metric_by.get((enc, method))
+        ag = agree_by.get((enc, method))
+        sp = speed_by.get((enc, method))
+        parsed = _parse_fagin_name(method)
+        epsilon = parsed[1] if parsed is not None else None
+        ms = sp["ms"] if sp else None
+        rows.append({
+            "encoder": enc,
+            "method": method,
+            "method_family": _method_family(method),
+            "epsilon": epsilon,
+            "ndcg_at_10": mm["nDCG@10"] if mm else None,
+            "recall_at_10": mm["recall@10"] if mm else None,
+            "recall_at_k": mm["recall@K"] if mm else None,
+            "mrr_at_10": mm["MRR@10"] if mm else None,
+            "agree_at_10": ag["agree@10"] if ag else None,
+            "agree_at_k": ag["agree@K"] if ag else None,
+            "n_queries": mm["n_queries"] if mm else None,
+            "runtime_ms_per_q": ms,
+            "queries_per_sec": (1000.0 / ms) if ms else None,
+        })
+    return rows
+
+
 # Fagin schedule -> hue slot in _CHART_COLORS (stable across the report so the
 # epsilon-sweep chart and any future Fagin chart agree on colour per schedule).
 _FAGIN_ALGO_COLOR = {"TA": 0, "TASD": 1, "GTA": 2, "GTASD": 3}
