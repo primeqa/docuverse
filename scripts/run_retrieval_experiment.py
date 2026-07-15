@@ -1615,6 +1615,20 @@ def write_results_db(db_path, cfg, isa, run_id, run_ts,
     return len(rows)
 
 
+def _method_type(method: str, family: str) -> str:
+    """Bucket a stored method into its display 'method type'. Fagin rows keep
+    their schedule (Fagin TA / TASD / GTA / GTASD) so epsilon-swept rows of the
+    same schedule group together; every other engine drops its parenthesized
+    parameter suffix ('FAISS HNSW (M=16, ef=128)' -> 'FAISS HNSW'). simdq
+    labels have no ' (' suffix and pass through unchanged.
+    """
+    if family == "Fagin":
+        parsed = _parse_fagin_name(method)
+        if parsed is not None:
+            return f"Fagin {parsed[0]}"
+    return method.split(" (")[0]
+
+
 # Fagin schedule -> hue slot in _CHART_COLORS (stable across the report so the
 # epsilon-sweep chart and any future Fagin chart agree on colour per schedule).
 _FAGIN_ALGO_COLOR = {"TA": 0, "TASD": 1, "GTA": 2, "GTASD": 3}
