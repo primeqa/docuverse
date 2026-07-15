@@ -18,8 +18,10 @@ Reproduces reports like docs/simdq_euler.watson.ibm.com_nq_real.md end-to-end:
      Fagin TA baselines (FLAT/FlatIP, HNSW, and the exact Threshold Algorithm
      scan) on the same vectors and queries.
   4. Speed: Phase 1 (asym b=2, default BLAS and BLAS=1), Phase 6/8 (hamming
-     SoA) — reusing the sweep code in scripts/investigate_simdq_hardware.py —
-     and a Phase 5b head-to-head of Milvus FLAT, Milvus HNSW, FAISS FlatIP,
+     SoA) — reusing the sweep code in scripts/investigate_simdq_hardware.py
+     (these thread-scaling sweeps are opt-in via --thread-sweeps; off by
+     default) — and a Phase 5b head-to-head of Milvus FLAT, Milvus HNSW,
+     FAISS FlatIP,
      FAISS HNSW, Fagin TA (FaginIndex, built in-memory from the same fp32
      vectors), and the simdq variants, each with an agree@K-vs-exact
      column, on the same corpora + queries.
@@ -2266,7 +2268,7 @@ def main():
     p1_default = p1_blas1 = p68 = None
     head = None
     if st["run_speed"]:
-        if st.get("run_simdq", True):
+        if st.get("run_simdq", True) and st.get("run_thread_sweeps", False):
             common = dict(threads=st["threads"],
                           queries=int(st["speed_queries"]),
                           warmup=int(st["warmup"]), K=int(st["top_k"]),
