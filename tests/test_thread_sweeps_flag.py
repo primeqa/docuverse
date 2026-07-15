@@ -6,7 +6,12 @@ from scripts.run_retrieval_experiment import DEFAULT_SETTINGS, _cli_overrides
 
 def _ns(**overrides):
     """Build an argparse.Namespace with every attribute _cli_overrides reads,
-    defaulted to the 'not passed' value, then apply overrides."""
+    defaulted to the 'not passed' value, then apply overrides.
+
+    NOTE: keep the `base` dict below in sync with the attributes
+    `_cli_overrides` accesses — a missing key would surface as an
+    AttributeError only in the real CLI path, not here.
+    """
     base = dict(
         dataset_name=None, queries_jsonl=None, corpus_file=None,
         top_k=None, alpha=None, speed_queries=None, warmup=None,
