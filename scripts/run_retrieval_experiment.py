@@ -1654,6 +1654,85 @@ def _select_representative_epsilons(values) -> list:
     return sorted(picked)
 
 
+def _row_is_newer(a: dict, b: dict) -> bool:
+    """True if row a is newer than row b (by run_ts, tiebreak on id)."""
+    ka = (a.get("run_ts") or "", a.get("id") or 0)
+    kb = (b.get("run_ts") or "", b.get("id") or 0)
+    return ka > kb
+
+
+def build_latest_summary(rows) -> list:
+    """Reduce raw `runs` rows to the sorted display rows for the --latest
+    table: the newest row per method string, bucketed into method types, with
+    only representative epsilons kept for Fagin types. Each display row carries
+    method_family + method_type alongside the metric columns.
+    """
+    # 1) newest row per exact method string
+    latest_by_method: dict = {}
+    for r in rows:
+        m = r["method"]
+        cur = latest_by_method.get(m)
+        if cur is None or _row_is_newer(r, cur):
+            latest_by_method[m] = r
+
+    # 2) group those into method types
+    by_type: dict = {}
+    for r in latest_by_method.values():
+        mt = _method_type(r["method"], r["method_family"])
+        by_type.setdefault(mt, []).append(r)
+
+    # 3) per type: non-epsilon -> latest single row; epsilon -> representatives
+    display: list = []
+    for mt, group in by_type.items():
+        has_eps = any(g.get("epsilon") is not None for g in group)
+        if not has_eps:
+            best = group[0]
+            for g in group[1:]:
+                if _row_is_newer(g, best):
+                    best = g
+            display.append(_display_row(best, mt))
+            continue
+        eps_values = [float(g["epsilon"]) for g in group
+                      if g.get("epsilon") is not None]
+        keep = set(_select_representative_epsilons(eps_values))
+        # newest row per (type, epsilon), only for kept epsilons
+        best_by_eps: dict = {}
+        for g in group:
+            e = g.get("epsilon")
+            if e is None or float(e) not in keep:
+                continue
+            e = float(e)
+            cur = best_by_eps.get(e)
+            if cur is None or _row_is_newer(g, cur):
+                best_by_eps[e] = g
+        for e in sorted(best_by_eps):
+            display.append(_display_row(best_by_eps[e], mt))
+
+    # 4) sort by family, then type, then epsilon (None first)
+    display.sort(key=lambda d: (d["method_family"], d["method_type"],
+                                -1.0 if d["epsilon"] is None
+                                else float(d["epsilon"])))
+    return display
+
+
+def _display_row(r: dict, method_type: str) -> dict:
+    """Project a raw row into a display row for the --latest table."""
+    return {
+        "dataset": r.get("dataset"),
+        "encoder": r.get("encoder"),
+        "method_family": r.get("method_family"),
+        "method_type": method_type,
+        "epsilon": (None if r.get("epsilon") is None
+                    else float(r["epsilon"])),
+        "agree_at_10": r.get("agree_at_10"),
+        "agree_at_k": r.get("agree_at_k"),
+        "ndcg_at_10": r.get("ndcg_at_10"),
+        "runtime_ms_per_q": r.get("runtime_ms_per_q"),
+        "queries_per_sec": r.get("queries_per_sec"),
+        "run_ts": r.get("run_ts"),
+    }
+
+
 # Fagin schedule -> hue slot in _CHART_COLORS (stable across the report so the
 # epsilon-sweep chart and any future Fagin chart agree on colour per schedule).
 _FAGIN_ALGO_COLOR = {"TA": 0, "TASD": 1, "GTA": 2, "GTASD": 3}
