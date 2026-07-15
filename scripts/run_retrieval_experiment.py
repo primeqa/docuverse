@@ -1734,6 +1734,9 @@ def _display_row(r: dict, method_type: str) -> dict:
         "method_type": method_type,
         "epsilon": (None if r.get("epsilon") is None
                     else float(r["epsilon"])),
+        "recall_at_10": r.get("recall_at_10"),
+        "recall_at_k": r.get("recall_at_k"),
+        "mrr_at_10": r.get("mrr_at_10"),
         "agree_at_10": r.get("agree_at_10"),
         "agree_at_k": r.get("agree_at_k"),
         "ndcg_at_10": r.get("ndcg_at_10"),
@@ -1747,6 +1750,8 @@ def _display_row(r: dict, method_type: str) -> dict:
 _LATEST_COLUMNS = [
     ("dataset", "dataset"), ("encoder", "encoder"),
     ("method_type", "method_type"), ("epsilon", "epsilon"),
+    ("recall_at_10", "R@10"), ("recall_at_k", "R@K"),
+    ("mrr_at_10", "MRR@10"),
     ("agree_at_10", "agree@10"), ("agree_at_k", "agree@K"),
     ("ndcg_at_10", "nDCG@10"), ("runtime_ms_per_q", "ms/q"),
     ("queries_per_sec", "q/s"), ("run_ts", "run_ts"),
@@ -1760,7 +1765,8 @@ def _fmt_cell(key: str, value) -> str:
         return ""
     if key == "epsilon":
         return f"{float(value):g}"
-    if key in ("agree_at_10", "agree_at_k", "ndcg_at_10"):
+    if key in ("recall_at_10", "recall_at_k", "mrr_at_10",
+               "agree_at_10", "agree_at_k", "ndcg_at_10"):
         return f"{float(value):.4f}"
     if key in ("runtime_ms_per_q", "queries_per_sec"):
         return f"{float(value):.2f}"

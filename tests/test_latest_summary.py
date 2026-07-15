@@ -112,6 +112,19 @@ class TestBuildLatestSummary(unittest.TestCase):
     def test_empty_input(self):
         self.assertEqual(build_latest_summary([]), [])
 
+    def test_display_rows_carry_all_quality_metrics(self):
+        rows = [_row("FAISS HNSW (M=16, ef=128)", "FAISS", None,
+                     "2026-07-14T09:00:00", 0.72, 0.9, 1)]
+        # _row sets recall_at_10/recall_at_k/mrr_at_10 to None by default;
+        # override them so we can assert they propagate to the display row
+        rows[0]["recall_at_10"] = 0.65
+        rows[0]["recall_at_k"] = 0.85
+        rows[0]["mrr_at_10"] = 0.55
+        out = build_latest_summary(rows)
+        self.assertAlmostEqual(out[0]["recall_at_10"], 0.65)
+        self.assertAlmostEqual(out[0]["recall_at_k"], 0.85)
+        self.assertAlmostEqual(out[0]["mrr_at_10"], 0.55)
+
     def test_all_encoders_kept(self):
         # two models sharing method names must BOTH appear, not collapse to
         # whichever ran most recently
@@ -179,11 +192,13 @@ class TestRenderAndCsv(unittest.TestCase):
         return [
             {"dataset": "nq", "encoder": "m1", "method_family": "FAISS",
              "method_type": "FAISS HNSW", "epsilon": None,
+             "recall_at_10": 0.65, "recall_at_k": 0.85, "mrr_at_10": 0.55,
              "agree_at_10": 0.95, "agree_at_k": 0.90, "ndcg_at_10": 0.72,
              "runtime_ms_per_q": 0.9, "queries_per_sec": 1111.1,
              "run_ts": "2026-07-14T09:00:00"},
             {"dataset": "nq", "encoder": "m1", "method_family": "Fagin",
              "method_type": "Fagin GTASD", "epsilon": 0.01,
+             "recall_at_10": 0.60, "recall_at_k": 0.80, "mrr_at_10": 0.50,
              "agree_at_10": 0.88, "agree_at_k": 0.80, "ndcg_at_10": 0.75,
              "runtime_ms_per_q": 50.0, "queries_per_sec": 20.0,
              "run_ts": "2026-07-14T09:00:00"},
@@ -195,6 +210,11 @@ class TestRenderAndCsv(unittest.TestCase):
         self.assertIn("FAISS HNSW", txt)
         self.assertIn("Fagin GTASD", txt)
         self.assertIn("nDCG@10", txt)
+        # all computed quality metrics are surfaced
+        self.assertIn("R@10", txt)
+        self.assertIn("R@K", txt)
+        self.assertIn("MRR@10", txt)
+        self.assertIn("0.6500", txt)   # recall_at_10 value rendered
         # epsilon blank for FAISS row, present for Fagin
         self.assertIn("0.01", txt)
 
