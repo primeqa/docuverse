@@ -2139,6 +2139,14 @@ def main():
                     help="persistent SQLite file to append per-method results "
                          "to (default: experiments/simdq/results.db). Set to "
                          "an empty string to disable.")
+    ap.add_argument("--latest", action="store_true",
+                    help="print a summary table of the latest result per "
+                         "method type from the results DB and exit (no "
+                         "experiment is run); representative epsilons are "
+                         "shown for Fagin schedules")
+    ap.add_argument("--latest-csv", dest="latest_csv", default=None,
+                    help="with --latest, also write the summary table as CSV "
+                         "to this path")
     ap.add_argument("--force-build", action="store_true",
                     help="rebuild index dirs and corpus vectors even if they "
                          "already exist")
@@ -2189,6 +2197,12 @@ def main():
                     help="report path; {hostname}/{dataset}/{date} templated. "
                          "Default: docs/simdq_{hostname}_{dataset}.md")
     args = ap.parse_args()
+
+    if args.latest:
+        db = _resolve(args.results_db or DEFAULT_SETTINGS["results_db"])
+        run_latest_report(
+            db, _resolve(args.latest_csv) if args.latest_csv else None)
+        return
 
     cfg = load_config(args)
     ds, st, models = cfg["dataset"], cfg["settings"], cfg["models"]
