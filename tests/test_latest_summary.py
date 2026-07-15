@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.run_retrieval_experiment import _method_type
+from scripts.run_retrieval_experiment import (_method_type, _select_representative_epsilons)
 
 
 class TestMethodType(unittest.TestCase):
@@ -29,3 +29,30 @@ class TestMethodType(unittest.TestCase):
         self.assertEqual(
             _method_type("1-bit ham, no rescore", "simdq"),
             "1-bit ham, no rescore")
+
+
+class TestSelectEpsilons(unittest.TestCase):
+    def test_exact_low_mid_high(self):
+        # exact(0) + smallest nonzero + median nonzero + largest nonzero
+        got = _select_representative_epsilons([0.0, 0.001, 0.005, 0.01, 0.05])
+        self.assertEqual(got, [0.0, 0.001, 0.005, 0.05])
+
+    def test_all_when_few(self):
+        self.assertEqual(_select_representative_epsilons([0.01]), [0.01])
+        self.assertEqual(
+            _select_representative_epsilons([0.0, 0.01]), [0.0, 0.01])
+        self.assertEqual(
+            _select_representative_epsilons([0.0, 0.001, 0.01, 0.05]),
+            [0.0, 0.001, 0.01, 0.05])
+
+    def test_dedup_and_sort_input_order_irrelevant(self):
+        got = _select_representative_epsilons([0.05, 0.0, 0.01, 0.005, 0.001])
+        self.assertEqual(got, [0.0, 0.001, 0.005, 0.05])
+
+    def test_no_exact(self):
+        # >4 values, no zero present: low/mid/high of the nonzero values.
+        # nonzero=[0.001,0.005,0.01,0.02,0.05]; low=0.001,
+        # mid=nonzero[(5-1)//2]=nonzero[2]=0.01, high=0.05
+        got = _select_representative_epsilons(
+            [0.001, 0.005, 0.01, 0.02, 0.05])
+        self.assertEqual(got, [0.001, 0.01, 0.05])

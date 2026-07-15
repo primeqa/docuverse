@@ -1629,6 +1629,31 @@ def _method_type(method: str, family: str) -> str:
     return method.split(" (")[0]
 
 
+def _select_representative_epsilons(values) -> list:
+    """From the distinct epsilon values present for one Fagin type, pick a few
+    representative ones spanning the trade-off: exact (0.0) if present, plus the
+    smallest, median, and largest nonzero values. Deduplicated, sorted
+    ascending, at most 4. If <=4 distinct values exist, all are returned.
+    """
+    uniq = sorted(set(float(v) for v in values))
+    if len(uniq) <= 4:
+        return uniq
+    picked = []
+    if uniq[0] == 0.0:
+        picked.append(0.0)
+    nonzero = [v for v in uniq if v != 0.0]
+    if nonzero:
+        low = nonzero[0]
+        high = nonzero[-1]
+        # lower-median so a 4-nonzero list picks index 1 (e.g. 0.005 from
+        # [0.001, 0.005, 0.01, 0.05])
+        mid = nonzero[(len(nonzero) - 1) // 2]
+        for v in (low, mid, high):
+            if v not in picked:
+                picked.append(v)
+    return sorted(picked)
+
+
 # Fagin schedule -> hue slot in _CHART_COLORS (stable across the report so the
 # epsilon-sweep chart and any future Fagin chart agree on colour per schedule).
 _FAGIN_ALGO_COLOR = {"TA": 0, "TASD": 1, "GTA": 2, "GTASD": 3}
