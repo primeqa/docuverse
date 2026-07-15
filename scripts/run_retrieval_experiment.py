@@ -130,6 +130,7 @@ DEFAULT_SETTINGS = {
     "encode_batch_size": 64,
     "simdq_b": 2,               # bits/dim for the asymmetric family
     "index_root": "experiments/simdq/indexes",  # auto-built indexes live here
+    "results_db": "experiments/simdq/results.db",  # persistent per-method store
     # HNSW parameters (Milvus HNSW and FAISS HNSW use the same settings)
     "hnsw_m": 16,
     "hnsw_ef_construction": 200,
@@ -167,6 +168,7 @@ _CLI_SETTINGS_MAP = [
     ("speed_queries", "speed_queries"), ("warmup", "warmup"),
     ("workers", "workers"), ("milvus_uri", "milvus_uri"),
     ("index_root", "index_root"), ("seed", "seed"),
+    ("results_db", "results_db"),
 ]
 
 
@@ -1925,6 +1927,10 @@ def main():
     ap.add_argument("--index-root", dest="index_root", default=None,
                     help="directory for auto-built index dirs "
                          "(default: experiments/simdq/indexes)")
+    ap.add_argument("--results-db", dest="results_db", default=None,
+                    help="persistent SQLite file to append per-method results "
+                         "to (default: experiments/simdq/results.db). Set to "
+                         "an empty string to disable.")
     ap.add_argument("--force-build", action="store_true",
                     help="rebuild index dirs and corpus vectors even if they "
                          "already exist")
@@ -1978,6 +1984,9 @@ def main():
 
     cfg = load_config(args)
     ds, st, models = cfg["dataset"], cfg["settings"], cfg["models"]
+
+    run_id = uuid.uuid4().hex
+    run_ts = datetime.now().isoformat(timespec="seconds")
 
     isa = detect_isa()
     print(f"# host  : {isa['hostname']}")
@@ -2071,6 +2080,16 @@ def main():
     json_path = out_path.with_suffix(".json")
     json_path.write_text(json.dumps(raw, indent=2, default=str))
     print(f"# raw    -> {json_path}")
+
+    db_setting = st.get("results_db")
+    if db_setting:
+        db_path = _resolve(db_setting)
+        try:
+            n = write_results_db(db_path, cfg, isa, run_id, run_ts,
+                                 metric_rows, agree_rows, head or [])
+            print(f"# results-db -> {db_path}  (+{n} rows)")
+        except Exception as e:
+            print(f"# results-db skipped: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
