@@ -434,8 +434,8 @@ fagin fields
 ^^^^^^^^^^^^
 
 These fields are only active when ``db_engine: fagin``. The defaults
-give exact top-k inner-product search; see :doc:`backends/fagin` for a
-full guide with tuning advice.
+give exact top-k inner-product search; see :doc:`backends/index` for the
+backend overview.
 
 .. list-table::
    :header-rows: 1

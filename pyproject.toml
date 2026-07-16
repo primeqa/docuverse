@@ -98,6 +98,13 @@ test = [
     "pytest>=8",
     "hypothesis>=6.100",
 ]
+# `docs` builds the Sphinx documentation (docs/ + CI). Keep in sync with
+# requirements-docs.txt, which simply mirrors this list.
+docs = [
+    "sphinx>=7",
+    "sphinx_rtd_theme>=3.0",
+    "sphinx-copybutton>=0.5",
+]
 all = [
     "pymilvus[model]>=2.5,<3",
     "chromadb>=1.0",

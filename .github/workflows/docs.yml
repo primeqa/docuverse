@@ -15,7 +15,7 @@ jobs:
           python-version: "3.10"
       - name: Install Sphinx + theme
         run: |
-          pip install sphinx sphinx_rtd_theme sphinx-copybutton
+          pip install -e ".[docs]"
       - name: Build with warnings-as-errors
         run: |
           cd docs
