@@ -349,6 +349,28 @@ def _default_output_name(args) -> str:
     return '.'.join(parts) + '.json'
 
 
+def _onnx_is_feature_extractor(onnx_path) -> bool:
+    """Return True if the ONNX graph looks like a feature-extraction encoder.
+
+    SentenceTransformer's onnx backend (via optimum ORTModelForFeatureExtraction)
+    reads `last_hidden_state` / `token_embeddings` from the model outputs. Some HF
+    repos ship a root-level model.onnx exported for a different task (outputting
+    `logits`), which makes every encode() raise KeyError('last_hidden_state').
+    Inspect the graph outputs so we don't hand such a file to the loader.
+
+    On any inspection failure, return False (better to re-export than to load a
+    file we couldn't verify).
+    """
+    try:
+        import onnx
+        model = onnx.load(str(onnx_path), load_external_data=False)
+        output_names = {o.name for o in model.graph.output}
+    except Exception as e:
+        print(f"  (could not inspect {onnx_path}: {e})")
+        return False
+    return bool(output_names & {'last_hidden_state', 'token_embeddings'})
+
+
 def _resolve_cached_export(model_name: str, fmt: str, file_name: str | None = None):
     """If model_name's HF cache snapshot already contains converted weights for
     the given format, return the snapshot dir. Otherwise return None.
@@ -378,10 +400,19 @@ def _resolve_cached_export(model_name: str, fmt: str, file_name: str | None = No
     if file_name:
         return str(snapshot) if (snapshot / file_name).exists() else None
     if fmt == 'onnx':
-        if (snapshot / 'onnx' / 'model.onnx').exists():
+        # Only auto-discover ONNX artifacts that are genuine feature-extraction
+        # encoders. Some HF repos (e.g. ibm-granite/granite-embedding-30m-english)
+        # ship a root-level model.onnx that is a task-mismatched export outputting
+        # `logits` instead of `last_hidden_state`; SentenceTransformer's onnx path
+        # then raises KeyError('last_hidden_state') on every encode(). When the
+        # candidate fails validation, return None so normal loading re-exports a
+        # correct encoder.
+        conventional = snapshot / 'onnx' / 'model.onnx'
+        if conventional.exists() and _onnx_is_feature_extractor(conventional):
             return str(snapshot)
-        if any(snapshot.glob('*.onnx')):
-            return str(snapshot)
+        for candidate in sorted(snapshot.glob('*.onnx')):
+            if _onnx_is_feature_extractor(candidate):
+                return str(snapshot)
     elif fmt == 'openvino':
         # Prefer the conventional openvino/ subdir layout; fall back to root
         # for older exports that wrote openvino_model.{xml,bin} at top level.
