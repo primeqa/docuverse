@@ -1,3 +1,7 @@
-sphinx
-sphinx_rtd_theme
-sphinx_copybutton
+# Documentation build dependencies.
+# Mirrors the `docs` extra in pyproject.toml — install either with:
+#   pip install -r requirements-docs.txt
+#   pip install -e ".[docs]"
+sphinx>=7
+sphinx_rtd_theme>=3.0
+sphinx-copybutton>=0.5
